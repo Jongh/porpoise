@@ -1,0 +1,52 @@
+[package]
+name = "porpoise"
+version = "0.1.0"
+edition = "2021"
+description = "Software development orchestration tool powered by Claude Code"
+authors = ["김종현"]
+license = "MIT"
+
+[[bin]]
+name = "porpoise"
+path = "src/main.rs"
+
+[dependencies]
+clap        = { version = "4", features = ["derive"] }
+walkdir     = "2"
+ignore      = "0.4"
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+toml        = "0.8"
+chrono      = { version = "0.4", features = ["serde"] }
+anyhow      = "1"
+colored     = "2"
+indicatif   = "0.17"
+dialoguer   = "0.11"
+which       = "6"
+
+[profile.release]
+strip       = true
+lto         = true
+codegen-units = 1
+
+[package.metadata.deb]
+maintainer = "김종현 <kjhfood@ymx.co.kr>"
+copyright = "2026, 김종현"
+license-file = ["LICENSE", "0"]
+extended-description = """
+Porpoise is a software development orchestration tool powered by Claude Code.
+It automates PM → Developer → Tester → Reviewer workflows with structured reports.
+"""
+depends = "$auto"
+section = "utility"
+priority = "optional"
+assets = [
+    ["target/release/porpoise", "usr/local/bin/", "755"],
+    ["README.md", "usr/share/doc/porpoise/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/porpoise", dest = "/usr/local/bin/porpoise", mode = "755" },
+    { source = "LICENSE", dest = "/usr/share/licenses/porpoise/LICENSE", mode = "644" },
+]

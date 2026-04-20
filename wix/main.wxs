@@ -1,0 +1,107 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <Product
+    Id='*'
+    Name='Porpoise'
+    UpgradeCode='B2E5A8D4-C3F1-4E2A-9B7D-0A1E2F3C4D5E'
+    Manufacturer='김종현'
+    Language='1033'
+    Codepage='1252'
+    Version='!(bind.FileVersion.exe_porpoise)'
+  >
+    <Package
+      Id='*'
+      Keywords='Installer'
+      Description='Porpoise Development Orchestration Tool Installer'
+      Manufacturer='김종현'
+      InstallerVersion='450'
+      Languages='1033'
+      Compressed='yes'
+      SummaryCodepage='1252'
+    />
+
+    <MajorUpgrade
+      Schedule='afterInstallInitialize'
+      DowngradeErrorMessage='A newer version of Porpoise is already installed. Setup will now exit.'
+    />
+
+    <Media Id='1' Cabinet='porpoise.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
+    <Property Id='DiskPrompt' Value='Porpoise Installation' />
+
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='ProgramFilesFolder' Name='PFiles'>
+        <Directory Id='APPLICATIONFOLDER' Name='Porpoise'>
+          <Component Id='exe_porpoise' Guid='A1B2C3D4-E5F6-7890-ABCD-EF1234567890'>
+            <File
+              Id='exe_porpoise'
+              Name='porpoise.exe'
+              DiskId='1'
+              Source='target\release\porpoise.exe'
+              KeyPath='yes'
+            />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id='ProgramMenuFolder'>
+        <Directory Id='ApplicationProgramsFolder' Name='Porpoise' />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id='ApplicationProgramsFolder'>
+      <Component Id='ApplicationShortcut' Guid='F1E2D3C4-B5A6-7890-FEDC-BA0987654321'>
+        <Shortcut
+          Id='ApplicationStartMenuShortcut'
+          Name='Porpoise'
+          Description='Software Development Orchestration Tool'
+          Target='[APPLICATIONFOLDER]porpoise.exe'
+          WorkingDirectory='APPLICATIONFOLDER'
+        />
+        <RemoveFolder Id='CleanUpShortCut' Directory='ApplicationProgramsFolder' On='uninstall' />
+        <RegistryValue Root='HKCU' Key='Software\Porpoise' Name='installed' Type='integer' Value='1' KeyPath='yes' />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Add to PATH -->
+    <DirectoryRef Id='TARGETDIR'>
+      <Component Id='PathComponent' Guid='C3D4E5F6-A7B8-9012-CDEF-012345678901'>
+        <Environment
+          Id='PATH'
+          Name='PATH'
+          Value='[APPLICATIONFOLDER]'
+          Permanent='no'
+          Part='last'
+          Action='set'
+          System='yes'
+        />
+        <RegistryValue Root='HKCU' Key='Software\Porpoise' Name='path' Type='integer' Value='1' KeyPath='yes' />
+      </Component>
+    </DirectoryRef>
+
+    <Feature
+      Id='Application'
+      Title='Porpoise'
+      Level='1'
+    >
+      <ComponentRef Id='exe_porpoise' />
+      <ComponentRef Id='ApplicationShortcut' />
+      <ComponentRef Id='PathComponent' />
+    </Feature>
+
+    <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
+
+    <Icon Id='ProductICO' SourceFile='wix\porpoise.ico' />
+    <Property Id='ARPPRODUCTICON' Value='ProductICO' />
+    <Property Id='ARPHELPLINK' Value='https://github.com/kjhfood/porpoise' />
+
+    <UI>
+      <UIRef Id='WixUI_InstallDir' />
+      <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='InstallDirDlg' Order='99'>1</Publish>
+      <Publish Dialog='InstallDirDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>1</Publish>
+    </UI>
+
+    <Property Id='WIXUI_INSTALLDIR' Value='APPLICATIONFOLDER' />
+
+    <WixVariable Id='WixUILicenseRtf' Value='wix\License.rtf' />
+  </Product>
+</Wix>
