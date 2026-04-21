@@ -97,14 +97,18 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
         token_monitor.display_warning(&token_level);
         if matches!(token_level, TokenWarningLevel::Critical(_)) {
             logger.warn(&current_role.to_string(), "Token critical before role exec");
-            let save_and_exit = Confirm::new()
-                .with_prompt("Token usage critical. Save checkpoint and exit?")
-                .default(true)
-                .interact()?;
-            if save_and_exit {
-                save_current_checkpoint(&state, &current_role, path)?;
-                println!("{}", "Checkpoint saved. Run 'porpoise' to resume.".cyan());
-                break;
+            if args.dry_run {
+                println!("{}", "  [dry-run] Token usage critical — skipping checkpoint prompt".yellow());
+            } else {
+                let save_and_exit = Confirm::new()
+                    .with_prompt("Token usage critical. Save checkpoint and exit?")
+                    .default(true)
+                    .interact()?;
+                if save_and_exit {
+                    save_current_checkpoint(&state, &current_role, path)?;
+                    println!("{}", "Checkpoint saved. Run 'porpoise' to resume.".cyan());
+                    break;
+                }
             }
         }
 
@@ -153,6 +157,9 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                 logger.role_end(&current_role.to_string(), state.cycle, false);
                 logger.error(&current_role.to_string(), &e.to_string());
                 println!("{} {}", "Error executing role:".red().bold(), e);
+                if args.dry_run {
+                    break;
+                }
                 let retry = Confirm::new()
                     .with_prompt("Retry this role?")
                     .default(true)
@@ -214,6 +221,9 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
 
         // Reviewer decision flow
         if current_role == Role::Reviewer {
+            if args.dry_run {
+                println!("{}", "  [dry-run] Reviewer stub — skipping decision branch".dimmed());
+            } else {
             println!();
             match report.review_status.as_ref() {
                 Some(ReviewStatus::Approved) => {
@@ -294,6 +304,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                     }
                 }
             }
+            } // else !dry_run
         }
 
         // Advance

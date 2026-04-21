@@ -35,7 +35,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
         timestamp = timestamp,
         tree = ctx.tree_output,
     );
-    write_file(&claude_md_path, &claude_md_content)?;
+    write_file(&claude_md_path, &claude_md_content, path)?;
     println!("  {} {}", "Created:".green(), claude_md_path.display());
 
     // Generate .docs/project.md
@@ -68,7 +68,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
         project_name = ctx.project_name,
         timestamp = timestamp,
     );
-    write_file(&project_md_path, &project_md_content)?;
+    write_file(&project_md_path, &project_md_content, path)?;
     println!("  {} {}", "Created:".green(), project_md_path.display());
 
     // Generate prompt files
@@ -83,7 +83,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 
     for (filename, content) in &prompts {
         let prompt_path = prompts_dir.join(filename);
-        write_file(&prompt_path, content)?;
+        write_file(&prompt_path, content, path)?;
         println!("  {} {}", "Created:".green(), prompt_path.display());
     }
 

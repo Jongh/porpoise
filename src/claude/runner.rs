@@ -29,7 +29,8 @@ impl ClaudeRunner {
         output_file: &Path,
     ) -> Result<String> {
         if let Some(parent) = output_file.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("디렉토리 생성 실패: {}", parent.display()))?;
         }
 
         let prompt = self.build_prompt(prompt_file, context_files)?;
@@ -85,6 +86,8 @@ impl ClaudeRunner {
         }
 
         if !full_output.is_empty() {
+            // output_file은 caller(roles.rs)가 project 내부 경로로 결정하므로 경계 검사 생략.
+            // ClaudeRunner에 project_root를 추가하면 write_file()로 교체 가능 (향후 리팩토링).
             fs::write(output_file, &full_output).with_context(|| {
                 format!("Failed to write output to {}", output_file.display())
             })?;

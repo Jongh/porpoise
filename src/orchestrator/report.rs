@@ -102,7 +102,7 @@ pub fn save_report(report: &Report, path: &Path) -> Result<PathBuf> {
     let filename = format!("{}-{}-report.md", report.timestamp, report.role);
     let report_path = path.join(".docs").join("reports").join(&filename);
 
-    write_file(&report_path, &report.content)?;
+    write_file(&report_path, &report.content, path)?;
 
     Ok(report_path)
 }
