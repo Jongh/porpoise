@@ -3,6 +3,7 @@ mod logger;
 mod orchestrator;
 mod token;
 mod claude;
+mod utils;
 
 use anyhow::Result;
 use clap::Parser;
@@ -37,7 +38,14 @@ pub struct Args {
     pub verbose: bool,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(e) = run() {
+        utils::error::print_error(&e);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let args = Args::parse();
     let current_dir = std::env::current_dir()?;
 

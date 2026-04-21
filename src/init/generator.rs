@@ -1,22 +1,13 @@
 use anyhow::Result;
 use chrono::Local;
 use colored::Colorize;
-use std::fs;
 use std::path::Path;
 
 use super::context::ProjectContext;
+use crate::utils::fs::write_file;
 
 pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-    // Ensure .docs directories exist
-    let docs_dir = path.join(".docs");
-    let prompts_dir = docs_dir.join("prompts");
-    let reports_dir = docs_dir.join("reports");
-
-    fs::create_dir_all(&docs_dir)?;
-    fs::create_dir_all(&prompts_dir)?;
-    fs::create_dir_all(&reports_dir)?;
 
     // Generate claude.md
     let claude_md_path = path.join("claude.md");
@@ -44,10 +35,11 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
         timestamp = timestamp,
         tree = ctx.tree_output,
     );
-    fs::write(&claude_md_path, &claude_md_content)?;
+    write_file(&claude_md_path, &claude_md_content)?;
     println!("  {} {}", "Created:".green(), claude_md_path.display());
 
     // Generate .docs/project.md
+    let docs_dir = path.join(".docs");
     let project_md_path = docs_dir.join("project.md");
     let project_md_content = format!(
         r#"# 개발 루틴 문서
@@ -76,10 +68,11 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
         project_name = ctx.project_name,
         timestamp = timestamp,
     );
-    fs::write(&project_md_path, &project_md_content)?;
+    write_file(&project_md_path, &project_md_content)?;
     println!("  {} {}", "Created:".green(), project_md_path.display());
 
     // Generate prompt files
+    let prompts_dir = docs_dir.join("prompts");
     let prompts = [
         ("00-orche.md", generate_orche_prompt(ctx)),
         ("01-pm.md", generate_pm_prompt()),
@@ -90,7 +83,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 
     for (filename, content) in &prompts {
         let prompt_path = prompts_dir.join(filename);
-        fs::write(&prompt_path, content)?;
+        write_file(&prompt_path, content)?;
         println!("  {} {}", "Created:".green(), prompt_path.display());
     }
 

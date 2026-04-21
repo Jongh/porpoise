@@ -1,8 +1,9 @@
 use anyhow::Result;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::utils::fs::write_file;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReviewStatus {
@@ -98,13 +99,10 @@ pub fn parse_report(content: &str, role: &str) -> Report {
 }
 
 pub fn save_report(report: &Report, path: &Path) -> Result<PathBuf> {
-    let reports_dir = path.join(".docs").join("reports");
-    fs::create_dir_all(&reports_dir)?;
-
     let filename = format!("{}-{}-report.md", report.timestamp, report.role);
-    let report_path = reports_dir.join(&filename);
+    let report_path = path.join(".docs").join("reports").join(&filename);
 
-    fs::write(&report_path, &report.content)?;
+    write_file(&report_path, &report.content)?;
 
     Ok(report_path)
 }

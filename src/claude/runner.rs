@@ -97,6 +97,10 @@ impl ClaudeRunner {
     ///
     /// On Windows, npm-installed CLIs are `.cmd` batch wrappers that cannot be
     /// spawned directly — they require `cmd.exe /C <path>` as the launcher.
+    ///
+    /// `--dangerously-skip-permissions` is always passed so that claude can
+    /// write/edit files without prompting for interactive TTY confirmation,
+    /// which is impossible when stdin is a pipe carrying the prompt text.
     fn make_command(&self) -> Command {
         #[cfg(windows)]
         {
@@ -108,10 +112,13 @@ impl ClaudeRunner {
             if matches!(ext, "cmd" | "bat") {
                 let mut cmd = Command::new("cmd");
                 cmd.arg("/C").arg(&self.binary_path);
+                cmd.arg("--dangerously-skip-permissions");
                 return cmd;
             }
         }
-        Command::new(&self.binary_path)
+        let mut cmd = Command::new(&self.binary_path);
+        cmd.arg("--dangerously-skip-permissions");
+        cmd
     }
 
     /// Build a combined prompt: context file contents prepended, then the role prompt.
