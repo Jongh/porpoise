@@ -9,25 +9,30 @@ Porpoise automates the full software development workflow by orchestrating **PM 
 ## Installation
 
 ### Windows
-Download `porpoise-*.msi` from [Releases](https://github.com/kjhfood/porpoise/releases) and run the installer. `porpoise` will be added to your PATH automatically.
+
+Download `porpoise-*.msi` from [Releases](https://github.com/jongh/porpoise/releases) and run the installer. `porpoise` will be added to your PATH automatically.
 
 ### Ubuntu/Debian
+
 ```bash
 sudo dpkg -i porpoise_*.deb
 ```
 
 ### RHEL/Fedora
+
 ```bash
 sudo rpm -i porpoise-*.rpm
 ```
 
 ### macOS / Linux
+
 ```bash
 tar xzf porpoise-*.tar.gz
 sudo mv porpoise /usr/local/bin/
 ```
 
 ### Build from source
+
 ```bash
 cargo build --release
 ```
