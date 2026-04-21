@@ -142,44 +142,6 @@ jobs:
           name: windows-zip
           path: porpoise-windows-x86_64.zip
 
-  build-windows-msi:
-    name: Build Windows MSI
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-wix
-        run: cargo install cargo-wix
-
-      - name: Install WiX Toolset
-        run: |
-          dotnet tool install --global wix
-          wix extension add WixToolset.UI.wixext
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: Create placeholder icon
-        run: |
-          # Create a minimal valid ICO file (placeholder)
-          $bytes = [byte[]](0,0,1,0,1,0,16,16,0,0,1,0,32,0,40,4,0,0,22,0,0,0,40,0,0,0,16,0,0,0,32,0,0,0,1,0,32,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
-          $bytes += [byte[]](0) * (1062 - $bytes.Length)
-          [System.IO.File]::WriteAllBytes("wix\porpoise.ico", $bytes)
-        shell: pwsh
-
-      - name: Build MSI
-        run: cargo wix --no-build --nocapture
-
-      - name: Upload MSI artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-msi
-          path: target/wix/*.msi
-
   build-macos:
     name: Build macOS (${{ matrix.target }})
     runs-on: macos-latest
@@ -222,7 +184,6 @@ jobs:
       - build-deb
       - build-rpm
       - build-windows
-      - build-windows-msi
       - build-macos
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -257,9 +218,6 @@ jobs:
             Software development orchestration tool powered by Claude Code.
 
             ### Installation
-
-            **Windows (MSI Installer)**
-            Download and run `porpoise-*.msi` — automatically adds `porpoise` to PATH.
 
             **Windows (ZIP)**
             Extract `porpoise-windows-x86_64.zip` and add the folder to your PATH.
