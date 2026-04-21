@@ -7,17 +7,18 @@
     Manufacturer='김종현'
     Language='1033'
     Codepage='1252'
-    Version='!(bind.FileVersion.exe_porpoise)'
+    Version='0.1.0.0'
   >
     <Package
       Id='*'
       Keywords='Installer'
       Description='Porpoise Development Orchestration Tool Installer'
       Manufacturer='김종현'
-      InstallerVersion='450'
+      InstallerVersion='500'
       Languages='1033'
       Compressed='yes'
       SummaryCodepage='1252'
+      Platform='x64'
     />
 
     <MajorUpgrade
@@ -29,9 +30,9 @@
     <Property Id='DiskPrompt' Value='Porpoise Installation' />
 
     <Directory Id='TARGETDIR' Name='SourceDir'>
-      <Directory Id='ProgramFilesFolder' Name='PFiles'>
+      <Directory Id='ProgramFiles64Folder'>
         <Directory Id='APPLICATIONFOLDER' Name='Porpoise'>
-          <Component Id='exe_porpoise' Guid='A1B2C3D4-E5F6-7890-ABCD-EF1234567890'>
+          <Component Id='exe_porpoise' Guid='A1B2C3D4-E5F6-7890-ABCD-EF1234567890' Win64='yes'>
             <File
               Id='exe_porpoise'
               Name='porpoise.exe'
@@ -62,7 +63,7 @@
       </Component>
     </DirectoryRef>
 
-    <!-- Add to PATH -->
+    <!-- System PATH 등록 -->
     <DirectoryRef Id='TARGETDIR'>
       <Component Id='PathComponent' Guid='C3D4E5F6-A7B8-9012-CDEF-012345678901'>
         <Environment
