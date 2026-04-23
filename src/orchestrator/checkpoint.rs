@@ -14,6 +14,8 @@ pub struct Checkpoint {
     pub completed_roles: Vec<String>,
     pub next_role: String,
     pub pending_tasks: Vec<String>,
+    pub current_task_id: String,
+    pub retry_count: u32,
 }
 
 impl Checkpoint {
@@ -23,6 +25,8 @@ impl Checkpoint {
         completed_roles: Vec<String>,
         next_role: &str,
         pending_tasks: Vec<String>,
+        current_task_id: &str,
+        retry_count: u32,
     ) -> Self {
         Checkpoint {
             timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -31,6 +35,8 @@ impl Checkpoint {
             completed_roles,
             next_role: next_role.to_string(),
             pending_tasks,
+            current_task_id: current_task_id.to_string(),
+            retry_count,
         }
     }
 }
@@ -49,6 +55,8 @@ pub fn save_checkpoint(checkpoint: &Checkpoint, path: &Path) -> Result<()> {
 - cycle: {cycle}
 - current_role: {current_role}
 - next_role: {next_role}
+- current_task_id: {current_task_id}
+- retry_count: {retry_count}
 
 ## Completed Roles
 {completed_roles}
@@ -60,6 +68,8 @@ pub fn save_checkpoint(checkpoint: &Checkpoint, path: &Path) -> Result<()> {
         cycle = checkpoint.cycle,
         current_role = checkpoint.current_role,
         next_role = checkpoint.next_role,
+        current_task_id = checkpoint.current_task_id,
+        retry_count = checkpoint.retry_count,
         completed_roles = if checkpoint.completed_roles.is_empty() {
             "- (none)".to_string()
         } else {
@@ -103,6 +113,8 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
     let mut next_role = String::new();
     let mut completed_roles: Vec<String> = Vec::new();
     let mut pending_tasks: Vec<String> = Vec::new();
+    let mut current_task_id = String::new();
+    let mut retry_count = 0u32;
 
     let mut in_completed = false;
     let mut in_pending = false;
@@ -141,7 +153,6 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
             continue;
         }
 
-        // Parse metadata lines
         if let Some(val) = trimmed.strip_prefix("- timestamp: ") {
             timestamp = val.trim().to_string();
         } else if let Some(val) = trimmed.strip_prefix("- cycle: ") {
@@ -150,6 +161,10 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
             current_role = val.trim().to_string();
         } else if let Some(val) = trimmed.strip_prefix("- next_role: ") {
             next_role = val.trim().to_string();
+        } else if let Some(val) = trimmed.strip_prefix("- current_task_id: ") {
+            current_task_id = val.trim().to_string();
+        } else if let Some(val) = trimmed.strip_prefix("- retry_count: ") {
+            retry_count = val.trim().parse().unwrap_or(0);
         }
     }
 
@@ -160,6 +175,8 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
         completed_roles,
         next_role,
         pending_tasks,
+        current_task_id,
+        retry_count,
     })
 }
 
@@ -177,6 +194,8 @@ mod tests {
 - cycle: 3
 - current_role: tester
 - next_role: reviewer
+- current_task_id: M1-T01
+- retry_count: 2
 
 ## Completed Roles
 - pm
@@ -196,6 +215,8 @@ mod tests {
         assert_eq!(cp.completed_roles, vec!["pm", "developer"]);
         assert!(cp.pending_tasks.is_empty());
         assert_eq!(cp.timestamp, "2026-04-21 10:00:00");
+        assert_eq!(cp.current_task_id, "M1-T01");
+        assert_eq!(cp.retry_count, 2);
     }
 
     #[test]
@@ -204,5 +225,16 @@ mod tests {
         assert_eq!(cp.cycle, 1);
         assert!(cp.current_role.is_empty());
         assert!(cp.completed_roles.is_empty());
+        assert_eq!(cp.current_task_id, "");
+        assert_eq!(cp.retry_count, 0);
+    }
+
+    #[test]
+    fn parse_checkpoint_backward_compat_no_task_fields() {
+        let old_format = "# Porpoise Checkpoint\n\n## Metadata\n- timestamp: 2026-04-21 10:00:00\n- cycle: 1\n- current_role: pm\n- next_role: developer\n\n## Completed Roles\n- (none)\n\n## Pending Tasks\n- (none)\n";
+        let cp = parse_checkpoint(old_format).unwrap();
+        assert_eq!(cp.cycle, 1);
+        assert_eq!(cp.current_task_id, "");
+        assert_eq!(cp.retry_count, 0);
     }
 }

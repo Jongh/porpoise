@@ -38,7 +38,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     write_file(&claude_md_path, &claude_md_content, path)?;
     println!("  {} {}", "Created:".green(), claude_md_path.display());
 
-    // Generate .docs/project.md
+    // Generate .docs/project.md with M{n}-T{nn} task ID format
     let docs_dir = path.join(".docs");
     let project_md_path = docs_dir.join("project.md");
     let project_md_content = format!(
@@ -47,8 +47,9 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 ## 프로젝트: {project_name}
 ## 초기화: {timestamp}
 
-## 마일스톤
-- [ ] 마일스톤 1: 초기 구현
+## Milestone 1: 초기 구현
+- [ ] M1-T01: 핵심 기능 구현
+- [ ] M1-T02: 테스트 및 검증
 
 ## 역할별 책임
 - PM: 작업 범위 정의, 기술 명세 작성
@@ -64,6 +65,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 ## 컨벤션
 - 커밋 메시지: 한국어 허용
 - 브랜치 전략: main 브랜치 직접 커밋 (소규모 프로젝트)
+- 리포트 파일명: {{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md
 "#,
         project_name = ctx.project_name,
         timestamp = timestamp,
@@ -105,29 +107,49 @@ fn generate_orche_prompt(ctx: &ProjectContext) -> String {
 1. 각 역할은 독립적으로 실행됩니다.
 2. 각 역할의 결과는 `.docs/reports/` 에 저장됩니다.
 3. 다음 역할은 이전 역할의 리포트를 참고합니다.
-4. 사이클은 Reviewer 승인 후 완료됩니다.
+4. 사이클은 Reviewer NEXT 코드 출력 후 완료됩니다.
 
-## 리포트 형식
-각 리포트는 마크다운 형식으로 작성되며, 다음 섹션을 포함해야 합니다:
-- 역할 및 사이클 번호
-- 수행한 작업
-- 결과 및 산출물
-- 다음 단계 권고사항
-- 특이사항 (버그, 이슈 등)
+## 리포트 파일명 규칙
+`{{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md`
+예: M1-T01-pm-C1-R0.md, M1-T01-developer-C1-R1.md
 
-## 사용자 개입 조건
-다음 상황에서는 `USER_INPUT_REQUIRED` 마커를 포함하세요:
-- 중요한 설계 결정이 필요한 경우
-- 명세가 불명확한 경우
-- 외부 리소스가 필요한 경우
+## 종료 코드 규칙
+응답의 **마지막 줄**에 아래 코드 중 하나를 단독으로 출력합니다:
+- `NEXT`: 현재 역할 완료, 다음 단계 진행
+- `PREV`: 이전 역할 재작업 필요
+- `RESP`: 사용자 입력 필요 (본문에 `## 사용자 확인 필요` 섹션 포함)
 "#,
         project_name = ctx.project_name,
         description = ctx.description,
     )
 }
 
+fn exit_code_section() -> &'static str {
+    r#"
+---
+
+## 응답 종료 코드
+
+응답의 **마지막 줄**에 아래 코드 중 하나를 **단독으로** 출력한다. 다른 텍스트가 뒤따르면 안 된다.
+
+| 코드 | 조건 |
+|------|------|
+| `NEXT` | 현재 역할 완료, 다음 단계 진행 가능 |
+| `PREV` | 이전 역할 재작업 필요 (Critical 버그, 명세 오류 등) |
+| `RESP` | 사용자 확인 필요 (본문에 `## 사용자 확인 필요` 섹션 추가) |
+
+RESP 사용 시 본문에 추가:
+
+```
+## 사용자 확인 필요
+- Q: {질문 내용}
+```
+"#
+}
+
 fn generate_pm_prompt() -> String {
-    r#"# PM (Product Manager) 역할 프롬프트
+    format!(
+        r#"# PM (Product Manager) 역할 프롬프트
 
 ## 역할 정의
 당신은 소프트웨어 프로젝트의 PM(Product Manager)입니다. 작업 범위를 정의하고, 기술 명세를 작성하며, 개발자가 구현할 수 있도록 상세한 요구사항을 제공합니다.
@@ -142,7 +164,7 @@ fn generate_pm_prompt() -> String {
 리포트에 다음 섹션을 포함하세요:
 
 ```markdown
-# PM 리포트 - 사이클 {cycle}
+# PM 리포트 - 사이클 {{cycle}}
 
 ## 이번 사이클 작업 범위
 ...
@@ -165,12 +187,15 @@ fn generate_pm_prompt() -> String {
 - 명세는 구체적이고 측정 가능해야 합니다.
 - 모호한 요구사항은 명확히 해야 합니다.
 - 기술적 부채를 최소화하는 방향으로 설계하세요.
-- 사용자 개입이 필요한 경우 `USER_INPUT_REQUIRED` 마커를 사용하세요.
-"#.to_string()
+- 구현 불가능한 치명적 문제 발견 시 PREV를 사용하세요.
+{exit_code}"#,
+        exit_code = exit_code_section()
+    )
 }
 
 fn generate_developer_prompt() -> String {
-    r#"# Developer 역할 프롬프트
+    format!(
+        r#"# Developer 역할 프롬프트
 
 ## 역할 정의
 당신은 소프트웨어 프로젝트의 Developer입니다. PM의 명세를 바탕으로 코드를 구현하고, 단위 테스트를 작성하며, 코드 품질을 유지합니다.
@@ -185,7 +210,7 @@ fn generate_developer_prompt() -> String {
 리포트에 다음 섹션을 포함하세요:
 
 ```markdown
-# Developer 리포트 - 사이클 {cycle}
+# Developer 리포트 - 사이클 {{cycle}}
 
 ## 구현 완료 항목
 - [x] ...
@@ -209,13 +234,16 @@ fn generate_developer_prompt() -> String {
 ## 중요 지침
 - PM 명세를 충실히 따르세요.
 - 테스트 가능한 코드를 작성하세요.
-- 중요한 버그 발견 시 `Critical` 마커를 사용하세요.
-- 사용자 개입이 필요한 경우 `USER_INPUT_REQUIRED` 마커를 사용하세요.
-"#.to_string()
+- PM 명세에 구현 불가능한 오류가 있으면 PREV를 사용하세요.
+- unwrap() 신규 추가 금지.
+{exit_code}"#,
+        exit_code = exit_code_section()
+    )
 }
 
 fn generate_tester_prompt() -> String {
-    r#"# Tester 역할 프롬프트
+    format!(
+        r#"# Tester 역할 프롬프트
 
 ## 역할 정의
 당신은 소프트웨어 프로젝트의 Tester입니다. Developer가 구현한 코드를 테스트하고, 버그를 발견하며, 품질을 검증합니다.
@@ -230,13 +258,13 @@ fn generate_tester_prompt() -> String {
 리포트에 다음 섹션을 포함하세요:
 
 ```markdown
-# Tester 리포트 - 사이클 {cycle}
+# Tester 리포트 - 사이클 {{cycle}}
 
 ## 테스트 수행 항목
 - [x] ...
 
 ## 발견된 버그
-### Critical 버그
+### Critical 버그 (PREV 필요)
 ...
 
 ### Minor 버그
@@ -254,14 +282,17 @@ fn generate_tester_prompt() -> String {
 
 ## 중요 지침
 - 모든 PM 요구사항을 커버하는 테스트를 수행하세요.
-- 치명적인 버그는 `Critical` 마커를 사용하세요.
+- Critical 버그(수정 없이 릴리즈 불가) 발견 시 반드시 PREV를 사용하세요.
+- Minor 버그만 있으면 NEXT를 사용하세요.
 - 엣지 케이스를 반드시 테스트하세요.
-- 사용자 개입이 필요한 경우 `USER_INPUT_REQUIRED` 마커를 사용하세요.
-"#.to_string()
+{exit_code}"#,
+        exit_code = exit_code_section()
+    )
 }
 
 fn generate_reviewer_prompt() -> String {
-    r#"# Reviewer 역할 프롬프트
+    format!(
+        r#"# Reviewer 역할 프롬프트
 
 ## 역할 정의
 당신은 소프트웨어 프로젝트의 Reviewer입니다. 코드 품질, 아키텍처, 보안, 성능을 종합적으로 평가하고 최종 승인 여부를 결정합니다.
@@ -276,7 +307,7 @@ fn generate_reviewer_prompt() -> String {
 리포트에 다음 섹션을 포함하세요:
 
 ```markdown
-# Reviewer 리포트 - 사이클 {cycle}
+# Reviewer 리포트 - 사이클 {{cycle}}
 
 ## 리뷰 결과
 **상태**: APPROVED / CHANGES_REQUESTED / REJECTED
@@ -296,18 +327,29 @@ fn generate_reviewer_prompt() -> String {
 ## 승인 조건 (CHANGES_REQUESTED인 경우)
 ...
 
-## 마일스톤 완료 여부
-(마일스톤이 완료된 경우 "마일스톤 완료" 라고 명시)
-
 ## 다음 사이클 권고사항
 ...
 ```
 
 ## 중요 지침
 - 객관적이고 건설적인 피드백을 제공하세요.
-- APPROVED: 모든 기준을 충족한 경우
-- CHANGES_REQUESTED: 수정 후 재검토가 필요한 경우
-- REJECTED: 근본적인 재설계가 필요한 경우
-- 마일스톤 완료 시 "마일스톤 완료"를 명시하세요.
-"#.to_string()
+- APPROVED → NEXT 출력: 자동 커밋 및 다음 작업으로 진행됩니다.
+- CHANGES_REQUESTED → PREV 출력: Developer 또는 Tester로 재작업 라우팅됩니다.
+- REJECTED (근본적 재설계 필요) → PREV 출력: PM으로 재라우팅됩니다.
+- 머지 블로커가 있으면 반드시 PREV를 사용하세요.
+
+## 메타데이터 블록 (선택)
+추가 메타데이터가 필요한 경우:
+
+```
+<!-- PORPOISE_META
+status: APPROVED
+critical_bugs: false
+user_input_required: false
+milestone_complete: false
+-->
+```
+{exit_code}"#,
+        exit_code = exit_code_section()
+    )
 }

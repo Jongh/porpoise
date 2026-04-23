@@ -50,7 +50,7 @@ impl TokenMonitor {
 
     pub fn check_usage(&self) -> TokenWarningLevel {
         let chars_used = self.estimate_chars_used();
-        let percent = ((chars_used as f64 / MAX_CONTEXT_CHARS as f64) * 100.0) as u8;
+        let percent = ((chars_used as f64 / MAX_CONTEXT_CHARS as f64) * 100.0).min(255.0) as u8;
 
         if self.thresholds.is_empty() {
             return TokenWarningLevel::Normal;

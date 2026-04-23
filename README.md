@@ -10,7 +10,7 @@ Porpoise automates the full software development workflow by orchestrating **PM 
 
 ### Windows
 
-Download `porpoise-*.msi` from [Releases](https://github.com/jongh/porpoise/releases) and run the installer. `porpoise` will be added to your PATH automatically.
+Download `porpoise-*.msi` from [Releases](https://github.com/Jongh/porpoise/releases) and run the installer. `porpoise` will be added to your PATH automatically.
 
 ### Ubuntu/Debian
 
@@ -67,7 +67,7 @@ porpoise --verbose
 4. **Tester role**: Runs tests, documents bugs
 5. **Reviewer role**: Code review → APPROVED / CHANGES_REQUESTED / REJECTED
 
-Reports are saved to `.docs/reports/` with timestamps. Checkpoints enable resuming after interruption.
+Reports are saved to `.docs/reports/` as `{task-id}-{role}-C{cycle}-R{retry}.md`. Checkpoints enable resuming after interruption.
 
 ## File structure (generated)
 
@@ -84,11 +84,39 @@ Reports are saved to `.docs/reports/` with timestamps. Checkpoints enable resumi
     │   └── 04-reviewer.md    # Reviewer role prompt
     └── reports/
         ├── checkpoint.md
-        ├── {ts}-pm-report.md
-        ├── {ts}-dev-report.md
-        ├── {ts}-test-report.md
-        └── {ts}-review-report.md
+        ├── {task-id}-pm-C{n}-R{n}.md
+        ├── {task-id}-developer-C{n}-R{n}.md
+        ├── {task-id}-tester-C{n}-R{n}.md
+        └── {task-id}-reviewer-C{n}-R{n}.md
 ```
+
+## Exit codes (role protocol)
+
+Each role appends one of these codes as the **last line** of its report:
+
+| Code | Meaning | Orchestrator action |
+|------|---------|---------------------|
+| `NEXT` | Role complete, proceed | Advance to next role (Reviewer NEXT → auto-commit) |
+| `PREV` | Previous role needs rework | Re-run previous role (retry R+1) |
+| `RESP` | User input required | Collect input, re-run same role |
+
+## CHANGELOG
+
+### [v0.1.2]
+- Milestone & task ID system (`M{n}-T{nn}` in `project.md`)
+- Role exit code protocol (PREV/NEXT/RESP) — replaces keyword-based heuristics
+- Deterministic report filenames (`{task-id}-{role}-C{n}-R{n}.md`)
+- Auto git commit on Reviewer NEXT: `[{task-id}] {title}`
+- Release flow on milestone completion
+- BUG-A fix: Critical keyword mis-detection eliminated
+- BUG-B fix: RESP code enforces user input before role re-run
+- BUG-C fix: Timestamp-based filename collisions eliminated
+
+### [v0.1.1]
+- `is_within_project()` symlink escape fix (parent-chain canonicalize)
+- `delete_file` / `delete_dir` / `move_file` helpers with boundary check
+- `dry_run` guards on all dialoguer prompts
+- `with_context()` on all `create_dir_all` calls
 
 ## License
 

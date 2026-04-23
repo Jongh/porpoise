@@ -12,7 +12,7 @@ use colored::Colorize;
 #[derive(Parser, Debug)]
 #[command(
     name = "porpoise",
-    version = "0.1.0",
+    version = "0.1.2",
     about = "Software development orchestration tool powered by Claude Code",
     long_about = None
 )]
