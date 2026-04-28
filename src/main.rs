@@ -1,8 +1,9 @@
+mod claude;
 mod init;
 mod logger;
+mod milestone;
 mod orchestrator;
 mod token;
-mod claude;
 mod utils;
 
 use anyhow::Result;
