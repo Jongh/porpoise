@@ -10,8 +10,11 @@ pub struct Milestone {
     pub title: String,
     pub version: Option<String>,
     pub tasks: Vec<Task>,
+    #[allow(dead_code)]
     pub metadata: HashMap<String, String>,
+    #[allow(dead_code)]
     pub raw_sections: HashMap<String, String>,
+    #[allow(dead_code)]
     pub file_path: PathBuf,
 }
 
@@ -21,6 +24,7 @@ pub fn parse_milestone_file(path: &Path) -> Result<Milestone> {
     parse_milestone_content(&content, path)
 }
 
+#[allow(dead_code)]
 pub fn load_milestone(milestones_dir: &Path, milestone_id: u32) -> Result<Option<Milestone>> {
     let file_path = milestones_dir.join(format!("M{}.md", milestone_id));
     if !file_path.exists() {

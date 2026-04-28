@@ -13,6 +13,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::logger::Logger;
+use crate::milestone::update_task_status;
 use crate::token::monitor::{TokenMonitor, TokenWarningLevel};
 use crate::utils::fs::write_file;
 use crate::utils::input::collect_multiline_input;
@@ -249,7 +250,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                                         );
                                     }
                                 }
-                                if let Err(e) = mark_task_complete(path, &state.current_task_id) {
+                                if let Err(e) = mark_task_complete(path, &state.current_task_id, &logger) {
                                     logger.warn(
                                         "reviewer",
                                         &format!("Task mark failed: {}", e),
@@ -556,7 +557,7 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     Ok(())
 }
 
-fn mark_task_complete(path: &Path, task_id: &str) -> Result<()> {
+fn mark_task_complete(path: &Path, task_id: &str, logger: &Logger) -> Result<()> {
     let project_md_path = path.join(".docs").join("project.md");
     let content = std::fs::read_to_string(&project_md_path)
         .with_context(|| format!("project.md 읽기 실패: {}", project_md_path.display()))?;
@@ -566,6 +567,9 @@ fn mark_task_complete(path: &Path, task_id: &str) -> Result<()> {
     let new_content = content.replace(&marker, &replacement);
 
     write_file(&project_md_path, &new_content, path).context("project.md 업데이트 실패")?;
+
+    update_task_status(path, task_id, true, logger);
+
     Ok(())
 }
 

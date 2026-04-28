@@ -69,7 +69,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger) -> Res
 
         let output = runner.run_with_prompt(
             &prompt_file,
-            &[user_input_path.clone()],
+            std::slice::from_ref(&user_input_path),
             &output_file,
         )?;
 
@@ -154,6 +154,10 @@ pub fn append_milestone_to_project_md(path: &Path, milestone: &Milestone) -> Res
         .as_deref()
         .map(|v| format!(" ({})", v))
         .unwrap_or_default();
+
+    if content.contains(&format!("## Milestone {}:", milestone.id)) {
+        return Ok(());
+    }
 
     let mut new_section = format!(
         "\n## Milestone {}: {}{}\n",
@@ -243,5 +247,53 @@ mod tests {
         let content = read_project_md(dir.path());
         assert!(content.starts_with(original));
         assert!(content.contains("## Milestone 1: 첫 번째\n"));
+    }
+
+    #[test]
+    fn append_duplicate_milestone_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_project_md(dir.path(), "# 프로젝트\n");
+
+        let m = make_milestone(1, "첫 번째", None, vec![
+            make_task("M1-T01", "작업1", false),
+        ]);
+        append_milestone_to_project_md(dir.path(), &m).unwrap();
+        append_milestone_to_project_md(dir.path(), &m).unwrap();
+
+        let content = read_project_md(dir.path());
+        let count = content.matches("## Milestone 1:").count();
+        assert_eq!(count, 1, "중복 섹션이 추가되어서는 안 됩니다");
+    }
+
+    #[test]
+    fn mark_task_complete_updates_milestone_file() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_project_md(dir.path(), "# 프로젝트\n\n- [ ] M1-T01: 작업1\n");
+
+        let milestones_dir = dir.path().join(".docs").join("milestones");
+        std::fs::create_dir_all(&milestones_dir).unwrap();
+        std::fs::write(
+            milestones_dir.join("M1.md"),
+            "# M1: 테스트\n\n- [ ] M1-T01: 작업1\n",
+        )
+        .unwrap();
+
+        let logger = crate::logger::Logger::new(dir.path(), false).unwrap();
+        crate::milestone::update_task_status(dir.path(), "M1-T01", true, &logger);
+
+        let m1_content =
+            std::fs::read_to_string(milestones_dir.join("M1.md")).unwrap();
+        assert!(m1_content.contains("- [x] M1-T01:"));
+    }
+
+    #[test]
+    fn mark_task_complete_missing_milestone_file() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_project_md(dir.path(), "# 프로젝트\n\n- [ ] M1-T01: 작업1\n");
+        std::fs::create_dir_all(dir.path().join(".docs").join("milestones")).unwrap();
+
+        let logger = crate::logger::Logger::new(dir.path(), false).unwrap();
+        // M1.md 없음 — Ok(()) 이어야 하고 패닉 없어야 함
+        crate::milestone::update_task_status(dir.path(), "M1-T01", true, &logger);
     }
 }
