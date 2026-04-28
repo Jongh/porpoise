@@ -14,6 +14,7 @@ use std::time::Duration;
 use crate::logger::Logger;
 use crate::token::monitor::{TokenMonitor, TokenWarningLevel};
 use crate::utils::fs::write_file;
+use crate::utils::input::collect_multiline_input;
 use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
@@ -322,9 +323,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                         }
 
                         if !args.dry_run {
-                            let answer = Input::<String>::new()
-                                .with_prompt("응답을 입력하세요")
-                                .interact_text()?;
+                            let answer = collect_multiline_input("응답을 입력하세요")?;
 
                             let resp_filename = format!(
                                 "{}-{}-C{}-R{}-resp.md",
