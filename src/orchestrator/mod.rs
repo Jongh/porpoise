@@ -1,4 +1,5 @@
 pub mod checkpoint;
+pub mod milestone_session;
 pub mod report;
 pub mod roles;
 pub mod state;
@@ -78,6 +79,33 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
     if args.dry_run {
         println!("{}", "[DRY RUN MODE — no execution will happen]".yellow().bold());
         println!();
+    }
+
+    // M1-T05: 미완료 작업 없으면 마일스톤 생성 세션 자동 진입
+    {
+        let tasks = parse_tasks_from_project_md(path);
+        if tasks.iter().all(|t| t.completed) {
+            logger.info("orchestrator", "No pending tasks — entering milestone session");
+            println!("{}", "\n미완료 작업이 없습니다. 마일스톤 생성 세션을 시작합니다.".cyan().bold());
+            milestone_session::run_milestone_session(path, args.dry_run, &logger)?;
+            let new_tasks = parse_tasks_from_project_md(path);
+            match new_tasks.iter().find(|t| !t.completed) {
+                Some(next) => {
+                    state.current_task_id = next.id.clone();
+                    state.current_task_title = next.title.clone();
+                    state.completed_roles = vec![];
+                    state.current_role = Some(Role::PM);
+                    logger.info(
+                        "orchestrator",
+                        &format!("Milestone session done — first task: {}", state.current_task_id),
+                    );
+                }
+                None => {
+                    println!("{}", "실행할 작업이 없습니다. 'porpoise'를 다시 실행하세요.".yellow());
+                    return Ok(());
+                }
+            }
+        }
     }
 
     let executor = RoleExecutor::new();
@@ -236,6 +264,38 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                                 println!("{}", "\n모든 작업 항목 완료!".green().bold());
                                 logger.info("orchestrator", "All tasks completed");
                                 print_history(&history);
+
+                                // M1-T05: 새 마일스톤 생성 여부 확인
+                                let create_new = Confirm::new()
+                                    .with_prompt("새 마일스톤을 생성하시겠습니까? (아니오: 릴리즈 플로우 진행)")
+                                    .default(false)
+                                    .interact()?;
+
+                                if create_new {
+                                    milestone_session::run_milestone_session(path, false, &logger)?;
+                                    let new_tasks = parse_tasks_from_project_md(path);
+                                    if let Some(next) = new_tasks.iter().find(|t| !t.completed) {
+                                        println!(
+                                            "  {} 다음 작업: {} — {}",
+                                            "→".cyan(),
+                                            next.id.cyan(),
+                                            next.title
+                                        );
+                                        state.current_task_id = next.id.clone();
+                                        state.current_task_title = next.title.clone();
+                                        state.completed_roles = vec![];
+                                        state.current_role = Some(Role::PM);
+                                        logger.info(
+                                            "orchestrator",
+                                            &format!("New milestone task: {}", state.current_task_id),
+                                        );
+                                        continue;
+                                    } else {
+                                        println!("{}", "새 마일스톤이 생성되지 않았습니다.".yellow());
+                                        break;
+                                    }
+                                }
+
                                 if let Err(e) = run_release_flow(path) {
                                     println!("{} {}", "⚠  릴리즈 플로우 오류:".yellow(), e);
                                     logger.warn(
