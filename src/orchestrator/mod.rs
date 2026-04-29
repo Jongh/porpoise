@@ -33,6 +33,12 @@ enum RoleOutcome {
     Stop,
 }
 
+enum PrevReportAction {
+    Continue,
+    ReRun,
+    Stop,
+}
+
 pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     let logger = Logger::new(path, args.verbose)?;
 
@@ -183,13 +189,19 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
         // T07: Validate exit code in previous role's report before execution
         if !args.dry_run {
             if let Some(prev_role) = current_role.prev() {
-                if !validate_prev_report_exit_code(
+                match validate_prev_report_exit_code(
                     &reports_dir,
-                    &prev_role.to_string(),
+                    &prev_role,
                     &state.current_task_id,
                     &logger,
                 )? {
-                    break;
+                    PrevReportAction::Continue => {}
+                    PrevReportAction::ReRun => {
+                        state.completed_roles.retain(|r| r != &prev_role);
+                        state.current_role = Some(prev_role);
+                        continue;
+                    }
+                    PrevReportAction::Stop => break,
                 }
             }
         }
@@ -770,17 +782,17 @@ fn print_history(history: &[String]) {
 
 fn validate_prev_report_exit_code(
     reports_dir: &Path,
-    prev_role: &str,
+    prev_role: &Role,
     task_id: &str,
     logger: &Logger,
-) -> Result<bool> {
-    if let Some(report_path) = find_latest_report(reports_dir, prev_role, task_id) {
+) -> Result<PrevReportAction> {
+    if let Some(report_path) = find_latest_report(reports_dir, &prev_role.to_string(), task_id) {
         if let Ok(content) = std::fs::read_to_string(&report_path) {
             if parse_exit_code(&content).is_none() {
                 println!(
                     "{}",
                     format!(
-                        "⚠ 직전 리포트({})에 유효한 종료 코드가 없습니다.",
+                        "⚠ 직전 리포트({})에 유효한 종료 코드가 없습니다. (비정상 완료)",
                         report_path
                             .file_name()
                             .unwrap_or_default()
@@ -789,14 +801,21 @@ fn validate_prev_report_exit_code(
                     .yellow()
                     .bold()
                 );
-                logger.warn(prev_role, "유효한 종료 코드 없음 — 비정상 종료된 리포트");
+                logger.warn(&prev_role.to_string(), "유효한 종료 코드 없음 — 비정상 완료된 리포트");
+                let rerun = Confirm::new()
+                    .with_prompt(format!("{} 역할을 재실행하시겠습니까?", prev_role.display_name()))
+                    .default(true)
+                    .interact()?;
+                if rerun {
+                    return Ok(PrevReportAction::ReRun);
+                }
                 let cont = Confirm::new()
                     .with_prompt("비정상 종료된 리포트를 무시하고 계속하시겠습니까?")
                     .default(false)
                     .interact()?;
-                return Ok(cont);
+                return Ok(if cont { PrevReportAction::Continue } else { PrevReportAction::Stop });
             }
         }
     }
-    Ok(true)
+    Ok(PrevReportAction::Continue)
 }
