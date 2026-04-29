@@ -317,7 +317,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                                     }
                                 }
 
-                                if let Err(e) = run_release_flow(path, config.github_repo()) {
+                                if let Err(e) = run_release_flow(config.github_repo()) {
                                     println!("{} {}", "⚠  릴리즈 플로우 오류:".yellow(), e);
                                     logger.warn(
                                         "orchestrator",
@@ -620,7 +620,7 @@ fn all_tasks_done(path: &Path) -> bool {
     !tasks.is_empty() && tasks.iter().all(|t| t.completed)
 }
 
-fn run_release_flow(_path: &Path, github_repo: Option<&str>) -> Result<()> {
+fn run_release_flow(github_repo: Option<&str>) -> Result<()> {
     println!("{}", "\n=== 릴리즈 플로우 ===".green().bold());
 
     let branch_out = Command::new("git")

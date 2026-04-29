@@ -10,7 +10,7 @@ use crate::orchestrator::report::{parse_report, ExitCode};
 use crate::utils::fs::write_file;
 use crate::utils::input::collect_multiline_input;
 
-use super::MAX_RESP_RETRY;
+const MAX_MILESTONE_RETRY: u32 = 5;
 
 /// 마일스톤 생성 세션을 실행합니다.
 /// 사용자로부터 마일스톤 정보를 수집하고 Claude 세션을 통해 M{id}.md를 생성한 뒤
@@ -29,7 +29,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
 
     let runner = ClaudeRunner::new()?;
 
-    for attempt in 0..MAX_RESP_RETRY {
+    for attempt in 0..MAX_MILESTONE_RETRY {
         println!();
         println!("마일스톤 정보를 입력하세요. 예시:");
         println!("  제목: 새 마일스톤 제목");
@@ -119,10 +119,10 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
                 for (i, q) in report.questions.iter().enumerate() {
                     println!("  {}. {}", i + 1, q.yellow());
                 }
-                if attempt + 1 >= MAX_RESP_RETRY {
+                if attempt + 1 >= MAX_MILESTONE_RETRY {
                     println!(
                         "{}",
-                        format!("⚠  최대 재시도 횟수({})에 도달했습니다.", MAX_RESP_RETRY)
+                        format!("⚠  최대 재시도 횟수({})에 도달했습니다.", MAX_MILESTONE_RETRY)
                             .yellow()
                     );
                     break;
