@@ -14,14 +14,6 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     let claude_md_content = format!(
         r#"# {project_name}
 
-## 프로젝트 개요
-{description}
-
-## 현재 상태
-- 초기화됨: {timestamp}
-- 현재 사이클: 0
-- 다음 단계: PM 역할 실행 대기
-
 ## 파일 구조
 {tree}
 
@@ -31,8 +23,6 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 - 프롬프트 위치: .docs/prompts/
 "#,
         project_name = ctx.project_name,
-        description = ctx.description,
-        timestamp = timestamp,
         tree = ctx.tree_output,
     );
     write_file(&claude_md_path, &claude_md_content, path)?;
@@ -46,10 +36,6 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 
 ## 프로젝트: {project_name}
 ## 초기화: {timestamp}
-
-## Milestone 1: 초기 구현
-- [ ] M1-T01: 핵심 기능 구현
-- [ ] M1-T02: 테스트 및 검증
 
 ## 역할별 책임
 - PM: 작업 범위 정의, 기술 명세 작성

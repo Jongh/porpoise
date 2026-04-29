@@ -127,7 +127,7 @@ impl Default for RoleExecutor {
 
 /// Build context for a role by collecting relevant previous reports and project docs.
 /// Supports both new ({task_id}-{role}-C{n}-R{n}.md) and old ({ts}-{role}-report.md) formats.
-pub fn build_context(role: &Role, _cycle: u32, path: &Path, task_id: &str) -> RoleContext {
+pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> RoleContext {
     let mut ctx = RoleContext::new();
 
     let project_md = path.join(".docs").join("project.md");
@@ -146,6 +146,8 @@ pub fn build_context(role: &Role, _cycle: u32, path: &Path, task_id: &str) -> Ro
     }
 
     let predecessor_roles: Vec<&str> = match role {
+        // PM in subsequent cycles gets previous cycle's reports for context
+        Role::PM if cycle > 1 => vec!["reviewer", "tester", "developer"],
         Role::PM => vec![],
         Role::Developer => vec!["pm"],
         Role::Tester => vec!["pm", "developer"],
@@ -155,6 +157,13 @@ pub fn build_context(role: &Role, _cycle: u32, path: &Path, task_id: &str) -> Ro
     for prev_role in &predecessor_roles {
         if let Some(latest) = find_latest_report(&reports_dir, prev_role, task_id) {
             ctx = ctx.with_previous_report(latest);
+        }
+    }
+
+    // For PM: include user-provided additional instructions from PREV cycles
+    if matches!(role, Role::PM) {
+        for f in find_prev_additional_files(&reports_dir, task_id) {
+            ctx = ctx.with_project_doc(f);
         }
     }
 
@@ -168,7 +177,7 @@ pub fn build_context(role: &Role, _cycle: u32, path: &Path, task_id: &str) -> Ro
 }
 
 /// Find the latest report for a given role and task_id (new format preferred, old format fallback).
-fn find_latest_report(reports_dir: &Path, role: &str, task_id: &str) -> Option<PathBuf> {
+pub(super) fn find_latest_report(reports_dir: &Path, role: &str, task_id: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(reports_dir).ok()?;
 
     let mut matching: Vec<PathBuf> = entries
@@ -194,6 +203,28 @@ fn filename_matches_role(name: &str, role: &str, task_id: &str) -> bool {
     // Old format: {timestamp}-{role}-report.md (backward compat)
     let matches_old = name.contains(&format!("-{}-report.md", role));
     matches_new || matches_old
+}
+
+/// Find user-provided additional instruction files saved during PREV cycles.
+fn find_prev_additional_files(reports_dir: &Path, task_id: &str) -> Vec<PathBuf> {
+    let prefix = format!("{}-prev-additional-", task_id);
+    if let Ok(entries) = std::fs::read_dir(reports_dir) {
+        let mut files: Vec<PathBuf> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with(&prefix) && name.ends_with(".md") {
+                    Some(e.path())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        files.sort();
+        files
+    } else {
+        vec![]
+    }
 }
 
 /// Find RESP answer files for the current role and task (sorted by name).

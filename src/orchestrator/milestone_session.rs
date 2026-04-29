@@ -10,7 +10,7 @@ use crate::orchestrator::report::{parse_report, ExitCode};
 use crate::utils::fs::write_file;
 use crate::utils::input::collect_multiline_input;
 
-const MAX_RESP_RETRY: u32 = 5;
+use super::MAX_RESP_RETRY;
 
 /// 마일스톤 생성 세션을 실행합니다.
 /// 사용자로부터 마일스톤 정보를 수집하고 Claude 세션을 통해 M{id}.md를 생성한 뒤

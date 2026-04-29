@@ -21,11 +21,11 @@ use crate::utils::input::collect_multiline_input;
 use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
-use report::{count_existing_reports, save_report, ExitCode, Report};
-use roles::{build_context, RoleContext, RoleExecutor};
+use report::{count_existing_reports, parse_exit_code, save_report, ExitCode, Report};
+use roles::{build_context, find_latest_report, RoleContext, RoleExecutor};
 use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
 
-const MAX_RESP_RETRY: u32 = 5;
+pub const MAX_RESP_RETRY: u32 = 5;
 
 enum RoleOutcome {
     Report(Report),
@@ -180,6 +180,20 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             continue;
         }
 
+        // T07: Validate exit code in previous role's report before execution
+        if !args.dry_run {
+            if let Some(prev_role) = current_role.prev() {
+                if !validate_prev_report_exit_code(
+                    &reports_dir,
+                    &prev_role.to_string(),
+                    &state.current_task_id,
+                    &logger,
+                )? {
+                    break;
+                }
+            }
+        }
+
         if !args.dry_run {
             let proceed = Confirm::new()
                 .with_prompt(format!("Execute {}?", current_role.display_name()))
@@ -226,6 +240,9 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     logger.warn(&current_role.to_string(), "종료 코드 없음 — NEXT로 폴백");
                     ExitCode::Next
                 });
+
+                // T06: Print token usage after each role completion
+                token_monitor.check_threshold();
 
                 match exit_code {
                     ExitCode::Next => {
@@ -352,30 +369,52 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     }
 
                     ExitCode::Prev => {
-                        let prev_role = match current_role.prev() {
-                            Some(r) => r,
-                            None => {
-                                // PM has no predecessor — just retry PM
-                                logger.warn("pm", "PREV on PM — retrying PM");
-                                state.current_role = Some(Role::PM);
-                                continue;
-                            }
-                        };
+                        state.cycle += 1;
+                        state.completed_roles = vec![];
+                        state.current_role = Some(Role::PM);
                         println!(
                             "{}",
                             format!(
-                                "  ← PREV: {} 재작업 필요",
-                                prev_role.display_name()
+                                "  ← PREV: 사이클 {} — PM부터 재시작",
+                                state.cycle
                             )
                             .yellow()
                             .bold()
                         );
                         logger.warn(
                             &current_role.to_string(),
-                            &format!("PREV → routing back to {}", prev_role),
+                            &format!("PREV → cycle {} restarting from PM", state.cycle),
                         );
-                        state.completed_roles.retain(|r| r != &prev_role && r != &current_role);
-                        state.current_role = Some(prev_role);
+
+                        if !args.dry_run {
+                            let additional = collect_multiline_input(
+                                "추가 지시사항 (생략 시 바로 다음 사이클 시작)",
+                            )?;
+                            if !additional.trim().is_empty() {
+                                let additional_path = reports_dir.join(format!(
+                                    "{}-prev-additional-C{}.md",
+                                    state.current_task_id, state.cycle
+                                ));
+                                let file_content = format!(
+                                    "# 사용자 추가 지시사항 — 사이클 {}\n\n{}\n",
+                                    state.cycle,
+                                    additional.trim()
+                                );
+                                if let Err(e) =
+                                    write_file(&additional_path, &file_content, path)
+                                {
+                                    logger.warn(
+                                        "orchestrator",
+                                        &format!("추가 내용 저장 실패: {}", e),
+                                    );
+                                }
+                            }
+                        } else {
+                            println!(
+                                "{}",
+                                "  [dry-run] PREV — 추가 입력 수집 스킵".dimmed()
+                            );
+                        }
                     }
 
                     ExitCode::Resp => {
@@ -542,7 +581,7 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     let message = format!("[{}] {}", task_id, task_title);
 
     let status = Command::new("git")
-        .args(["add", "."])
+        .args(["add", ".docs/", "Cargo.toml", "Cargo.lock", "src/"])
         .status()
         .context("git add 실행 실패")?;
     if !status.success() {
@@ -581,7 +620,7 @@ fn all_tasks_done(path: &Path) -> bool {
     !tasks.is_empty() && tasks.iter().all(|t| t.completed)
 }
 
-fn run_release_flow(path: &Path, github_repo: Option<&str>) -> Result<()> {
+fn run_release_flow(_path: &Path, github_repo: Option<&str>) -> Result<()> {
     println!("{}", "\n=== 릴리즈 플로우 ===".green().bold());
 
     let branch_out = Command::new("git")
@@ -622,12 +661,26 @@ fn run_release_flow(path: &Path, github_repo: Option<&str>) -> Result<()> {
     }
 
     let push_branch = if branch.is_empty() { "main" } else { &branch };
-    let status = Command::new("git")
-        .args(["push", "origin", push_branch, "--tags"])
-        .status()
-        .context("git push 실행 실패")?;
-    if !status.success() {
-        anyhow::bail!("git push 실패 (exit code: {})", status.code().unwrap_or(-1));
+    loop {
+        let status = Command::new("git")
+            .args(["push", "origin", push_branch, "--tags"])
+            .status()
+            .context("git push 실행 실패")?;
+        if status.success() {
+            break;
+        }
+        println!(
+            "{}",
+            format!("⚠ git push 실패 (exit code: {})", status.code().unwrap_or(-1)).yellow()
+        );
+        let retry = Confirm::new()
+            .with_prompt("다시 시도하시겠습니까? (아니오: 릴리즈를 건너뜁니다)")
+            .default(true)
+            .interact()?;
+        if !retry {
+            println!("{}", "릴리즈 건너뜀.".dimmed());
+            return Ok(());
+        }
     }
 
     let base = github_repo
@@ -635,7 +688,6 @@ fn run_release_flow(path: &Path, github_repo: Option<&str>) -> Result<()> {
         .unwrap_or_else(|| "https://github.com/Jongh/porpoise/releases/tag/".to_string());
     println!("{}", format!("릴리즈 완료: {}{}", base, new_tag).green());
 
-    let _ = path;
     Ok(())
 }
 
@@ -714,4 +766,37 @@ fn print_history(history: &[String]) {
     for entry in history {
         println!("  {}", entry.dimmed());
     }
+}
+
+fn validate_prev_report_exit_code(
+    reports_dir: &Path,
+    prev_role: &str,
+    task_id: &str,
+    logger: &Logger,
+) -> Result<bool> {
+    if let Some(report_path) = find_latest_report(reports_dir, prev_role, task_id) {
+        if let Ok(content) = std::fs::read_to_string(&report_path) {
+            if parse_exit_code(&content).is_none() {
+                println!(
+                    "{}",
+                    format!(
+                        "⚠ 직전 리포트({})에 유효한 종료 코드가 없습니다.",
+                        report_path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    )
+                    .yellow()
+                    .bold()
+                );
+                logger.warn(prev_role, "유효한 종료 코드 없음 — 비정상 종료된 리포트");
+                let cont = Confirm::new()
+                    .with_prompt("비정상 종료된 리포트를 무시하고 계속하시겠습니까?")
+                    .default(false)
+                    .interact()?;
+                return Ok(cont);
+            }
+        }
+    }
+    Ok(true)
 }

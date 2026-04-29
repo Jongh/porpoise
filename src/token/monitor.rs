@@ -103,4 +103,38 @@ impl TokenMonitor {
             }
         }
     }
+
+    /// Print current token usage percentage after each phase, with threshold warnings.
+    pub fn check_threshold(&self) {
+        let chars_used = self.estimate_chars_used();
+        let percent =
+            ((chars_used as f64 / MAX_CONTEXT_CHARS as f64) * 100.0).min(255.0) as u8;
+
+        let t0 = self.thresholds.first().copied().unwrap_or(70);
+        let t1 = self.thresholds.get(1).copied().unwrap_or(85);
+        let t2 = self.thresholds.get(2).copied().unwrap_or(95);
+
+        if percent >= t2 {
+            println!(
+                "  {}",
+                format!("[ERROR] Token usage: {}% — 중단 권고", percent)
+                    .red()
+                    .bold()
+            );
+        } else if percent >= t1 {
+            println!(
+                "  {}",
+                format!("[WARN] Token usage: {}% — 심각", percent)
+                    .yellow()
+                    .bold()
+            );
+        } else if percent >= t0 {
+            println!(
+                "  {}",
+                format!("[WARN] Token usage: {}%", percent).yellow()
+            );
+        } else {
+            println!("  Token usage: {}%", percent);
+        }
+    }
 }

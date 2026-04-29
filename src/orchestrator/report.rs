@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use super::state::TaskId;
 use crate::utils::fs::write_file;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +34,6 @@ pub struct Report {
     pub role: String,
     pub content: String,
     pub requires_user_input: bool,
-    pub has_critical_bugs: bool,
     pub review_status: Option<ReviewStatus>,
     pub milestone_complete: bool,
     pub questions: Vec<String>,
@@ -46,7 +46,6 @@ impl Report {
             role: role.to_string(),
             content: format!("[DRY RUN] {} role execution stub", role),
             requires_user_input: false,
-            has_critical_bugs: false,
             review_status: Some(ReviewStatus::Approved),
             milestone_complete: false,
             questions: vec![],
@@ -56,8 +55,10 @@ impl Report {
 }
 
 /// Returns the standardised report filename for a given task, role, cycle, and retry.
+/// The task_id T-number is zero-padded to 2 digits (e.g. "M1-T1" → "M1-T01").
 pub fn report_filename(task_id: &str, role: &str, cycle: u32, retry: u32) -> String {
-    format!("{}-{}-C{}-R{}.md", task_id, role, cycle, retry)
+    let normalized = TaskId::new(task_id);
+    format!("{}-{}-C{}-R{}.md", normalized, role, cycle, retry)
 }
 
 /// Counts existing report files for the given task+role+cycle combination.
@@ -92,7 +93,6 @@ pub fn parse_exit_code(content: &str) -> Option<ExitCode> {
 
 struct MetaBlock {
     status: Option<ReviewStatus>,
-    critical_bugs: bool,
     user_input_required: bool,
     milestone_complete: bool,
 }
@@ -104,7 +104,6 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
     let block = &content[after_tag..after_tag + end_offset];
 
     let mut status = None;
-    let mut critical_bugs = false;
     let mut user_input_required = false;
     let mut milestone_complete = false;
 
@@ -117,8 +116,6 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
                 "REJECTED" => Some(ReviewStatus::Rejected),
                 _ => None,
             };
-        } else if let Some(val) = line.strip_prefix("critical_bugs:") {
-            critical_bugs = val.trim() == "true";
         } else if let Some(val) = line.strip_prefix("user_input_required:") {
             user_input_required = val.trim() == "true";
         } else if let Some(val) = line.strip_prefix("milestone_complete:") {
@@ -128,24 +125,16 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
 
     Some(MetaBlock {
         status,
-        critical_bugs,
         user_input_required,
         milestone_complete,
     })
 }
 
 pub fn parse_report(content: &str, role: &str) -> Report {
-    let (review_status, has_critical_bugs, requires_user_input, milestone_complete) =
+    let (review_status, requires_user_input, milestone_complete) =
         if let Some(meta) = parse_meta_block(content) {
-            (
-                meta.status,
-                meta.critical_bugs,
-                meta.user_input_required,
-                meta.milestone_complete,
-            )
+            (meta.status, meta.user_input_required, meta.milestone_complete)
         } else {
-            // Heuristic fallback (no META block): parse review_status from text,
-            // but do NOT infer has_critical_bugs from keywords (BUG-A fix).
             let content_upper = content.to_uppercase();
             let review_status = if content_upper.contains("APPROVED")
                 && !content_upper.contains("NOT APPROVED")
@@ -164,7 +153,7 @@ pub fn parse_report(content: &str, role: &str) -> Report {
             let milestone_complete = content.contains("마일스톤 완료")
                 || content.contains("MILESTONE_COMPLETE")
                 || content.contains("milestone complete");
-            (review_status, false, requires_user_input, milestone_complete)
+            (review_status, requires_user_input, milestone_complete)
         };
 
     let exit_code = parse_exit_code(content);
@@ -200,7 +189,6 @@ pub fn parse_report(content: &str, role: &str) -> Report {
         role: role.to_string(),
         content: content.to_string(),
         requires_user_input,
-        has_critical_bugs,
         review_status,
         milestone_complete,
         questions,
@@ -252,10 +240,9 @@ mod tests {
 
     #[test]
     fn parse_meta_block_approved() {
-        let content = "Some content\n<!-- PORPOISE_META\nstatus: APPROVED\ncritical_bugs: false\nuser_input_required: false\nmilestone_complete: true\n-->\nMore content\n\nNEXT";
+        let content = "Some content\n<!-- PORPOISE_META\nstatus: APPROVED\nuser_input_required: false\nmilestone_complete: true\n-->\nMore content\n\nNEXT";
         let report = parse_report(content, "reviewer");
         assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
-        assert!(!report.has_critical_bugs);
         assert!(!report.requires_user_input);
         assert!(report.milestone_complete);
         assert_eq!(report.exit_code, Some(ExitCode::Next));
@@ -263,32 +250,22 @@ mod tests {
 
     #[test]
     fn parse_meta_block_changes_requested() {
-        let content = "<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\ncritical_bugs: true\nuser_input_required: true\nmilestone_complete: false\n-->\n\nPREV";
+        let content = "<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\nuser_input_required: true\nmilestone_complete: false\n-->\n\nPREV";
         let report = parse_report(content, "reviewer");
         assert!(matches!(
             report.review_status,
             Some(ReviewStatus::ChangesRequested)
         ));
-        assert!(report.has_critical_bugs);
         assert!(report.requires_user_input);
         assert_eq!(report.exit_code, Some(ExitCode::Prev));
     }
 
     #[test]
     fn parse_meta_block_rejected() {
-        let content = "<!-- PORPOISE_META\nstatus: REJECTED\ncritical_bugs: false\nuser_input_required: false\nmilestone_complete: false\n-->\n\nPREV";
+        let content = "<!-- PORPOISE_META\nstatus: REJECTED\nuser_input_required: false\nmilestone_complete: false\n-->\n\nPREV";
         let report = parse_report(content, "reviewer");
         assert!(matches!(report.review_status, Some(ReviewStatus::Rejected)));
         assert_eq!(report.exit_code, Some(ExitCode::Prev));
-    }
-
-    #[test]
-    fn no_critical_bug_keyword_heuristic() {
-        // "Critical" keyword alone must NOT set has_critical_bugs (BUG-A fix)
-        let content = "Found Critical issues in the code\n\nNEXT";
-        let report = parse_report(content, "tester");
-        assert!(!report.has_critical_bugs);
-        assert_eq!(report.exit_code, Some(ExitCode::Next));
     }
 
     #[test]
@@ -309,13 +286,23 @@ mod tests {
 
     #[test]
     fn report_filename_format() {
-        assert_eq!(
-            report_filename("M1-T01", "pm", 1, 0),
-            "M1-T01-pm-C1-R0.md"
-        );
+        assert_eq!(report_filename("M1-T01", "pm", 1, 0), "M1-T01-pm-C1-R0.md");
         assert_eq!(
             report_filename("M1-T01", "developer", 2, 1),
             "M1-T01-developer-C2-R1.md"
+        );
+    }
+
+    #[test]
+    fn report_filename_zero_pads_task_number() {
+        assert_eq!(report_filename("M1-T1", "pm", 1, 0), "M1-T01-pm-C1-R0.md");
+        assert_eq!(
+            report_filename("M2-T9", "tester", 1, 0),
+            "M2-T09-tester-C1-R0.md"
+        );
+        assert_eq!(
+            report_filename("M2-T10", "reviewer", 1, 0),
+            "M2-T10-reviewer-C1-R0.md"
         );
     }
 
@@ -324,5 +311,6 @@ mod tests {
         let report = Report::stub("pm");
         assert_eq!(report.exit_code, Some(ExitCode::Next));
         assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
+        assert!(!report.requires_user_input);
     }
 }

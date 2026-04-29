@@ -3,6 +3,42 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+/// Task identifier with enforced 2-digit zero-pad on the T-number (e.g. "M1-T1" → "M1-T01").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskId(String);
+
+impl TaskId {
+    pub fn new(s: &str) -> Self {
+        TaskId(normalize_task_id(s))
+    }
+
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TaskId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+fn normalize_task_id(s: &str) -> String {
+    if let Some((m_part, t_rest)) = s.split_once("-T") {
+        if m_part.starts_with('M') {
+            let digits: String = t_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if !digits.is_empty() {
+                if let Ok(n) = digits.parse::<u32>() {
+                    let suffix = &t_rest[digits.len()..];
+                    return format!("{}-T{:02}{}", m_part, n, suffix);
+                }
+            }
+        }
+    }
+    s.to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     PM,
