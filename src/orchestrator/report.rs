@@ -64,7 +64,8 @@ pub fn report_filename(task_id: &str, role: &str, cycle: u32, retry: u32) -> Str
 /// Counts existing report files for the given task+role+cycle combination.
 /// Used to determine the next retry number before executing a role.
 pub fn count_existing_reports(reports_dir: &Path, task_id: &str, role: &str, cycle: u32) -> u32 {
-    let prefix = format!("{}-{}-C{}-R", task_id, role, cycle);
+    let normalized = TaskId::new(task_id);
+    let prefix = format!("{}-{}-C{}-R", normalized, role, cycle);
     if let Ok(entries) = std::fs::read_dir(reports_dir) {
         entries
             .flatten()
@@ -304,6 +305,15 @@ mod tests {
             report_filename("M2-T10", "reviewer", 1, 0),
             "M2-T10-reviewer-C1-R0.md"
         );
+    }
+
+    #[test]
+    fn count_existing_reports_normalizes_task_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let reports_dir = temp.path();
+        std::fs::write(reports_dir.join("M2-T09-tester-C1-R0.md"), "content").unwrap();
+        assert_eq!(count_existing_reports(reports_dir, "M2-T9", "tester", 1), 1);
+        assert_eq!(count_existing_reports(reports_dir, "M2-T09", "tester", 1), 1);
     }
 
     #[test]

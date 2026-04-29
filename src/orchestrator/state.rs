@@ -140,7 +140,7 @@ pub fn parse_tasks_from_project_md(path: &Path) -> Vec<Task> {
                 // Only accept M{n}-T{nn} format
                 if id_part.starts_with('M') && id_part.contains("-T") {
                     tasks.push(Task {
-                        id: id_part.to_string(),
+                        id: TaskId::new(id_part).to_string(),
                         title: title.to_string(),
                         completed,
                     });

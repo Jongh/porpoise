@@ -3,7 +3,7 @@ use colored::Colorize;
 use std::path::{Path, PathBuf};
 
 use super::report::{parse_report, report_filename, Report};
-use super::state::Role;
+use super::state::{Role, TaskId};
 use crate::claude::runner::ClaudeRunner;
 
 #[derive(Debug, Clone)]
@@ -197,9 +197,10 @@ pub(super) fn find_latest_report(reports_dir: &Path, role: &str, task_id: &str) 
 }
 
 fn filename_matches_role(name: &str, role: &str, task_id: &str) -> bool {
+    let normalized = TaskId::new(task_id);
     // New format: {task_id}-{role}-C{n}-R{n}.md
     let new_pat = format!("-{}-C", role);
-    let matches_new = name.starts_with(&format!("{}-", task_id)) && name.contains(&new_pat);
+    let matches_new = name.starts_with(&format!("{}-", normalized)) && name.contains(&new_pat);
     // Old format: {timestamp}-{role}-report.md (backward compat)
     let matches_old = name.contains(&format!("-{}-report.md", role));
     matches_new || matches_old
@@ -207,7 +208,8 @@ fn filename_matches_role(name: &str, role: &str, task_id: &str) -> bool {
 
 /// Find user-provided additional instruction files saved during PREV cycles.
 fn find_prev_additional_files(reports_dir: &Path, task_id: &str) -> Vec<PathBuf> {
-    let prefix = format!("{}-prev-additional-", task_id);
+    let normalized = TaskId::new(task_id);
+    let prefix = format!("{}-prev-additional-", normalized);
     if let Ok(entries) = std::fs::read_dir(reports_dir) {
         let mut files: Vec<PathBuf> = entries
             .flatten()
@@ -229,7 +231,8 @@ fn find_prev_additional_files(reports_dir: &Path, task_id: &str) -> Vec<PathBuf>
 
 /// Find RESP answer files for the current role and task (sorted by name).
 fn find_resp_files(reports_dir: &Path, task_id: &str, role: &str) -> Vec<PathBuf> {
-    let prefix = format!("{}-{}-", task_id, role);
+    let normalized = TaskId::new(task_id);
+    let prefix = format!("{}-{}-", normalized, role);
     if let Ok(entries) = std::fs::read_dir(reports_dir) {
         let mut files: Vec<PathBuf> = entries
             .flatten()
@@ -246,5 +249,30 @@ fn find_resp_files(reports_dir: &Path, task_id: &str, role: &str) -> Vec<PathBuf
         files
     } else {
         vec![]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filename_matches_role_normalizes_task_id() {
+        assert!(filename_matches_role("M1-T01-pm-C1-R0.md", "pm", "M1-T1"));
+        assert!(filename_matches_role("M2-T09-tester-C1-R0.md", "tester", "M2-T9"));
+        assert!(filename_matches_role("M2-T10-reviewer-C1-R0.md", "reviewer", "M2-T10"));
+        assert!(!filename_matches_role("M1-T01-pm-C1-R0.md", "developer", "M1-T1"));
+        assert!(!filename_matches_role("M1-T02-pm-C1-R0.md", "pm", "M1-T1"));
+    }
+
+    #[test]
+    fn find_latest_report_normalizes_task_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let reports_dir = temp.path();
+        std::fs::write(reports_dir.join("M2-T09-pm-C1-R0.md"), "content").unwrap();
+        // 패딩 없는 "M2-T9"로도 찾아야 함
+        assert!(find_latest_report(reports_dir, "pm", "M2-T9").is_some());
+        assert!(find_latest_report(reports_dir, "pm", "M2-T09").is_some());
+        assert!(find_latest_report(reports_dir, "developer", "M2-T9").is_none());
     }
 }
