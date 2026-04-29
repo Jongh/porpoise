@@ -330,8 +330,6 @@ fn generate_reviewer_prompt() -> String {
 ```
 <!-- PORPOISE_META
 status: APPROVED
-critical_bugs: false
-user_input_required: false
 milestone_complete: false
 -->
 ```

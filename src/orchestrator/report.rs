@@ -33,7 +33,6 @@ pub enum ExitCode {
 pub struct Report {
     pub role: String,
     pub content: String,
-    pub requires_user_input: bool,
     pub review_status: Option<ReviewStatus>,
     pub milestone_complete: bool,
     pub questions: Vec<String>,
@@ -45,7 +44,6 @@ impl Report {
         Report {
             role: role.to_string(),
             content: format!("[DRY RUN] {} role execution stub", role),
-            requires_user_input: false,
             review_status: Some(ReviewStatus::Approved),
             milestone_complete: false,
             questions: vec![],
@@ -94,7 +92,6 @@ pub fn parse_exit_code(content: &str) -> Option<ExitCode> {
 
 struct MetaBlock {
     status: Option<ReviewStatus>,
-    user_input_required: bool,
     milestone_complete: bool,
 }
 
@@ -105,7 +102,6 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
     let block = &content[after_tag..after_tag + end_offset];
 
     let mut status = None;
-    let mut user_input_required = false;
     let mut milestone_complete = false;
 
     for line in block.lines() {
@@ -117,8 +113,6 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
                 "REJECTED" => Some(ReviewStatus::Rejected),
                 _ => None,
             };
-        } else if let Some(val) = line.strip_prefix("user_input_required:") {
-            user_input_required = val.trim() == "true";
         } else if let Some(val) = line.strip_prefix("milestone_complete:") {
             milestone_complete = val.trim() == "true";
         }
@@ -126,15 +120,14 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
 
     Some(MetaBlock {
         status,
-        user_input_required,
         milestone_complete,
     })
 }
 
 pub fn parse_report(content: &str, role: &str) -> Report {
-    let (review_status, requires_user_input, milestone_complete) =
+    let (review_status, milestone_complete) =
         if let Some(meta) = parse_meta_block(content) {
-            (meta.status, meta.user_input_required, meta.milestone_complete)
+            (meta.status, meta.milestone_complete)
         } else {
             let content_upper = content.to_uppercase();
             let review_status = if content_upper.contains("APPROVED")
@@ -148,13 +141,10 @@ pub fn parse_report(content: &str, role: &str) -> Report {
             } else {
                 None
             };
-            let requires_user_input = content.contains("사용자 확인 필요")
-                || content.contains("USER_INPUT_REQUIRED")
-                || content.contains("USER INPUT REQUIRED");
             let milestone_complete = content.contains("마일스톤 완료")
                 || content.contains("MILESTONE_COMPLETE")
                 || content.contains("milestone complete");
-            (review_status, requires_user_input, milestone_complete)
+            (review_status, milestone_complete)
         };
 
     let exit_code = parse_exit_code(content);
@@ -189,7 +179,6 @@ pub fn parse_report(content: &str, role: &str) -> Report {
     Report {
         role: role.to_string(),
         content: content.to_string(),
-        requires_user_input,
         review_status,
         milestone_complete,
         questions,
@@ -241,29 +230,27 @@ mod tests {
 
     #[test]
     fn parse_meta_block_approved() {
-        let content = "Some content\n<!-- PORPOISE_META\nstatus: APPROVED\nuser_input_required: false\nmilestone_complete: true\n-->\nMore content\n\nNEXT";
+        let content = "Some content\n<!-- PORPOISE_META\nstatus: APPROVED\nmilestone_complete: true\n-->\nMore content\n\nNEXT";
         let report = parse_report(content, "reviewer");
         assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
-        assert!(!report.requires_user_input);
         assert!(report.milestone_complete);
         assert_eq!(report.exit_code, Some(ExitCode::Next));
     }
 
     #[test]
     fn parse_meta_block_changes_requested() {
-        let content = "<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\nuser_input_required: true\nmilestone_complete: false\n-->\n\nPREV";
+        let content = "<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\nmilestone_complete: false\n-->\n\nPREV";
         let report = parse_report(content, "reviewer");
         assert!(matches!(
             report.review_status,
             Some(ReviewStatus::ChangesRequested)
         ));
-        assert!(report.requires_user_input);
         assert_eq!(report.exit_code, Some(ExitCode::Prev));
     }
 
     #[test]
     fn parse_meta_block_rejected() {
-        let content = "<!-- PORPOISE_META\nstatus: REJECTED\nuser_input_required: false\nmilestone_complete: false\n-->\n\nPREV";
+        let content = "<!-- PORPOISE_META\nstatus: REJECTED\nmilestone_complete: false\n-->\n\nPREV";
         let report = parse_report(content, "reviewer");
         assert!(matches!(report.review_status, Some(ReviewStatus::Rejected)));
         assert_eq!(report.exit_code, Some(ExitCode::Prev));
@@ -271,7 +258,7 @@ mod tests {
 
     #[test]
     fn parse_meta_overrides_heuristics() {
-        let content = "APPROVED everywhere<!-- PORPOISE_META\nstatus: REJECTED\ncritical_bugs: false\nuser_input_required: false\nmilestone_complete: false\n-->\n\nPREV";
+        let content = "APPROVED everywhere<!-- PORPOISE_META\nstatus: REJECTED\nmilestone_complete: false\n-->\n\nPREV";
         let report = parse_report(content, "reviewer");
         assert!(matches!(report.review_status, Some(ReviewStatus::Rejected)));
     }
@@ -321,6 +308,5 @@ mod tests {
         let report = Report::stub("pm");
         assert_eq!(report.exit_code, Some(ExitCode::Next));
         assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
-        assert!(!report.requires_user_input);
     }
 }
