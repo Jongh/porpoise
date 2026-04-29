@@ -12,6 +12,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use crate::config::Config;
 use crate::logger::Logger;
 use crate::milestone::update_task_status;
 use crate::token::monitor::{TokenMonitor, TokenWarningLevel};
@@ -32,7 +33,7 @@ enum RoleOutcome {
     Stop,
 }
 
-pub fn run(path: &Path, args: &Args) -> Result<()> {
+pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     let logger = Logger::new(path, args.verbose)?;
 
     println!();
@@ -82,13 +83,15 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
         println!();
     }
 
+    let effective_model = args.model.clone().or_else(|| config.model().map(str::to_string));
+
     // M1-T05: 미완료 작업 없으면 마일스톤 생성 세션 자동 진입
     {
         let tasks = parse_tasks_from_project_md(path);
         if tasks.iter().all(|t| t.completed) {
             logger.info("orchestrator", "No pending tasks — entering milestone session");
             println!("{}", "\n미완료 작업이 없습니다. 마일스톤 생성 세션을 시작합니다.".cyan().bold());
-            milestone_session::run_milestone_session(path, args.dry_run, &logger)?;
+            milestone_session::run_milestone_session(path, args.dry_run, &logger, effective_model.as_deref())?;
             let new_tasks = parse_tasks_from_project_md(path);
             match new_tasks.iter().find(|t| !t.completed) {
                 Some(next) => {
@@ -109,7 +112,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
         }
     }
 
-    let executor = RoleExecutor::new();
+    let executor = RoleExecutor::new(effective_model.clone());
     let mut history: Vec<String> = Vec::new();
     let reports_dir = path.join(".docs").join("reports");
 
@@ -273,7 +276,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                                     .interact()?;
 
                                 if create_new {
-                                    milestone_session::run_milestone_session(path, false, &logger)?;
+                                    milestone_session::run_milestone_session(path, false, &logger, effective_model.as_deref())?;
                                     let new_tasks = parse_tasks_from_project_md(path);
                                     if let Some(next) = new_tasks.iter().find(|t| !t.completed) {
                                         println!(
@@ -297,7 +300,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
                                     }
                                 }
 
-                                if let Err(e) = run_release_flow(path) {
+                                if let Err(e) = run_release_flow(path, config.github_repo()) {
                                     println!("{} {}", "⚠  릴리즈 플로우 오류:".yellow(), e);
                                     logger.warn(
                                         "orchestrator",
@@ -578,7 +581,7 @@ fn all_tasks_done(path: &Path) -> bool {
     !tasks.is_empty() && tasks.iter().all(|t| t.completed)
 }
 
-fn run_release_flow(path: &Path) -> Result<()> {
+fn run_release_flow(path: &Path, github_repo: Option<&str>) -> Result<()> {
     println!("{}", "\n=== 릴리즈 플로우 ===".green().bold());
 
     let branch_out = Command::new("git")
@@ -627,16 +630,11 @@ fn run_release_flow(path: &Path) -> Result<()> {
         anyhow::bail!("git push 실패 (exit code: {})", status.code().unwrap_or(-1));
     }
 
-    println!(
-        "{}",
-        format!(
-            "릴리즈 완료: https://github.com/Jongh/porpoise/releases/tag/{}",
-            new_tag
-        )
-        .green()
-    );
+    let base = github_repo
+        .map(|repo| format!("https://github.com/{}/releases/tag/", repo))
+        .unwrap_or_else(|| "https://github.com/Jongh/porpoise/releases/tag/".to_string());
+    println!("{}", format!("릴리즈 완료: {}{}", base, new_tag).green());
 
-    // Suppress unused warning — path may be used for future version-file updates
     let _ = path;
     Ok(())
 }

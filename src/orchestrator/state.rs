@@ -146,8 +146,9 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
         return Ok(build_state_with_tasks(OrchestratorState::new(path), path));
     }
 
-    let checkpoint_path = reports_dir.join("checkpoint.md");
-    if checkpoint_path.exists() {
+    let checkpoint_json = reports_dir.join("checkpoint.json");
+    let checkpoint_md = reports_dir.join("checkpoint.md");
+    if checkpoint_json.exists() || checkpoint_md.exists() {
         if let Ok(checkpoint) = super::checkpoint::load_checkpoint(path) {
             let completed = checkpoint
                 .completed_roles

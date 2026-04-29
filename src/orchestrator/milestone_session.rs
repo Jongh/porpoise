@@ -15,7 +15,7 @@ const MAX_RESP_RETRY: u32 = 5;
 /// 마일스톤 생성 세션을 실행합니다.
 /// 사용자로부터 마일스톤 정보를 수집하고 Claude 세션을 통해 M{id}.md를 생성한 뒤
 /// project.md에 Milestone 섹션을 추가합니다.
-pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger) -> Result<()> {
+pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model: Option<&str>) -> Result<()> {
     println!("{}", "\n=== 마일스톤 생성 세션 ===".cyan().bold());
 
     if dry_run {
@@ -71,6 +71,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger) -> Res
             &prompt_file,
             std::slice::from_ref(&user_input_path),
             &output_file,
+            model,
         )?;
 
         let report = parse_report(&output, "milestone_session");

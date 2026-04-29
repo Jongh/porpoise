@@ -33,12 +33,13 @@ impl RoleContext {
 
 pub struct RoleExecutor {
     runner: Option<ClaudeRunner>,
+    model: Option<String>,
 }
 
 impl RoleExecutor {
-    pub fn new() -> Self {
+    pub fn new(model: Option<String>) -> Self {
         let runner = ClaudeRunner::new().ok();
-        RoleExecutor { runner }
+        RoleExecutor { runner, model }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -111,7 +112,7 @@ impl RoleExecutor {
             role.display_name().bold()
         );
 
-        let output = runner.run_with_prompt(&prompt_file, &context_files, &output_file)?;
+        let output = runner.run_with_prompt(&prompt_file, &context_files, &output_file, self.model.as_deref())?;
         let report = parse_report(&output, &role.to_string());
 
         Ok(report)
@@ -120,7 +121,7 @@ impl RoleExecutor {
 
 impl Default for RoleExecutor {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 

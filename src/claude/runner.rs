@@ -27,6 +27,7 @@ impl ClaudeRunner {
         prompt_file: &Path,
         context_files: &[PathBuf],
         output_file: &Path,
+        model: Option<&str>,
     ) -> Result<String> {
         if let Some(parent) = output_file.parent() {
             fs::create_dir_all(parent)
@@ -39,6 +40,9 @@ impl ClaudeRunner {
         // They must be invoked through `cmd.exe /C`.
         let mut cmd = self.make_command();
         cmd.arg("-p");
+        if let Some(m) = model {
+            cmd.arg("--model").arg(m);
+        }
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::inherit());
