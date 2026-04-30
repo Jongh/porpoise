@@ -323,6 +323,10 @@ fn generate_reviewer_prompt() -> String {
 - CHANGES_REQUESTED → PREV 출력: Developer 또는 Tester로 재작업 라우팅됩니다.
 - REJECTED (근본적 재설계 필요) → PREV 출력: PM으로 재라우팅됩니다.
 - 머지 블로커가 있으면 반드시 PREV를 사용하세요.
+- 릴리즈 태스크(빌드 버전 업데이트 등 마일스톤 최종 태스크)를 리뷰하는 경우, `README.md`의
+  `## CHANGELOG` 섹션에 새 버전 항목을 추가하세요.
+  형식: `### [vX.Y.Z]\n- 변경사항` (기존 항목 형식 유지).
+  완료된 마일스톤 태스크 목록을 기반으로 항목을 서술합니다.
 
 ## 메타데이터 블록 (선택)
 추가 메타데이터가 필요한 경우:

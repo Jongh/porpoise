@@ -593,7 +593,7 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     let message = format!("[{}] {}", task_id, task_title);
 
     let status = Command::new("git")
-        .args(["add", ".porpoise/", "Cargo.toml", "Cargo.lock", "src/"])
+        .args(["add", ".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md"])
         .status()
         .context("git add 실행 실패")?;
     if !status.success() {
