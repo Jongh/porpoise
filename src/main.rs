@@ -54,6 +54,10 @@ pub struct Args {
     #[arg(long, value_name = "THRESHOLDS", default_value = "70,85,95")]
     pub token_warn: String,
 
+    /// Skip non-critical confirmations (always defaults)
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,

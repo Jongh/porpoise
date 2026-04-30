@@ -1,6 +1,18 @@
 use std::io::{self, BufRead, Write};
 
 use anyhow::Result;
+use dialoguer::Confirm;
+
+pub fn confirm_or_default(prompt: &str, default: bool, auto_approve: bool) -> Result<bool> {
+    if auto_approve {
+        println!("[자동 승인] {} → {}", prompt, if default { "예" } else { "아니오" });
+        return Ok(default);
+    }
+    Ok(Confirm::new()
+        .with_prompt(prompt)
+        .default(default)
+        .interact()?)
+}
 
 pub fn collect_multiline_input(prompt: &str) -> Result<String> {
     if std::env::var_os("EDITOR").is_some() || std::env::var_os("VISUAL").is_some() {

@@ -17,7 +17,7 @@ use crate::logger::Logger;
 use crate::milestone::update_task_status;
 use crate::token::monitor::{TokenMonitor, TokenWarningLevel};
 use crate::utils::fs::write_file;
-use crate::utils::input::collect_multiline_input;
+use crate::utils::input::{collect_multiline_input, confirm_or_default};
 use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
@@ -172,10 +172,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                 &format!("RESP retry limit {} reached", MAX_RESP_RETRY),
             );
             if !args.dry_run {
-                let cont = Confirm::new()
-                    .with_prompt("강제로 다음 단계로 진행하시겠습니까?")
-                    .default(false)
-                    .interact()?;
+                let cont = confirm_or_default("강제로 다음 단계로 진행하시겠습니까?", false, args.yes)?;
                 if !cont {
                     println!("{}", "중단됨. 'porpoise'를 실행하여 재개하세요.".cyan());
                     break;
@@ -194,6 +191,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     &prev_role,
                     &state.current_task_id,
                     &logger,
+                    args.yes,
                 )? {
                     PrevReportAction::Continue => {}
                     PrevReportAction::ReRun => {
@@ -207,10 +205,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
         }
 
         if !args.dry_run {
-            let proceed = Confirm::new()
-                .with_prompt(format!("Execute {}?", current_role.display_name()))
-                .default(true)
-                .interact()?;
+            let proceed = confirm_or_default(&format!("Execute {}?", current_role.display_name()), true, args.yes)?;
             if !proceed {
                 logger.info(&current_role.to_string(), "Skipped by user");
                 println!("{}", "Skipped. Run 'porpoise' to resume later.".yellow());
@@ -299,10 +294,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                                 print_history(&history);
 
                                 // M1-T05: 새 마일스톤 생성 여부 확인
-                                let create_new = Confirm::new()
-                                    .with_prompt("새 마일스톤을 생성하시겠습니까? (아니오: 릴리즈 플로우 진행)")
-                                    .default(false)
-                                    .interact()?;
+                                let create_new = confirm_or_default("새 마일스톤을 생성하시겠습니까? (아니오: 릴리즈 플로우 진행)", false, args.yes)?;
 
                                 if create_new {
                                     milestone_session::run_milestone_session(path, false, &logger, effective_model.as_deref())?;
@@ -785,6 +777,7 @@ fn validate_prev_report_exit_code(
     prev_role: &Role,
     task_id: &str,
     logger: &Logger,
+    auto_approve: bool,
 ) -> Result<PrevReportAction> {
     if let Some(report_path) = find_latest_report(reports_dir, &prev_role.to_string(), task_id) {
         if let Ok(content) = std::fs::read_to_string(&report_path) {
@@ -802,17 +795,11 @@ fn validate_prev_report_exit_code(
                     .bold()
                 );
                 logger.warn(&prev_role.to_string(), "유효한 종료 코드 없음 — 비정상 완료된 리포트");
-                let rerun = Confirm::new()
-                    .with_prompt(format!("{} 역할을 재실행하시겠습니까?", prev_role.display_name()))
-                    .default(true)
-                    .interact()?;
+                let rerun = confirm_or_default(&format!("{} 역할을 재실행하시겠습니까?", prev_role.display_name()), true, auto_approve)?;
                 if rerun {
                     return Ok(PrevReportAction::ReRun);
                 }
-                let cont = Confirm::new()
-                    .with_prompt("비정상 종료된 리포트를 무시하고 계속하시겠습니까?")
-                    .default(false)
-                    .interact()?;
+                let cont = confirm_or_default("비정상 종료된 리포트를 무시하고 계속하시겠습니까?", false, auto_approve)?;
                 return Ok(if cont { PrevReportAction::Continue } else { PrevReportAction::Stop });
             }
         }
