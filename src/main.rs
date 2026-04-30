@@ -30,7 +30,7 @@ pub enum Commands {
 #[derive(Parser, Debug)]
 #[command(
     name = "porpoise",
-    version = "0.2.0",
+    version,
     about = "Software development orchestration tool powered by Claude Code",
     long_about = None
 )]
