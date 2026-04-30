@@ -19,8 +19,8 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 
 ## Porpoise 오케스트레이션
 이 프로젝트는 Porpoise 오케스트레이션 도구로 관리됩니다.
-- 리포트 위치: .docs/reports/
-- 프롬프트 위치: .docs/prompts/
+- 리포트 위치: .porpoise/reports/
+- 프롬프트 위치: .porpoise/prompts/
 "#,
         project_name = ctx.project_name,
         tree = ctx.tree_output,
@@ -28,8 +28,8 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     write_file(&claude_md_path, &claude_md_content, path)?;
     println!("  {} {}", "Created:".green(), claude_md_path.display());
 
-    // Generate .docs/project.md with M{n}-T{nn} task ID format
-    let docs_dir = path.join(".docs");
+    // Generate .porpoise/project.md with M{n}-T{nn} task ID format
+    let docs_dir = path.join(".porpoise");
     let project_md_path = docs_dir.join("project.md");
     let project_md_content = format!(
         r#"# 개발 루틴 문서
@@ -38,10 +38,10 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 ## 초기화: {timestamp}
 
 ## 역할별 책임
-- PM: 작업 범위 정의, 기술 명세 작성
-- Developer: 코드 구현
-- Tester: 테스트 실행 및 버그 리포트
-- Reviewer: 코드 리뷰 및 품질 평가
+- Planning: 작업 범위 정의, 기술 명세 작성
+- Development: 코드 구현
+- Testing: 테스트 실행 및 버그 리포트
+- Review: 코드 리뷰 및 품질 평가
 
 ## 완료 기준 (DoD)
 - 코드 리뷰 통과
@@ -63,10 +63,10 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     let prompts_dir = docs_dir.join("prompts");
     let prompts = [
         ("00-orche.md", generate_orche_prompt(ctx)),
-        ("01-pm.md", generate_pm_prompt()),
-        ("02-developer.md", generate_developer_prompt()),
-        ("03-tester.md", generate_tester_prompt()),
-        ("04-reviewer.md", generate_reviewer_prompt()),
+        ("01-planning.md", generate_pm_prompt()),
+        ("02-development.md", generate_developer_prompt()),
+        ("03-testing.md", generate_tester_prompt()),
+        ("04-review.md", generate_reviewer_prompt()),
     ];
 
     for (filename, content) in &prompts {
@@ -83,7 +83,7 @@ fn generate_orche_prompt(ctx: &ProjectContext) -> String {
         r#"# Porpoise 오케스트레이션 시스템 프롬프트
 
 ## 역할
-당신은 Porpoise 오케스트레이션 시스템의 일부입니다. 소프트웨어 개발 사이클을 PM → Developer → Tester → Reviewer 순서로 진행합니다.
+당신은 Porpoise 오케스트레이션 시스템의 일부입니다. 소프트웨어 개발 사이클을 Planning → Development → Testing → Review 순서로 진행합니다.
 
 ## 프로젝트
 - 이름: {project_name}
@@ -91,13 +91,13 @@ fn generate_orche_prompt(ctx: &ProjectContext) -> String {
 
 ## 오케스트레이션 규칙
 1. 각 역할은 독립적으로 실행됩니다.
-2. 각 역할의 결과는 `.docs/reports/` 에 저장됩니다.
+2. 각 역할의 결과는 `.porpoise/reports/` 에 저장됩니다.
 3. 다음 역할은 이전 역할의 리포트를 참고합니다.
-4. 사이클은 Reviewer NEXT 코드 출력 후 완료됩니다.
+4. 사이클은 Review NEXT 코드 출력 후 완료됩니다.
 
 ## 리포트 파일명 규칙
 `{{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md`
-예: M1-T01-pm-C1-R0.md, M1-T01-developer-C1-R1.md
+예: M1-T01-planning-C1-R0.md, M1-T01-development-C1-R1.md
 
 ## 종료 코드 규칙
 응답의 **마지막 줄**에 아래 코드 중 하나를 단독으로 출력합니다:

@@ -12,7 +12,7 @@ pub struct Logger {
 
 impl Logger {
     pub fn new(project_path: &Path, verbose: bool) -> Result<Self> {
-        let logs_dir = project_path.join(".docs").join("logs");
+        let logs_dir = project_path.join(".porpoise").join("logs");
         fs::create_dir_all(&logs_dir)
             .with_context(|| format!("디렉토리 생성 실패: {}", logs_dir.display()))?;
 

@@ -28,9 +28,9 @@ impl TokenMonitor {
         }
     }
 
-    /// Estimate token usage from total size of files in .docs/reports/
+    /// Estimate token usage from total size of files in .porpoise/reports/
     fn estimate_chars_used(&self) -> u64 {
-        let reports_dir = self.project_path.join(".docs").join("reports");
+        let reports_dir = self.project_path.join(".porpoise").join("reports");
         if !reports_dir.exists() {
             return 0;
         }

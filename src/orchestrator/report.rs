@@ -194,7 +194,7 @@ pub fn save_report(
     retry: u32,
 ) -> Result<PathBuf> {
     let filename = report_filename(task_id, &report.role, cycle, retry);
-    let report_path = path.join(".docs").join("reports").join(&filename);
+    let report_path = path.join(".porpoise").join("reports").join(&filename);
     write_file(&report_path, &report.content, path)?;
     Ok(report_path)
 }
@@ -274,23 +274,23 @@ mod tests {
 
     #[test]
     fn report_filename_format() {
-        assert_eq!(report_filename("M1-T01", "pm", 1, 0), "M1-T01-pm-C1-R0.md");
+        assert_eq!(report_filename("M1-T01", "planning", 1, 0), "M1-T01-planning-C1-R0.md");
         assert_eq!(
-            report_filename("M1-T01", "developer", 2, 1),
-            "M1-T01-developer-C2-R1.md"
+            report_filename("M1-T01", "development", 2, 1),
+            "M1-T01-development-C2-R1.md"
         );
     }
 
     #[test]
     fn report_filename_zero_pads_task_number() {
-        assert_eq!(report_filename("M1-T1", "pm", 1, 0), "M1-T01-pm-C1-R0.md");
+        assert_eq!(report_filename("M1-T1", "planning", 1, 0), "M1-T01-planning-C1-R0.md");
         assert_eq!(
-            report_filename("M2-T9", "tester", 1, 0),
-            "M2-T09-tester-C1-R0.md"
+            report_filename("M2-T9", "testing", 1, 0),
+            "M2-T09-testing-C1-R0.md"
         );
         assert_eq!(
-            report_filename("M2-T10", "reviewer", 1, 0),
-            "M2-T10-reviewer-C1-R0.md"
+            report_filename("M2-T10", "review", 1, 0),
+            "M2-T10-review-C1-R0.md"
         );
     }
 
@@ -298,9 +298,9 @@ mod tests {
     fn count_existing_reports_normalizes_task_id() {
         let temp = tempfile::tempdir().unwrap();
         let reports_dir = temp.path();
-        std::fs::write(reports_dir.join("M2-T09-tester-C1-R0.md"), "content").unwrap();
-        assert_eq!(count_existing_reports(reports_dir, "M2-T9", "tester", 1), 1);
-        assert_eq!(count_existing_reports(reports_dir, "M2-T09", "tester", 1), 1);
+        std::fs::write(reports_dir.join("M2-T09-testing-C1-R0.md"), "content").unwrap();
+        assert_eq!(count_existing_reports(reports_dir, "M2-T9", "testing", 1), 1);
+        assert_eq!(count_existing_reports(reports_dir, "M2-T09", "testing", 1), 1);
     }
 
     #[test]

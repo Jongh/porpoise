@@ -50,10 +50,10 @@ pub enum Role {
 impl fmt::Display for Role {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Role::PM => write!(f, "pm"),
-            Role::Developer => write!(f, "developer"),
-            Role::Tester => write!(f, "tester"),
-            Role::Reviewer => write!(f, "reviewer"),
+            Role::PM => write!(f, "planning"),
+            Role::Developer => write!(f, "development"),
+            Role::Tester => write!(f, "testing"),
+            Role::Reviewer => write!(f, "review"),
         }
     }
 }
@@ -61,20 +61,20 @@ impl fmt::Display for Role {
 impl Role {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "pm" => Some(Role::PM),
-            "developer" | "dev" => Some(Role::Developer),
-            "tester" | "test" => Some(Role::Tester),
-            "reviewer" | "review" => Some(Role::Reviewer),
+            "planning" | "pm" => Some(Role::PM),
+            "development" | "developer" | "dev" => Some(Role::Developer),
+            "testing" | "tester" | "test" => Some(Role::Tester),
+            "review" | "reviewer" => Some(Role::Reviewer),
             _ => None,
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            Role::PM => "PM (Product Manager)",
-            Role::Developer => "Developer",
-            Role::Tester => "Tester",
-            Role::Reviewer => "Reviewer",
+            Role::PM => "Planning",
+            Role::Developer => "Development",
+            Role::Tester => "Testing",
+            Role::Reviewer => "Review",
         }
     }
 
@@ -98,10 +98,10 @@ impl Role {
 
     pub fn prompt_file(&self) -> &'static str {
         match self {
-            Role::PM => "01-pm.md",
-            Role::Developer => "02-developer.md",
-            Role::Tester => "03-tester.md",
-            Role::Reviewer => "04-reviewer.md",
+            Role::PM => "01-planning.md",
+            Role::Developer => "02-development.md",
+            Role::Tester => "03-testing.md",
+            Role::Reviewer => "04-review.md",
         }
     }
 
@@ -117,10 +117,10 @@ pub struct Task {
     pub completed: bool,
 }
 
-/// Parses M{n}-T{nn} task items from .docs/project.md.
+/// Parses M{n}-T{nn} task items from .porpoise/project.md.
 /// Returns empty vec if project.md is absent or has no M-T formatted tasks.
 pub fn parse_tasks_from_project_md(path: &Path) -> Vec<Task> {
-    let project_md = path.join(".docs").join("project.md");
+    let project_md = path.join(".porpoise").join("project.md");
     let content = match std::fs::read_to_string(&project_md) {
         Ok(c) => c,
         Err(_) => return vec![],
@@ -176,7 +176,7 @@ impl OrchestratorState {
 }
 
 pub fn load_state(path: &Path) -> Result<OrchestratorState> {
-    let reports_dir = path.join(".docs").join("reports");
+    let reports_dir = path.join(".porpoise").join("reports");
 
     if !reports_dir.exists() {
         return Ok(build_state_with_tasks(OrchestratorState::new(path), path));
@@ -328,6 +328,12 @@ mod tests {
 
     #[test]
     fn role_from_str_all_variants() {
+        // new names
+        assert_eq!(Role::from_str("planning"), Some(Role::PM));
+        assert_eq!(Role::from_str("development"), Some(Role::Developer));
+        assert_eq!(Role::from_str("testing"), Some(Role::Tester));
+        assert_eq!(Role::from_str("review"), Some(Role::Reviewer));
+        // backward-compat aliases
         assert_eq!(Role::from_str("pm"), Some(Role::PM));
         assert_eq!(Role::from_str("PM"), Some(Role::PM));
         assert_eq!(Role::from_str("developer"), Some(Role::Developer));
@@ -335,7 +341,6 @@ mod tests {
         assert_eq!(Role::from_str("tester"), Some(Role::Tester));
         assert_eq!(Role::from_str("test"), Some(Role::Tester));
         assert_eq!(Role::from_str("reviewer"), Some(Role::Reviewer));
-        assert_eq!(Role::from_str("review"), Some(Role::Reviewer));
         assert_eq!(Role::from_str("unknown"), None);
         assert_eq!(Role::from_str(""), None);
     }
@@ -358,10 +363,10 @@ mod tests {
 
     #[test]
     fn role_display() {
-        assert_eq!(Role::PM.to_string(), "pm");
-        assert_eq!(Role::Developer.to_string(), "developer");
-        assert_eq!(Role::Tester.to_string(), "tester");
-        assert_eq!(Role::Reviewer.to_string(), "reviewer");
+        assert_eq!(Role::PM.to_string(), "planning");
+        assert_eq!(Role::Developer.to_string(), "development");
+        assert_eq!(Role::Tester.to_string(), "testing");
+        assert_eq!(Role::Reviewer.to_string(), "review");
     }
 
     #[test]
@@ -374,6 +379,24 @@ mod tests {
 
     #[test]
     fn extract_role_new_format() {
+        // new names
+        assert_eq!(
+            extract_from_new_format("M1-T01-planning-C1-R0.md"),
+            Some(Role::PM)
+        );
+        assert_eq!(
+            extract_from_new_format("M1-T01-development-C2-R1.md"),
+            Some(Role::Developer)
+        );
+        assert_eq!(
+            extract_from_new_format("M1-T01-testing-C1-R0.md"),
+            Some(Role::Tester)
+        );
+        assert_eq!(
+            extract_from_new_format("M1-T01-review-C1-R0.md"),
+            Some(Role::Reviewer)
+        );
+        // backward-compat aliases in filenames
         assert_eq!(
             extract_from_new_format("M1-T01-pm-C1-R0.md"),
             Some(Role::PM)
@@ -414,7 +437,7 @@ mod tests {
     fn parse_tasks_ignores_non_task_format() {
         // Old format "- [ ] 마일스톤 1: 초기 구현" has no M{n}-T{nn} prefix → ignored
         let temp = tempfile::tempdir().unwrap();
-        let docs = temp.path().join(".docs");
+        let docs = temp.path().join(".porpoise");
         std::fs::create_dir_all(&docs).unwrap();
         let project_md = docs.join("project.md");
         std::fs::write(
@@ -429,7 +452,7 @@ mod tests {
     #[test]
     fn parse_tasks_with_milestone_format() {
         let temp = tempfile::tempdir().unwrap();
-        let docs = temp.path().join(".docs");
+        let docs = temp.path().join(".porpoise");
         std::fs::create_dir_all(&docs).unwrap();
         let project_md = docs.join("project.md");
         std::fs::write(

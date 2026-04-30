@@ -16,7 +16,7 @@ pub fn update_task_status(path: &Path, task_id: &str, completed: bool, logger: &
 fn try_update_task_status(path: &Path, task_id: &str, completed: bool) -> Result<()> {
     let milestone_id = extract_milestone_id(task_id)?;
     let milestone_path = path
-        .join(".docs")
+        .join(".porpoise")
         .join("milestones")
         .join(format!("M{}.md", milestone_id));
 
@@ -63,13 +63,13 @@ mod tests {
     }
 
     fn setup_milestone(dir: &std::path::Path, id: u32, content: &str) {
-        let milestones_dir = dir.join(".docs").join("milestones");
+        let milestones_dir = dir.join(".porpoise").join("milestones");
         std::fs::create_dir_all(&milestones_dir).unwrap();
         std::fs::write(milestones_dir.join(format!("M{}.md", id)), content).unwrap();
     }
 
     fn read_milestone(dir: &std::path::Path, id: u32) -> String {
-        std::fs::read_to_string(dir.join(".docs").join("milestones").join(format!("M{}.md", id)))
+        std::fs::read_to_string(dir.join(".porpoise").join("milestones").join(format!("M{}.md", id)))
             .unwrap()
     }
 
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn missing_milestone_file_does_not_panic() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join(".docs").join("milestones")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".porpoise").join("milestones")).unwrap();
         let logger = make_logger(dir.path());
         // M1.md 없음 — warn만 출력되고 패닉 없어야 함
         update_task_status(dir.path(), "M1-T01", true, &logger);

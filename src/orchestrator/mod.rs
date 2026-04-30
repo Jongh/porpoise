@@ -76,7 +76,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                 state.current_role = Some(role);
             }
             None => anyhow::bail!(
-                "Unknown role: '{}'. Valid: pm, developer, tester, reviewer",
+                "Unknown role: '{}'. Valid: planning, development, testing, review",
                 from_role
             ),
         }
@@ -120,7 +120,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
 
     let executor = RoleExecutor::new(effective_model.clone());
     let mut history: Vec<String> = Vec::new();
-    let reports_dir = path.join(".docs").join("reports");
+    let reports_dir = path.join(".porpoise").join("reports");
 
     loop {
         let current_role = match &state.current_role {
@@ -593,7 +593,7 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     let message = format!("[{}] {}", task_id, task_title);
 
     let status = Command::new("git")
-        .args(["add", ".docs/", "Cargo.toml", "Cargo.lock", "src/"])
+        .args(["add", ".porpoise/", "Cargo.toml", "Cargo.lock", "src/"])
         .status()
         .context("git add 실행 실패")?;
     if !status.success() {
@@ -612,7 +612,7 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
 }
 
 fn mark_task_complete(path: &Path, task_id: &str, logger: &Logger) -> Result<()> {
-    let project_md_path = path.join(".docs").join("project.md");
+    let project_md_path = path.join(".porpoise").join("project.md");
     let content = std::fs::read_to_string(&project_md_path)
         .with_context(|| format!("project.md 읽기 실패: {}", project_md_path.display()))?;
 

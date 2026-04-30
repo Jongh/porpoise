@@ -54,7 +54,7 @@ impl RoleExecutor {
         retry: u32,
     ) -> Result<Report> {
         let prompt_file = path
-            .join(".docs")
+            .join(".porpoise")
             .join("prompts")
             .join(role.prompt_file());
 
@@ -93,7 +93,7 @@ impl RoleExecutor {
 
         let output_filename = report_filename(task_id, &role.to_string(), cycle, retry);
         let output_file = path
-            .join(".docs")
+            .join(".porpoise")
             .join("reports")
             .join(&output_filename);
 
@@ -130,7 +130,7 @@ impl Default for RoleExecutor {
 pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> RoleContext {
     let mut ctx = RoleContext::new();
 
-    let project_md = path.join(".docs").join("project.md");
+    let project_md = path.join(".porpoise").join("project.md");
     if project_md.exists() {
         ctx = ctx.with_project_doc(project_md);
     }
@@ -140,18 +140,18 @@ pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> Rol
         ctx = ctx.with_project_doc(claude_md);
     }
 
-    let reports_dir = path.join(".docs").join("reports");
+    let reports_dir = path.join(".porpoise").join("reports");
     if !reports_dir.exists() {
         return ctx;
     }
 
     let predecessor_roles: Vec<&str> = match role {
         // PM in subsequent cycles gets previous cycle's reports for context
-        Role::PM if cycle > 1 => vec!["reviewer", "tester", "developer"],
+        Role::PM if cycle > 1 => vec!["review", "testing", "development"],
         Role::PM => vec![],
-        Role::Developer => vec!["pm"],
-        Role::Tester => vec!["pm", "developer"],
-        Role::Reviewer => vec!["pm", "developer", "tester"],
+        Role::Developer => vec!["planning"],
+        Role::Tester => vec!["planning", "development"],
+        Role::Reviewer => vec!["planning", "development", "testing"],
     };
 
     for prev_role in &predecessor_roles {
@@ -258,21 +258,23 @@ mod tests {
 
     #[test]
     fn filename_matches_role_normalizes_task_id() {
+        assert!(filename_matches_role("M1-T01-planning-C1-R0.md", "planning", "M1-T1"));
+        assert!(filename_matches_role("M2-T09-testing-C1-R0.md", "testing", "M2-T9"));
+        assert!(filename_matches_role("M2-T10-review-C1-R0.md", "review", "M2-T10"));
+        assert!(!filename_matches_role("M1-T01-planning-C1-R0.md", "development", "M1-T1"));
+        assert!(!filename_matches_role("M1-T02-planning-C1-R0.md", "planning", "M1-T1"));
+        // old-name files still matchable for backward compat
         assert!(filename_matches_role("M1-T01-pm-C1-R0.md", "pm", "M1-T1"));
-        assert!(filename_matches_role("M2-T09-tester-C1-R0.md", "tester", "M2-T9"));
-        assert!(filename_matches_role("M2-T10-reviewer-C1-R0.md", "reviewer", "M2-T10"));
-        assert!(!filename_matches_role("M1-T01-pm-C1-R0.md", "developer", "M1-T1"));
-        assert!(!filename_matches_role("M1-T02-pm-C1-R0.md", "pm", "M1-T1"));
     }
 
     #[test]
     fn find_latest_report_normalizes_task_id() {
         let temp = tempfile::tempdir().unwrap();
         let reports_dir = temp.path();
-        std::fs::write(reports_dir.join("M2-T09-pm-C1-R0.md"), "content").unwrap();
+        std::fs::write(reports_dir.join("M2-T09-planning-C1-R0.md"), "content").unwrap();
         // 패딩 없는 "M2-T9"로도 찾아야 함
-        assert!(find_latest_report(reports_dir, "pm", "M2-T9").is_some());
-        assert!(find_latest_report(reports_dir, "pm", "M2-T09").is_some());
-        assert!(find_latest_report(reports_dir, "developer", "M2-T9").is_none());
+        assert!(find_latest_report(reports_dir, "planning", "M2-T9").is_some());
+        assert!(find_latest_report(reports_dir, "planning", "M2-T09").is_some());
+        assert!(find_latest_report(reports_dir, "development", "M2-T9").is_none());
     }
 }

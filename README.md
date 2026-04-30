@@ -4,7 +4,7 @@ Software development orchestration tool powered by Claude Code.
 
 ## Overview
 
-Porpoise automates the full software development workflow by orchestrating **PM → Developer → Tester → Reviewer** role cycles using Claude Code. It generates structured reports between roles to maintain context continuity and minimizes user interruptions.
+Porpoise automates the full software development workflow by orchestrating **Planning → Development → Testing → Review** session cycles using Claude Code. It generates structured reports between sessions to maintain context continuity and minimizes user interruptions.
 
 ## Installation
 
@@ -46,8 +46,8 @@ porpoise
 # Force new initialization
 porpoise --new
 
-# Start from a specific role
-porpoise --from developer   # pm | developer | tester | reviewer
+# Start from a specific session
+porpoise --from development   # planning | development | testing | review
 
 # Dry run (show plan without executing)
 porpoise --dry-run
@@ -61,33 +61,33 @@ porpoise --verbose
 
 ## How it works
 
-1. **Initialization** (first run): Scans project directory, collects description, generates `claude.md` and `.docs/` structure
-2. **PM role**: Defines scope, writes technical spec, creates task list
-3. **Developer role**: Implements code per PM report
-4. **Tester role**: Runs tests, documents bugs
-5. **Reviewer role**: Code review → APPROVED / CHANGES_REQUESTED / REJECTED
+1. **Initialization** (first run): Scans project directory, collects description, generates `claude.md` and `.porpoise/` structure
+2. **Planning session**: Defines scope, writes technical spec, creates task list
+3. **Development session**: Implements code per Planning report
+4. **Testing session**: Runs tests, documents bugs
+5. **Review session**: Code review → APPROVED / CHANGES_REQUESTED / REJECTED
 
-Reports are saved to `.docs/reports/` as `{task-id}-{role}-C{cycle}-R{retry}.md`. Checkpoints enable resuming after interruption.
+Reports are saved to `.porpoise/reports/` as `{task-id}-{session}-C{cycle}-R{retry}.md`. Checkpoints enable resuming after interruption.
 
 ## File structure (generated)
 
 ```
 {project}/
 ├── claude.md                 # Project context for Claude Code
-└── .docs/
+└── .porpoise/
     ├── project.md            # Development routine & conventions
     ├── prompts/
-    │   ├── 00-orche.md       # Master orchestrator prompt
-    │   ├── 01-pm.md          # PM role prompt
-    │   ├── 02-developer.md   # Developer role prompt
-    │   ├── 03-tester.md      # Tester role prompt
-    │   └── 04-reviewer.md    # Reviewer role prompt
+    │   ├── 00-orche.md         # Master orchestrator prompt
+    │   ├── 01-planning.md      # Planning session prompt
+    │   ├── 02-development.md   # Development session prompt
+    │   ├── 03-testing.md       # Testing session prompt
+    │   └── 04-review.md        # Review session prompt
     └── reports/
         ├── checkpoint.md
-        ├── {task-id}-pm-C{n}-R{n}.md
-        ├── {task-id}-developer-C{n}-R{n}.md
-        ├── {task-id}-tester-C{n}-R{n}.md
-        └── {task-id}-reviewer-C{n}-R{n}.md
+        ├── {task-id}-planning-C{n}-R{n}.md
+        ├── {task-id}-development-C{n}-R{n}.md
+        ├── {task-id}-testing-C{n}-R{n}.md
+        └── {task-id}-review-C{n}-R{n}.md
 ```
 
 ## Exit codes (role protocol)

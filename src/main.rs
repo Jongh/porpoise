@@ -16,7 +16,7 @@ use config::Config;
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Archive old reports to .docs/reports/archive/
+    /// Archive old reports to .porpoise/reports/archive/
     Clean {
         /// Reports older than this many days are archived (default: from porpoise.toml or 30)
         #[arg(long)]
@@ -42,7 +42,7 @@ pub struct Args {
     #[arg(long)]
     pub new: bool,
 
-    /// Start from a specific role (pm/developer/tester/reviewer)
+    /// Start from a specific role (planning/development/testing/review)
     #[arg(long, value_name = "ROLE")]
     pub from: Option<String>,
 
@@ -83,7 +83,7 @@ fn run() -> Result<()> {
         }
     }
 
-    let project_md = current_dir.join(".docs").join("project.md");
+    let project_md = current_dir.join(".porpoise").join("project.md");
     let is_resume = project_md.exists() && !args.new;
 
     if is_resume {
@@ -105,7 +105,7 @@ fn run_clean(path: &Path, days: Option<u32>, dry_run: bool, config: &Config) -> 
     use chrono::Local;
 
     let effective_days = days.unwrap_or(config.archive_after_days());
-    let reports_dir = path.join(".docs").join("reports");
+    let reports_dir = path.join(".porpoise").join("reports");
 
     if !reports_dir.exists() {
         println!("리포트 디렉토리가 없습니다: {}", reports_dir.display());

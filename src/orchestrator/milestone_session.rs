@@ -23,9 +23,9 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
         return Ok(());
     }
 
-    let milestones_dir = path.join(".docs").join("milestones");
-    let user_input_path = path.join(".docs").join("user_input.md");
-    let prompt_file = path.join(".docs").join("prompts").join("00-orche.md");
+    let milestones_dir = path.join(".porpoise").join("milestones");
+    let user_input_path = path.join(".porpoise").join("user_input.md");
+    let prompt_file = path.join(".porpoise").join("prompts").join("00-orche.md");
 
     let runner = ClaudeRunner::new()?;
 
@@ -57,7 +57,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
             .collect();
 
         let output_file = path
-            .join(".docs")
+            .join(".porpoise")
             .join("reports")
             .join(format!("milestone-session-R{}.md", attempt));
 
@@ -108,7 +108,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
                         );
                         anyhow::bail!(
                             "Claude가 NEXT를 반환했지만 마일스톤 파일이 생성되지 않았습니다.\n\
-                             .docs/milestones/ 디렉토리를 확인하세요."
+                             .porpoise/milestones/ 디렉토리를 확인하세요."
                         );
                     }
                 }
@@ -144,9 +144,9 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
 }
 
 /// 파싱된 마일스톤을 project.md 끝에 Milestone 섹션으로 추가합니다.
-/// `path`는 프로젝트 루트 디렉토리이며, `.docs/project.md`를 기준으로 찾습니다.
+/// `path`는 프로젝트 루트 디렉토리이며, `.porpoise/project.md`를 기준으로 찾습니다.
 pub fn append_milestone_to_project_md(path: &Path, milestone: &Milestone) -> Result<()> {
-    let project_md_path = path.join(".docs").join("project.md");
+    let project_md_path = path.join(".porpoise").join("project.md");
     let content = std::fs::read_to_string(&project_md_path)
         .with_context(|| format!("project.md 읽기 실패: {}", project_md_path.display()))?;
 
@@ -197,13 +197,13 @@ mod tests {
     }
 
     fn setup_project_md(dir: &std::path::Path, content: &str) {
-        let docs = dir.join(".docs");
+        let docs = dir.join(".porpoise");
         std::fs::create_dir_all(&docs).unwrap();
         std::fs::write(docs.join("project.md"), content).unwrap();
     }
 
     fn read_project_md(dir: &std::path::Path) -> String {
-        std::fs::read_to_string(dir.join(".docs").join("project.md")).unwrap()
+        std::fs::read_to_string(dir.join(".porpoise").join("project.md")).unwrap()
     }
 
     #[test]
@@ -271,7 +271,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         setup_project_md(dir.path(), "# 프로젝트\n\n- [ ] M1-T01: 작업1\n");
 
-        let milestones_dir = dir.path().join(".docs").join("milestones");
+        let milestones_dir = dir.path().join(".porpoise").join("milestones");
         std::fs::create_dir_all(&milestones_dir).unwrap();
         std::fs::write(
             milestones_dir.join("M1.md"),
@@ -291,7 +291,7 @@ mod tests {
     fn mark_task_complete_missing_milestone_file() {
         let dir = tempfile::tempdir().unwrap();
         setup_project_md(dir.path(), "# 프로젝트\n\n- [ ] M1-T01: 작업1\n");
-        std::fs::create_dir_all(dir.path().join(".docs").join("milestones")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".porpoise").join("milestones")).unwrap();
 
         let logger = crate::logger::Logger::new(dir.path(), false).unwrap();
         // M1.md 없음 — Ok(()) 이어야 하고 패닉 없어야 함

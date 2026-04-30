@@ -19,12 +19,12 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
         println!();
     }
 
-    // --new 플래그이고 기존 .docs/가 존재하면 덮어쓰기 여부를 한 번만 확인한다.
-    // 기존 작업 이력(.docs/reports/) 전체가 소실될 수 있으므로 명시적 동의 필요.
-    if args.new && path.join(".docs").exists() {
+    // --new 플래그이고 기존 .porpoise/가 존재하면 덮어쓰기 여부를 한 번만 확인한다.
+    // 기존 작업 이력(.porpoise/reports/) 전체가 소실될 수 있으므로 명시적 동의 필요.
+    if args.new && path.join(".porpoise").exists() {
         let overwrite = Confirm::new()
             .with_prompt(
-                "기존 .docs/ 디렉토리가 존재합니다. 덮어쓰면 이전 작업 이력이 소실됩니다. 계속하시겠습니까?"
+                "기존 .porpoise/ 디렉토리가 존재합니다. 덮어쓰면 이전 작업 이력이 소실됩니다. 계속하시겠습니까?"
             )
             .default(false)
             .interact()?;

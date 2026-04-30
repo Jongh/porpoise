@@ -3,7 +3,7 @@ use ignore::WalkBuilder;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const SKIP_DIRS: &[&str] = &[".git", "node_modules", "__pycache__", "target", ".docs"];
+const SKIP_DIRS: &[&str] = &[".git", "node_modules", "__pycache__", "target", ".porpoise"];
 const MAX_DEPTH: usize = 3;
 
 pub fn print_tree(path: &Path) -> Result<()> {
