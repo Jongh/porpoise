@@ -135,7 +135,7 @@ pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> Rol
         ctx = ctx.with_project_doc(project_md);
     }
 
-    let claude_md = path.join("claude.md");
+    let claude_md = path.join("CLAUDE.md");
     if claude_md.exists() {
         ctx = ctx.with_project_doc(claude_md);
     }

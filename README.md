@@ -61,7 +61,7 @@ porpoise --verbose
 
 ## How it works
 
-1. **Initialization** (first run): Scans project directory, collects description, generates `claude.md` and `.porpoise/` structure
+1. **Initialization** (first run): Scans project directory, generates `CLAUDE.md` and `.porpoise/` structure
 2. **Planning session**: Defines scope, writes technical spec, creates task list
 3. **Development session**: Implements code per Planning report
 4. **Testing session**: Runs tests, documents bugs
@@ -73,7 +73,7 @@ Reports are saved to `.porpoise/reports/` as `{task-id}-{session}-C{cycle}-R{ret
 
 ```
 {project}/
-├── claude.md                 # Project context for Claude Code
+├── CLAUDE.md                 # Project context for Claude Code
 └── .porpoise/
     ├── project.md            # Development routine & conventions
     ├── prompts/
@@ -101,6 +101,12 @@ Each role appends one of these codes as the **last line** of its report:
 | `RESP` | User input required | Collect input, re-run same role |
 
 ## CHANGELOG
+
+### [v0.2.3]
+- Planning 프롬프트에 마일스톤 작업 항목 순차 처리 지침 추가 (위에서부터 하나씩)
+- 신규 실행 시 description 입력 단계 제거로 초기화 흐름 간소화
+- 생성 파일명 `claude.md` → `CLAUDE.md` 대문자 처리
+- auto commit 시 `git ls-files` 기반 스테이징으로 `.gitignore` 파일 명시적 제외
 
 ### [v0.1.2]
 - Milestone & task ID system (`M{n}-T{nn}` in `project.md`)

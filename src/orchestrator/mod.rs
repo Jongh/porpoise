@@ -581,11 +581,48 @@ fn execute_role(
     Ok(RoleOutcome::Report(report))
 }
 
+fn collect_stageable_files(paths: &[&str]) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+
+    let modified = Command::new("git")
+        .args(["ls-files", "--modified", "--"])
+        .args(paths)
+        .output()
+        .context("git ls-files --modified 실행 실패")?;
+
+    let untracked = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard", "--"])
+        .args(paths)
+        .output()
+        .context("git ls-files --others 실행 실패")?;
+
+    for line in String::from_utf8_lossy(&modified.stdout).lines() {
+        if !line.is_empty() {
+            files.push(line.to_string());
+        }
+    }
+    for line in String::from_utf8_lossy(&untracked.stdout).lines() {
+        if !line.is_empty() {
+            files.push(line.to_string());
+        }
+    }
+
+    Ok(files)
+}
+
 fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     let message = format!("[{}] {}", task_id, task_title);
+    let target_paths = [".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md"];
+
+    let files = collect_stageable_files(&target_paths)?;
+    if files.is_empty() {
+        return Ok(());
+    }
 
     let status = Command::new("git")
-        .args(["add", ".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md"])
+        .arg("add")
+        .arg("--")
+        .args(&files)
         .status()
         .context("git add 실행 실패")?;
     if !status.success() {

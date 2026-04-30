@@ -1,5 +1,4 @@
 use anyhow::Result;
-use dialoguer::Input;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -7,12 +6,11 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectContext {
     pub project_name: String,
-    pub description: String,
     pub tree_output: String,
     pub detected_files: Vec<String>,
 }
 
-pub fn collect_user_description(tree: &str) -> Result<ProjectContext> {
+pub fn collect_project_context(tree: &str) -> Result<ProjectContext> {
     let current_dir = std::env::current_dir()?;
 
     let project_name = current_dir
@@ -30,13 +28,8 @@ pub fn collect_user_description(tree: &str) -> Result<ProjectContext> {
         println!();
     }
 
-    let description: String = Input::new()
-        .with_prompt("Please describe your project")
-        .interact_text()?;
-
     Ok(ProjectContext {
         project_name,
-        description,
         tree_output: tree.to_string(),
         detected_files,
     })

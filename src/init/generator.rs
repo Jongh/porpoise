@@ -9,8 +9,8 @@ use crate::utils::fs::write_file;
 pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // Generate claude.md
-    let claude_md_path = path.join("claude.md");
+    // Generate CLAUDE.md
+    let claude_md_path = path.join("CLAUDE.md");
     let claude_md_content = format!(
         r#"# {project_name}
 
@@ -87,7 +87,6 @@ fn generate_orche_prompt(ctx: &ProjectContext) -> String {
 
 ## 프로젝트
 - 이름: {project_name}
-- 설명: {description}
 
 ## 오케스트레이션 규칙
 1. 각 역할은 독립적으로 실행됩니다.
@@ -106,7 +105,6 @@ fn generate_orche_prompt(ctx: &ProjectContext) -> String {
 - `RESP`: 사용자 입력 필요 (본문에 `## 사용자 확인 필요` 섹션 포함)
 "#,
         project_name = ctx.project_name,
-        description = ctx.description,
     )
 }
 
@@ -170,6 +168,7 @@ fn generate_pm_prompt() -> String {
 ```
 
 ## 중요 지침
+- 마일스톤의 작업 항목은 **위에서부터 순서대로 하나씩** 처리하세요. 아직 완료되지 않은 첫 번째 항목만 이번 사이클에서 다룹니다.
 - 명세는 구체적이고 측정 가능해야 합니다.
 - 모호한 요구사항은 명확히 해야 합니다.
 - 기술적 부채를 최소화하는 방향으로 설계하세요.

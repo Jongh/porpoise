@@ -42,8 +42,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
     // Collect tree output for context
     let tree_output = tree::get_tree_string(path)?;
 
-    // Collect user description
-    let ctx = context::collect_user_description(&tree_output)?;
+    let ctx = context::collect_project_context(&tree_output)?;
 
     // Generate docs
     println!();
