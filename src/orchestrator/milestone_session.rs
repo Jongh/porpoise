@@ -33,7 +33,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
         println!();
         println!("마일스톤 정보를 입력하세요. 예시:");
         println!("  제목: 새 마일스톤 제목");
-        println!("  버전: v0.2.2");
+        println!("  버전: v0.2.3");
         println!("  설명: 마일스톤 설명");
         println!("  작업:");
         println!("  - 작업 1 설명");

@@ -607,12 +607,49 @@ fn collect_stageable_files(paths: &[&str]) -> Result<Vec<String>> {
         }
     }
 
-    Ok(files)
+    Ok(filter_gitignored_files(files))
+}
+
+fn filter_gitignored_files(files: Vec<String>) -> Vec<String> {
+    if files.is_empty() {
+        return files;
+    }
+
+    let mut child = match Command::new("git")
+        .args(["check-ignore", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return files,
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        for f in &files {
+            let _ = writeln!(stdin, "{}", f);
+        }
+    }
+
+    let output = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(_) => return files,
+    };
+
+    let ignored: std::collections::HashSet<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+
+    files.into_iter().filter(|f| !ignored.contains(f)).collect()
 }
 
 fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     let message = format!("[{}] {}", task_id, task_title);
-    let target_paths = [".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md"];
+    let target_paths = [".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md", "wix/"];
 
     let files = collect_stageable_files(&target_paths)?;
     if files.is_empty() {

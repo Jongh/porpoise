@@ -107,6 +107,7 @@ Each role appends one of these codes as the **last line** of its report:
 - 신규 실행 시 description 입력 단계 제거로 초기화 흐름 간소화
 - 생성 파일명 `claude.md` → `CLAUDE.md` 대문자 처리
 - auto commit 시 `git ls-files` 기반 스테이징으로 `.gitignore` 파일 명시적 제외
+- auto commit 대상 경로에 `wix/` 추가 — 버전 파일(`wix/main.wxs`) 자동 커밋 포함
 
 ### [v0.1.2]
 - Milestone & task ID system (`M{n}-T{nn}` in `project.md`)
