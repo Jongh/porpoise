@@ -98,9 +98,13 @@ Each role appends one of these codes as the **last line** of its report:
 |------|---------|---------------------|
 | `NEXT` | Role complete, proceed | Advance to next role (Reviewer NEXT → auto-commit) |
 | `PREV` | Previous role needs rework | Re-run previous role (retry R+1) |
-| `RESP` | User input required | Collect input, re-run same role |
+| `RESP` | User input required | Save hint file to `.porpoise/hints/`, advance to next role |
 
 ## CHANGELOG
+
+### [v0.3.0]
+- RESP 코드 처리 방식 변경: 사용자 입력 대기 없이 질문을 hint 파일(`.porpoise/hints/`)에 저장 후 다음 역할로 자동 진행 — 세션 중단 없는 연속 실행 지원
+- 프롬프트 파일에서 RESP 관련 섹션 제거 및 hint 파일 참조 방식으로 전환
 
 ### [v0.2.4]
 - 토큰 사용량 추정 기준을 최근 5시간 이내 수정 파일로 변경 — 누적 리포트 파일에 의한 오경고 방지
