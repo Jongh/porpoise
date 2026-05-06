@@ -167,10 +167,11 @@ pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> Rol
         }
     }
 
-    // Include RESP answer files for the current role (user answers from prior RESP rounds)
-    let resp_files = find_resp_files(&reports_dir, task_id, &role.to_string());
-    for resp_file in resp_files {
-        ctx = ctx.with_project_doc(resp_file);
+    // Include hint files for the current role (AI questions from prior RESP rounds)
+    let hints_dir = path.join(".porpoise").join("hints");
+    let hint_files = find_hint_files(&hints_dir, task_id, &role.to_string());
+    for hint_file in hint_files {
+        ctx = ctx.with_project_doc(hint_file);
     }
 
     ctx
@@ -229,16 +230,16 @@ fn find_prev_additional_files(reports_dir: &Path, task_id: &str) -> Vec<PathBuf>
     }
 }
 
-/// Find RESP answer files for the current role and task (sorted by name).
-fn find_resp_files(reports_dir: &Path, task_id: &str, role: &str) -> Vec<PathBuf> {
+/// Find hint files for the current role and task (sorted by name).
+fn find_hint_files(hints_dir: &Path, task_id: &str, role: &str) -> Vec<PathBuf> {
     let normalized = TaskId::new(task_id);
     let prefix = format!("{}-{}-", normalized, role);
-    if let Ok(entries) = std::fs::read_dir(reports_dir) {
+    if let Ok(entries) = std::fs::read_dir(hints_dir) {
         let mut files: Vec<PathBuf> = entries
             .flatten()
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                if name.starts_with(&prefix) && name.contains("-resp") && name.ends_with(".md") {
+                if name.starts_with(&prefix) && name.contains("-hints") && name.ends_with(".md") {
                     Some(e.path())
                 } else {
                     None

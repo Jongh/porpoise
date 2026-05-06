@@ -25,8 +25,6 @@ use report::{count_existing_reports, parse_exit_code, save_report, ExitCode, Rep
 use roles::{build_context, find_latest_report, RoleContext, RoleExecutor};
 use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
 
-pub const MAX_RESP_RETRY: u32 = 5;
-
 enum RoleOutcome {
     Report(Report),
     Retry,
@@ -153,34 +151,6 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
 
         if !check_token_warning(&token_monitor, &current_role, &state, path, args.dry_run, &logger, retry)? {
             break;
-        }
-
-        // RESP retry limit guard
-        if retry >= MAX_RESP_RETRY {
-            println!(
-                "{}",
-                format!(
-                    "⚠  {} 역할이 {}회 재시도 한도에 도달했습니다.",
-                    current_role.display_name(),
-                    MAX_RESP_RETRY
-                )
-                .yellow()
-                .bold()
-            );
-            logger.warn(
-                &current_role.to_string(),
-                &format!("RESP retry limit {} reached", MAX_RESP_RETRY),
-            );
-            if !args.dry_run {
-                let cont = confirm_or_default("강제로 다음 단계로 진행하시겠습니까?", false, args.yes)?;
-                if !cont {
-                    println!("{}", "중단됨. 'porpoise'를 실행하여 재개하세요.".cyan());
-                    break;
-                }
-            }
-            state.completed_roles.push(current_role.clone());
-            state.current_role = current_role.next();
-            continue;
         }
 
         // T07: Validate exit code in previous role's report before execution
@@ -422,40 +392,65 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     }
 
                     ExitCode::Resp => {
-                        println!("{}", "\n⚠  사용자 확인 필요 (RESP)".yellow().bold());
-                        logger.warn(&current_role.to_string(), "RESP — user input required");
+                        println!("{}", "\n💡 RESP → hint 파일 저장 후 계속 진행".cyan().bold());
+                        logger.info(&current_role.to_string(), "RESP → saving hint file and continuing");
 
                         for (i, q) in report.questions.iter().enumerate() {
                             println!("  {}. {}", i + 1, q.yellow());
                         }
 
                         if !args.dry_run {
-                            let answer = collect_multiline_input("응답을 입력하세요")?;
-
-                            let resp_filename = format!(
-                                "{}-{}-C{}-R{}-resp.md",
-                                state.current_task_id,
-                                current_role,
-                                state.cycle,
-                                retry
-                            );
-                            let resp_path = reports_dir.join(&resp_filename);
-                            let resp_content = format!(
-                                "# 사용자 응답 — {} 재시도 {}\n\n{}\n",
-                                current_role.display_name(),
-                                retry,
-                                answer
-                            );
-                            if let Err(e) = write_file(&resp_path, &resp_content, path) {
+                            let hints_dir = path.join(".porpoise").join("hints");
+                            if let Err(e) = std::fs::create_dir_all(&hints_dir) {
                                 logger.warn(
                                     &current_role.to_string(),
-                                    &format!("RESP 저장 실패: {}", e),
+                                    &format!("hints 디렉토리 생성 실패: {}", e),
                                 );
+                            } else {
+                                let hint_filename = format!(
+                                    "{}-{}-C{}-R{}-hints.md",
+                                    state.current_task_id,
+                                    current_role,
+                                    state.cycle,
+                                    retry
+                                );
+                                let hint_path = hints_dir.join(&hint_filename);
+                                let questions_text = report
+                                    .questions
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, q)| format!("{}. {}", i + 1, q))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let hint_content = format!(
+                                    "# hint — {} 사이클 {}\n\n{}\n",
+                                    current_role.display_name(),
+                                    state.cycle,
+                                    questions_text
+                                );
+                                if let Err(e) = write_file(&hint_path, &hint_content, path) {
+                                    logger.warn(
+                                        &current_role.to_string(),
+                                        &format!("hint 저장 실패: {}", e),
+                                    );
+                                } else {
+                                    println!(
+                                        "  {} hint 파일 저장: {}",
+                                        "✓".green(),
+                                        hint_filename.dimmed()
+                                    );
+                                }
                             }
                         } else {
-                            println!("{}", "  [dry-run] RESP — 입력 수집 스킵".dimmed());
+                            println!("{}", "  [dry-run] RESP → hint 파일 생성 스킵".dimmed());
                         }
-                        // retry++ is automatic (count_existing_reports counts resp files separately)
+
+                        // Treat as NEXT: advance to next role
+                        state.completed_roles.push(current_role.clone());
+                        state.current_role = current_role.next();
+                        if let Some(ref next) = state.current_role {
+                            println!("  {} Next: {}", "→".cyan(), next.display_name().cyan());
+                        }
                     }
                 }
             }
