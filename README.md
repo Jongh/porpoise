@@ -102,6 +102,11 @@ Each role appends one of these codes as the **last line** of its report:
 
 ## CHANGELOG
 
+### [v0.2.4]
+- 토큰 사용량 추정 기준을 최근 5시간 이내 수정 파일로 변경 — 누적 리포트 파일에 의한 오경고 방지
+- auto commit 시 `git add` 실패 원인(`stderr`) 에러 메시지에 포함 — 디버깅 가능
+- auto commit 대상 파일 목록에서 존재하지 않는 경로 사전 제외 처리 추가
+
 ### [v0.2.3]
 - Planning 프롬프트에 마일스톤 작업 항목 순차 처리 지침 추가 (위에서부터 하나씩)
 - 신규 실행 시 description 입력 단계 제거로 초기화 흐름 간소화

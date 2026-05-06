@@ -1,5 +1,6 @@
 use colored::Colorize;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 const MAX_CONTEXT_CHARS: u64 = 800_000; // ~200k tokens at 0.25 tokens/char
 
@@ -28,19 +29,27 @@ impl TokenMonitor {
         }
     }
 
-    /// Estimate token usage from total size of files in .porpoise/reports/
+    /// Estimate token usage from files in .porpoise/reports/ modified within the last 5 hours.
     fn estimate_chars_used(&self) -> u64 {
         let reports_dir = self.project_path.join(".porpoise").join("reports");
         if !reports_dir.exists() {
             return 0;
         }
 
+        let cutoff = SystemTime::now()
+            .checked_sub(Duration::from_secs(5 * 3600))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+
         let mut total_chars: u64 = 0;
         if let Ok(entries) = std::fs::read_dir(&reports_dir) {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
-                        total_chars += metadata.len();
+                        if let Ok(modified) = metadata.modified() {
+                            if modified >= cutoff {
+                                total_chars += metadata.len();
+                            }
+                        }
                     }
                 }
             }

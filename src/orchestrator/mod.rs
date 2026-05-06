@@ -607,7 +607,12 @@ fn collect_stageable_files(paths: &[&str]) -> Result<Vec<String>> {
         }
     }
 
-    Ok(filter_gitignored_files(files))
+    let files = filter_gitignored_files(files);
+    let files = files
+        .into_iter()
+        .filter(|f| std::fs::metadata(f).is_ok())
+        .collect();
+    Ok(files)
 }
 
 fn filter_gitignored_files(files: Vec<String>) -> Vec<String> {
@@ -656,14 +661,19 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
         return Ok(());
     }
 
-    let status = Command::new("git")
+    let output = Command::new("git")
         .arg("add")
         .arg("--")
         .args(&files)
-        .status()
+        .output()
         .context("git add 실행 실패")?;
-    if !status.success() {
-        anyhow::bail!("git add 실패 (exit code: {})", status.code().unwrap_or(-1));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "git add 실패 (exit code: {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
     }
 
     let status = Command::new("git")
