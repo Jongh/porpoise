@@ -52,9 +52,6 @@ porpoise --from development   # planning | development | testing | review
 # Dry run (show plan without executing)
 porpoise --dry-run
 
-# Adjust token warning thresholds (default: 70,85,95)
-porpoise --token-warn 60,80,90
-
 # Verbose output
 porpoise --verbose
 ```
@@ -101,6 +98,12 @@ Each role appends one of these codes as the **last line** of its report:
 | `RESP` | User input required | Save hint file to `.porpoise/hints/`, advance to next role |
 
 ## CHANGELOG
+
+### [v0.3.1]
+- RESP 코드 처리 시 사용자 답변 직접 수집: 각 질문에 터미널 입력 프롬프트 표시 후 Q&A 쌍을 hint 파일에 저장
+- 역할 실행 중 스피너 메시지에 Cycle/Task ID 정보 포함 (`[ Cycle N | M7-T01 ] Running PM ...`)
+- 토큰 사용량 모니터(`--token-warn`) 제거 — 불필요한 의존성 및 오경고 원인 삭제
+- 오케스트레이터 내 중복 리포트 저장 로직 제거 (`save_report()` 삭제, `runner.rs`의 단일 저장 경로로 통합)
 
 ### [v0.3.0]
 - RESP 코드 처리 방식 변경: 사용자 입력 대기 없이 질문을 hint 파일(`.porpoise/hints/`)에 저장 후 다음 역할로 자동 진행 — 세션 중단 없는 연속 실행 지원

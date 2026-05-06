@@ -4,7 +4,6 @@ mod init;
 mod logger;
 mod milestone;
 mod orchestrator;
-mod token;
 mod utils;
 
 use anyhow::Result;
@@ -49,10 +48,6 @@ pub struct Args {
     /// Show plan without executing
     #[arg(long)]
     pub dry_run: bool,
-
-    /// Token warning thresholds (comma-separated percentages)
-    #[arg(long, value_name = "THRESHOLDS", default_value = "70,85,95")]
-    pub token_warn: String,
 
     /// Skip non-critical confirmations (always defaults)
     #[arg(short = 'y', long)]

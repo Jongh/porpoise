@@ -15,13 +15,12 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::logger::Logger;
 use crate::milestone::update_task_status;
-use crate::token::monitor::{TokenMonitor, TokenWarningLevel};
 use crate::utils::fs::write_file;
 use crate::utils::input::{collect_multiline_input, confirm_or_default};
 use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
-use report::{count_existing_reports, parse_exit_code, save_report, ExitCode, Report};
+use report::{count_existing_reports, parse_exit_code, report_filename, ExitCode, Report};
 use roles::{build_context, find_latest_report, RoleContext, RoleExecutor};
 use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
 
@@ -43,20 +42,6 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     println!();
     println!("{}", "=== Porpoise Orchestration ===".green().bold());
     println!();
-
-    let thresholds: Vec<u8> = args
-        .token_warn
-        .split(',')
-        .filter_map(|s| s.trim().parse::<u8>().ok())
-        .collect();
-    let token_monitor = TokenMonitor::new(thresholds, path);
-
-    let token_level = token_monitor.check_usage();
-    token_monitor.display_warning(&token_level);
-    if matches!(token_level, TokenWarningLevel::Critical(_)) {
-        println!("{}", "Token usage critical. Consider archiving old reports.".red().bold());
-        logger.warn("orchestrator", "Token usage critical at session start");
-    }
 
     let mut state = load_state(path)?;
     logger.info(
@@ -149,10 +134,6 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             state.cycle,
         );
 
-        if !check_token_warning(&token_monitor, &current_role, &state, path, args.dry_run, &logger, retry)? {
-            break;
-        }
-
         // T07: Validate exit code in previous role's report before execution
         if !args.dry_run {
             if let Some(prev_role) = current_role.prev() {
@@ -217,9 +198,6 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     logger.warn(&current_role.to_string(), "종료 코드 없음 — NEXT로 폴백");
                     ExitCode::Next
                 });
-
-                // T06: Print token usage after each role completion
-                token_monitor.check_threshold();
 
                 match exit_code {
                     ExitCode::Next => {
@@ -392,14 +370,23 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     }
 
                     ExitCode::Resp => {
-                        println!("{}", "\n💡 RESP → hint 파일 저장 후 계속 진행".cyan().bold());
-                        logger.info(&current_role.to_string(), "RESP → saving hint file and continuing");
+                        println!("{}", "\n💡 RESP → 사용자 답변 수집 후 hint 파일 저장".cyan().bold());
+                        logger.info(&current_role.to_string(), "RESP → collecting user answers and saving hint file");
 
-                        for (i, q) in report.questions.iter().enumerate() {
-                            println!("  {}. {}", i + 1, q.yellow());
-                        }
+                        if report.questions.is_empty() {
+                            println!("{}", "⚠  RESP 코드이지만 질문이 없음 — NEXT로 처리".yellow());
+                        } else if args.dry_run {
+                            println!("{}", "  [dry-run] RESP → hint 파일 생성 스킵".dimmed());
+                        } else {
+                            let mut qa_pairs: Vec<String> = Vec::new();
+                            for (i, q) in report.questions.iter().enumerate() {
+                                println!("  {}. {}", i + 1, q.yellow());
+                                let answer: String = Input::new()
+                                    .with_prompt(format!("  답변 {}", i + 1))
+                                    .interact_text()?;
+                                qa_pairs.push(format!("{}. Q: {}\n   A: {}", i + 1, q, answer.trim()));
+                            }
 
-                        if !args.dry_run {
                             let hints_dir = path.join(".porpoise").join("hints");
                             if let Err(e) = std::fs::create_dir_all(&hints_dir) {
                                 logger.warn(
@@ -415,18 +402,11 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                                     retry
                                 );
                                 let hint_path = hints_dir.join(&hint_filename);
-                                let questions_text = report
-                                    .questions
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, q)| format!("{}. {}", i + 1, q))
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
                                 let hint_content = format!(
-                                    "# hint — {} 사이클 {}\n\n{}\n",
+                                    "# 사용자 답변 — {} 사이클 {}\n\n{}\n",
                                     current_role.display_name(),
                                     state.cycle,
-                                    questions_text
+                                    qa_pairs.join("\n\n")
                                 );
                                 if let Err(e) = write_file(&hint_path, &hint_content, path) {
                                     logger.warn(
@@ -441,8 +421,6 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                                     );
                                 }
                             }
-                        } else {
-                            println!("{}", "  [dry-run] RESP → hint 파일 생성 스킵".dimmed());
                         }
 
                         // Treat as NEXT: advance to next role
@@ -470,39 +448,6 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn check_token_warning(
-    token_monitor: &TokenMonitor,
-    current_role: &Role,
-    state: &OrchestratorState,
-    path: &Path,
-    dry_run: bool,
-    logger: &Logger,
-    retry: u32,
-) -> Result<bool> {
-    let token_level = token_monitor.check_usage();
-    token_monitor.display_warning(&token_level);
-    if matches!(token_level, TokenWarningLevel::Critical(_)) {
-        logger.warn(&current_role.to_string(), "Token critical before role exec");
-        if dry_run {
-            println!(
-                "{}",
-                "  [dry-run] Token usage critical — skipping checkpoint prompt".yellow()
-            );
-        } else {
-            let save_and_exit = Confirm::new()
-                .with_prompt("Token usage critical. Save checkpoint and exit?")
-                .default(true)
-                .interact()?;
-            if save_and_exit {
-                save_current_checkpoint(state, current_role, path, retry)?;
-                println!("{}", "Checkpoint saved. Run 'porpoise' to resume.".cyan());
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn execute_role(
     executor: &RoleExecutor,
@@ -519,7 +464,7 @@ fn execute_role(
     let report_result = if dry_run {
         executor.execute_role(current_role, context, path, true, task_id, cycle, retry)
     } else {
-        let spinner = make_spinner(&format!("Running {} ...", current_role.display_name()));
+        let spinner = make_spinner(&format!("[ Cycle {} | {} ] Running {} ...", cycle, task_id, current_role.display_name()));
         let result = executor.execute_role(current_role, context, path, false, task_id, cycle, retry);
         spinner.finish_and_clear();
         result
@@ -550,26 +495,18 @@ fn execute_role(
     };
 
     if !dry_run {
-        let report_path = save_report(&report, path, task_id, cycle, retry)?;
+        let filename = report_filename(task_id, &report.role, cycle, retry);
         history.push(format!(
             "Cycle {} | {} | {} → {}",
             cycle,
             task_id,
             current_role.display_name(),
-            report_path.file_name().unwrap_or_default().to_string_lossy()
+            filename
         ));
         println!(
             "  {} Report: {}",
             "✓".green(),
-            report_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .dimmed()
-        );
-        logger.info(
-            &current_role.to_string(),
-            &format!("Report saved: {}", report_path.display()),
+            filename.dimmed()
         );
     }
 

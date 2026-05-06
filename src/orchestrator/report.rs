@@ -1,9 +1,7 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::state::TaskId;
-use crate::utils::fs::write_file;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReviewStatus {
@@ -184,19 +182,6 @@ pub fn parse_report(content: &str, role: &str) -> Report {
         questions,
         exit_code,
     }
-}
-
-pub fn save_report(
-    report: &Report,
-    path: &Path,
-    task_id: &str,
-    cycle: u32,
-    retry: u32,
-) -> Result<PathBuf> {
-    let filename = report_filename(task_id, &report.role, cycle, retry);
-    let report_path = path.join(".porpoise").join("reports").join(&filename);
-    write_file(&report_path, &report.content, path)?;
-    Ok(report_path)
 }
 
 #[cfg(test)]
