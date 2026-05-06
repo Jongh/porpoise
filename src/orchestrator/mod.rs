@@ -646,10 +646,10 @@ fn filter_gitignored_files(files: Vec<String>) -> Vec<String> {
     let ignored: std::collections::HashSet<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
+        .map(|l| l.replace('\\', "/"))
         .collect();
 
-    files.into_iter().filter(|f| !ignored.contains(f)).collect()
+    files.into_iter().filter(|f| !ignored.contains(&f.replace('\\', "/"))).collect()
 }
 
 fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
@@ -661,19 +661,35 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
         return Ok(());
     }
 
-    let output = Command::new("git")
+    let batch_output = Command::new("git")
         .arg("add")
         .arg("--")
         .args(&files)
         .output()
         .context("git add 실행 실패")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "git add 실패 (exit code: {}): {}",
-            output.status.code().unwrap_or(-1),
-            stderr.trim()
-        );
+
+    if !batch_output.status.success() {
+        let mut staged_count = 0usize;
+        let mut failed_files: Vec<String> = Vec::new();
+        for file in &files {
+            let out = Command::new("git")
+                .args(["add", "--", file])
+                .output()
+                .context("git add 실행 실패")?;
+            if out.status.success() {
+                staged_count += 1;
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                failed_files.push(format!("{} ({})", file, stderr.trim()));
+            }
+        }
+        if !failed_files.is_empty() {
+            println!("{} {}", "⚠  git add 실패 (스킵):".yellow(), failed_files.join(", "));
+        }
+        if staged_count == 0 {
+            println!("{}", "⚠  스테이징된 파일 없음 — 커밋 건너뜀".yellow());
+            return Ok(());
+        }
     }
 
     let status = Command::new("git")
