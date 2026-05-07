@@ -8,13 +8,13 @@ use super::template::apply_template;
 use crate::config::workspace::WorkspaceConfig;
 use crate::utils::fs::write_file;
 
-const CLAUDE_MD_TEMPLATE: &str = include_str!("prompts/claude.md");
-const PROJECT_MD_TEMPLATE: &str = include_str!("prompts/project.md");
-const ORCHE_TEMPLATE: &str = include_str!("prompts/00-orche.md");
-const PM_TEMPLATE: &str = include_str!("prompts/01-planning.md");
-const DEVELOPER_TEMPLATE: &str = include_str!("prompts/02-development.md");
-const TESTER_TEMPLATE: &str = include_str!("prompts/03-testing.md");
-const REVIEWER_TEMPLATE: &str = include_str!("prompts/04-review.md");
+const CLAUDE_MD_TEMPLATE: &str = include_str!("prompts/claude.tmpl");
+const PROJECT_MD_TEMPLATE: &str = include_str!("prompts/project.tmpl");
+const ORCHE_TEMPLATE: &str = include_str!("prompts/00-orche.tmpl");
+const PM_TEMPLATE: &str = include_str!("prompts/01-planning.tmpl");
+const DEVELOPER_TEMPLATE: &str = include_str!("prompts/02-development.tmpl");
+const TESTER_TEMPLATE: &str = include_str!("prompts/03-testing.tmpl");
+const REVIEWER_TEMPLATE: &str = include_str!("prompts/04-review.tmpl");
 
 pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceConfig) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
