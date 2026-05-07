@@ -131,6 +131,17 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.4.1]
+- **다중 작업 동시 완료**: Reviewer가 `PORPOISE_META` 블록의 `completed_tasks` 필드로 여러 task ID를 쉼표 구분 지정 시 일괄 완료 처리 및 일괄 커밋
+- **자동 커밋 메시지 Markdown 형식**: 제목 `[task-id] 작업 완료`, 본문 `- task-id: 제목` 항목 목록 (R-03)
+- **R-01 안전망**: `completed_tasks`에 현재 task_id가 없으면 자동 추가 + 경고 출력
+- **R-05 경고**: `completed_tasks`의 task ID가 project.md에 없으면 콘솔 경고
+- **IMP-01**: 오케스트레이터 시작 시 `workspace.toml`이 프롬프트 파일보다 최신이면 재생성 안내 경고
+- **IMP-02**: `workspace.toml`의 `[general].language` 값을 `project.md` 응답 언어로 반영 (기본값: `ko`)
+- **IMP-03**: `--verbose` 모드에서 `prompt_overrides` 경로 파일 존재 여부 검증
+- **BUG-01**: `apply_template()`에서 빈 변수 치환 후 3연속 개행 → 2개로 정규화
+- **테스트 추가**: `completed_tasks` 파싱 6개, triple newline 정규화 1개, `language()` 2개, `custom_rules = []` 1개 (총 96개)
+
 ### [v0.4.0]
 - **프롬프트 리소스화**: `generator.rs` 하드코딩 문자열을 `src/init/prompts/*.md` 7개 파일로 분리 — `include_str!()` 컴파일 타임 임베딩으로 단일 바이너리 유지
 - **템플릿 변수 치환 시스템**: `src/init/template.rs` 추가 — `{{variable}}` 표기법, `str::replace()` 기반, 미치환 변수 경고 출력

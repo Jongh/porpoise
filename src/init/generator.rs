@@ -32,6 +32,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceCon
     let docs_dir = path.join(".porpoise");
     let dod_items = format_list_items(&workspace.dod_items());
     let conventions = format_list_items(&workspace.convention_lines());
+    let language = workspace.language().to_string();
     let project_content = apply_template(
         PROJECT_MD_TEMPLATE,
         &[
@@ -40,6 +41,7 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceCon
             ("tree", &ctx.tree_output),
             ("dod_items", &dod_items),
             ("conventions", &conventions),
+            ("language", &language),
         ],
     );
     let project_md_path = docs_dir.join("project.md");
@@ -164,6 +166,12 @@ mod tests {
         ).unwrap();
         assert!(orche.contains("test-project"));
         assert!(!orche.contains("{{project_name}}"));
+
+        let project_md = std::fs::read_to_string(
+            path.join(".porpoise").join("project.md"),
+        ).unwrap();
+        assert!(!project_md.contains("{{language}}"), "project.md에 {{language}} 미치환 변수가 남아있음");
+        assert!(project_md.contains("ko"), "project.md에 기본 언어값 'ko'가 없음");
     }
 
     #[test]

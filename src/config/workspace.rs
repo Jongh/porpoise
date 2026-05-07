@@ -107,31 +107,41 @@ impl WorkspaceConfig {
         }
     }
 
+    /// Returns the language string from [general].language, defaulting to "ko".
+    pub fn language(&self) -> &str {
+        self.general
+            .as_ref()
+            .and_then(|g| g.language.as_deref())
+            .unwrap_or("ko")
+    }
+
+    /// Returns the raw override path string for the given role key, if configured.
+    pub fn prompt_override_path(&self, role_key: &str) -> Option<&str> {
+        self.prompt_overrides.as_ref().and_then(|po| match role_key {
+            "pm" => po.pm.as_deref(),
+            "developer" => po.developer.as_deref(),
+            "tester" => po.tester.as_deref(),
+            "reviewer" => po.reviewer.as_deref(),
+            _ => None,
+        })
+    }
+
+    /// Resolves the override path for the given role key against the project root.
+    pub fn resolved_override_path(&self, role_key: &str, project_path: &Path) -> Option<std::path::PathBuf> {
+        self.prompt_override_path(role_key).map(|p| resolve_path(p, project_path))
+    }
+
     /// Reads prompt override file for the given role key, if configured in [prompt_overrides].
     /// Returns None if not configured or file cannot be read (falls back to default template).
     pub fn prompt_override_content(&self, role_key: &str, project_path: &Path) -> Option<String> {
-        let override_path_str = self.prompt_overrides.as_ref().and_then(|po| {
-            match role_key {
-                "pm" => po.pm.as_deref(),
-                "developer" => po.developer.as_deref(),
-                "tester" => po.tester.as_deref(),
-                "reviewer" => po.reviewer.as_deref(),
-                _ => None,
-            }
-        })?;
-
-        let full_path = if Path::new(override_path_str).is_absolute() {
-            std::path::PathBuf::from(override_path_str)
-        } else {
-            project_path.join(override_path_str)
-        };
-
+        let full_path = self.resolved_override_path(role_key, project_path)?;
         match std::fs::read_to_string(&full_path) {
             Ok(content) => Some(content),
             Err(_) => {
+                let raw = self.prompt_override_path(role_key).unwrap_or("?");
                 eprintln!(
                     "⚠ 프롬프트 오버라이드 파일을 읽을 수 없습니다: {} (기본 템플릿 사용)",
-                    override_path_str
+                    raw
                 );
                 None
             }
@@ -175,6 +185,14 @@ reviewer_extra = ""
 # tester = ".porpoise/custom-prompts/03-testing.md"
 # reviewer = ".porpoise/custom-prompts/04-review.md"
 "#
+    }
+}
+
+fn resolve_path(override_path: &str, project_path: &Path) -> std::path::PathBuf {
+    if Path::new(override_path).is_absolute() {
+        std::path::PathBuf::from(override_path)
+    } else {
+        project_path.join(override_path)
     }
 }
 
@@ -258,6 +276,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = WorkspaceConfig::default();
         assert!(cfg.prompt_override_content("pm", tmp.path()).is_none());
+    }
+
+    #[test]
+    fn language_defaults_to_ko() {
+        let cfg = WorkspaceConfig::default();
+        assert_eq!(cfg.language(), "ko");
+    }
+
+    #[test]
+    fn language_reads_from_general() {
+        let cfg = WorkspaceConfig {
+            general: Some(WorkspaceGeneral { language: Some("en".to_string()) }),
+            ..Default::default()
+        };
+        assert_eq!(cfg.language(), "en");
+    }
+
+    #[test]
+    fn custom_rules_empty_array_parses() {
+        let toml = "[conventions]\ncustom_rules = []\n";
+        let cfg: WorkspaceConfig = toml::from_str(toml).unwrap();
+        let lines = cfg.convention_lines();
+        assert!(lines.iter().any(|l| l.contains("한국어")));
+        assert_eq!(lines.len(), 2); // only defaults
     }
 
     #[test]

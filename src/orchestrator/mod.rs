@@ -12,6 +12,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use crate::config::workspace::WorkspaceConfig;
 use crate::config::Config;
 use crate::logger::Logger;
 use crate::milestone::update_task_status;
@@ -20,7 +21,7 @@ use crate::utils::input::{collect_multiline_input, confirm_or_default};
 use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
-use report::{count_existing_reports, parse_exit_code, parse_prev_target, report_filename, ExitCode, Report};
+use report::{count_existing_reports, parse_completed_tasks, parse_exit_code, parse_prev_target, report_filename, ExitCode, Report};
 use roles::{build_context, find_latest_report, RoleContext, RoleExecutor};
 use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
 
@@ -74,6 +75,52 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                     .yellow()
                     .bold()
             );
+        }
+    }
+
+    let workspace = WorkspaceConfig::load(path).unwrap_or_default();
+
+    // IMP-01: warn if workspace.toml is newer than generated prompt files
+    {
+        let ws_path = path.join(".porpoise").join("workspace.toml");
+        let prompts_dir = path.join(".porpoise").join("prompts");
+        if ws_path.exists() {
+            if let Ok(ws_mtime) = std::fs::metadata(&ws_path).and_then(|m| m.modified()) {
+                let outdated = ["01-planning.md", "02-development.md", "03-testing.md", "04-review.md"]
+                    .iter()
+                    .any(|f| {
+                        std::fs::metadata(prompts_dir.join(f))
+                            .and_then(|m| m.modified())
+                            .map(|mtime| ws_mtime > mtime)
+                            .unwrap_or(false)
+                    });
+                if outdated {
+                    println!(
+                        "{}",
+                        "⚠  workspace.toml이 프롬프트 파일보다 최신입니다. 'porpoise --new'로 프롬프트를 재생성하세요. (이미 최신이라면 무시하세요.)".yellow()
+                    );
+                }
+            }
+        }
+    }
+
+    // IMP-03: validate prompt_overrides paths (verbose only)
+    if args.verbose {
+        for role_key in &["pm", "developer", "tester", "reviewer"] {
+            if let Some(full_path) = workspace.resolved_override_path(role_key, path) {
+                if !full_path.exists() {
+                    println!(
+                        "  {} prompt_overrides.{}: 파일 없음 — {}",
+                        "⚠".yellow(),
+                        role_key,
+                        full_path.display()
+                    );
+                    logger.warn(
+                        "orchestrator",
+                        &format!("prompt_override {} 파일 없음: {}", role_key, full_path.display()),
+                    );
+                }
+            }
         }
     }
 
@@ -254,25 +301,73 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             ExitCode::Next => {
                 if current_role == Role::Reviewer {
                     if !args.dry_run {
-                        match auto_commit(&state.current_task_id, &state.current_task_title) {
-                            Ok(()) => {
+                        // Collect completed task IDs from PORPOISE_META
+                        let mut task_ids = parse_completed_tasks(&rpt_content);
+
+                        // BUG-03: deduplicate while preserving order
+                        {
+                            let mut seen = std::collections::HashSet::new();
+                            task_ids.retain(|id| seen.insert(id.clone()));
+                        }
+
+                        // R-01: auto-include current_task_id if not listed
+                        if !task_ids.contains(&state.current_task_id) {
+                            if !task_ids.is_empty() {
                                 println!(
-                                    "  {} 커밋 완료: [{}] {}",
-                                    "✓".green(),
-                                    state.current_task_id,
-                                    state.current_task_title
+                                    "  {} completed_tasks에 현재 작업 ID({})가 없어 자동 추가됩니다.",
+                                    "⚠".yellow(),
+                                    state.current_task_id
                                 );
-                                logger.info(
-                                    "reviewer",
-                                    &format!("Auto-commit: [{}]", state.current_task_id),
-                                );
+                            }
+                            task_ids.push(state.current_task_id.clone());
+                        }
+
+                        // R-05: look up titles from project.md, warn on unknown IDs
+                        let project_tasks = parse_tasks_from_project_md(path);
+                        let commit_tasks: Vec<(String, String)> = task_ids
+                            .iter()
+                            .map(|id| {
+                                let title = if *id == state.current_task_id {
+                                    project_tasks
+                                        .iter()
+                                        .find(|t| t.id == *id)
+                                        .map(|t| t.title.clone())
+                                        .unwrap_or_else(|| state.current_task_title.clone())
+                                } else {
+                                    match project_tasks.iter().find(|t| t.id == *id) {
+                                        Some(t) => t.title.clone(),
+                                        None => {
+                                            println!(
+                                                "  {} completed_tasks의 작업 ID '{}'를 project.md에서 찾을 수 없음",
+                                                "⚠".yellow(),
+                                                id
+                                            );
+                                            String::new()
+                                        }
+                                    }
+                                };
+                                (id.clone(), title)
+                            })
+                            .collect();
+
+                        match auto_commit(&commit_tasks) {
+                            Ok(()) => {
+                                let ids_str = commit_tasks
+                                    .iter()
+                                    .map(|(id, _)| id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                println!("  {} 커밋 완료: [{}]", "✓".green(), ids_str);
+                                logger.info("reviewer", &format!("Auto-commit: [{}]", ids_str));
                             }
                             Err(e) => {
                                 println!("{} {}", "⚠  자동 커밋 실패:".yellow(), e);
                                 logger.warn("reviewer", &format!("Auto-commit failed: {}", e));
                             }
                         }
-                        if let Err(e) = mark_task_complete(path, &state.current_task_id, &logger) {
+
+                        let commit_ids: Vec<String> = commit_tasks.iter().map(|(id, _)| id.clone()).collect();
+                        if let Err(e) = mark_tasks_complete(path, &commit_ids, &logger) {
                             logger.warn("reviewer", &format!("Task mark failed: {}", e));
                         }
                     } else {
@@ -546,8 +641,28 @@ fn filter_gitignored_files(files: Vec<String>) -> Vec<String> {
     files.into_iter().filter(|f| !ignored.contains(&f.replace('\\', "/"))).collect()
 }
 
-fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
-    let message = format!("[{}] {}", task_id, task_title);
+fn auto_commit(tasks: &[(String, String)]) -> Result<()> {
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let subject = if tasks.len() == 1 {
+        format!("[{}] 작업 완료", tasks[0].0)
+    } else {
+        let ids = tasks.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>().join(", ");
+        format!("[{}] 작업 완료", ids)
+    };
+    let body = tasks
+        .iter()
+        .map(|(id, title)| {
+            if title.is_empty() {
+                format!("- {}", id)
+            } else {
+                format!("- {}: {}", id, title)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let message = format!("{}\n\n{}", subject, body);
     let target_paths = [".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md", "wix/"];
 
     let files = collect_stageable_files(&target_paths)?;
@@ -597,18 +712,32 @@ fn auto_commit(task_id: &str, task_title: &str) -> Result<()> {
     Ok(())
 }
 
-fn mark_task_complete(path: &Path, task_id: &str, logger: &Logger) -> Result<()> {
+fn mark_tasks_complete(path: &Path, task_ids: &[String], logger: &Logger) -> Result<()> {
     let project_md_path = path.join(".porpoise").join("project.md");
-    let content = std::fs::read_to_string(&project_md_path)
+    let mut content = std::fs::read_to_string(&project_md_path)
         .with_context(|| format!("project.md 읽기 실패: {}", project_md_path.display()))?;
 
-    let marker = format!("- [ ] {}:", task_id);
-    let replacement = format!("- [x] {}:", task_id);
-    let new_content = content.replace(&marker, &replacement);
+    let mut updated = 0usize;
+    for task_id in task_ids {
+        let marker = format!("- [ ] {}:", task_id);
+        let replacement = format!("- [x] {}:", task_id);
+        if content.contains(&marker) {
+            content = content.replace(&marker, &replacement);
+            updated += 1;
+            update_task_status(path, task_id, true, logger);
+        } else {
+            println!(
+                "  {} project.md에서 '{}' 미완료 마커를 찾을 수 없음 (이미 완료 또는 ID 불일치)",
+                "⚠".yellow(),
+                task_id
+            );
+            logger.warn("reviewer", &format!("project.md에서 미완료 마커를 찾을 수 없음: {}", task_id));
+        }
+    }
 
-    write_file(&project_md_path, &new_content, path).context("project.md 업데이트 실패")?;
-
-    update_task_status(path, task_id, true, logger);
+    if updated > 0 {
+        write_file(&project_md_path, &content, path).context("project.md 업데이트 실패")?;
+    }
 
     Ok(())
 }

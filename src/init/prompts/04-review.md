@@ -57,6 +57,7 @@
 status: APPROVED
 milestone_complete: false
 prev_target: development
+completed_tasks: M1-T01, M1-T02
 -->
 ```
 
@@ -64,6 +65,8 @@ prev_target: development
   - 허용값: `development`, `testing` (PM은 기본값이므로 생략)
   - 예: Reviewer가 코드 품질 문제만 발견한 경우 `prev_target: development`
   - 예: Reviewer가 테스트 커버리지 문제만 발견한 경우 `prev_target: testing`
+- `completed_tasks`: 이번 사이클에서 동시에 완료된 작업 ID 목록 (쉼표 구분). 생략하면 현재 task_id 하나만 완료 처리.
+  - 예: Reviewer가 M1-T01, M1-T02를 동시 구현/검증한 경우 `completed_tasks: M1-T01, M1-T02`
 {{role_extra}}
 
 ---

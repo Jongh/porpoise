@@ -37,6 +37,8 @@ pub struct Report {
     pub exit_code: Option<ExitCode>,
     /// PREV 시 복귀 대상 역할 (PORPOISE_META prev_target 필드)
     pub prev_target: Option<String>,
+    /// Reviewer가 동시 완료를 확인한 task ID 목록 (PORPOISE_META completed_tasks 필드)
+    pub completed_tasks: Vec<String>,
 }
 
 impl Report {
@@ -49,6 +51,7 @@ impl Report {
             questions: vec![],
             exit_code: Some(ExitCode::Next),
             prev_target: None,
+            completed_tasks: vec![],
         }
     }
 }
@@ -95,6 +98,7 @@ struct MetaBlock {
     status: Option<ReviewStatus>,
     milestone_complete: bool,
     prev_target: Option<String>,
+    completed_tasks: Vec<String>,
 }
 
 fn parse_meta_block(content: &str) -> Option<MetaBlock> {
@@ -106,6 +110,7 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
     let mut status = None;
     let mut milestone_complete = false;
     let mut prev_target = None;
+    let mut completed_tasks: Vec<String> = Vec::new();
 
     for line in block.lines() {
         let line = line.trim();
@@ -123,6 +128,12 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
             if !t.is_empty() {
                 prev_target = Some(t);
             }
+        } else if let Some(val) = line.strip_prefix("completed_tasks:") {
+            completed_tasks = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
         }
     }
 
@@ -130,6 +141,7 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
         status,
         milestone_complete,
         prev_target,
+        completed_tasks,
     })
 }
 
@@ -139,9 +151,9 @@ pub fn parse_prev_target(content: &str) -> Option<String> {
 }
 
 pub fn parse_report(content: &str, role: &str) -> Report {
-    let (review_status, milestone_complete, prev_target) =
+    let (review_status, milestone_complete, prev_target, completed_tasks) =
         if let Some(meta) = parse_meta_block(content) {
-            (meta.status, meta.milestone_complete, meta.prev_target)
+            (meta.status, meta.milestone_complete, meta.prev_target, meta.completed_tasks)
         } else {
             let content_upper = content.to_uppercase();
             let review_status = if content_upper.contains("APPROVED")
@@ -158,7 +170,7 @@ pub fn parse_report(content: &str, role: &str) -> Report {
             let milestone_complete = content.contains("마일스톤 완료")
                 || content.contains("MILESTONE_COMPLETE")
                 || content.contains("milestone complete");
-            (review_status, milestone_complete, None)
+            (review_status, milestone_complete, None, vec![])
         };
 
     let exit_code = parse_exit_code(content);
@@ -198,7 +210,15 @@ pub fn parse_report(content: &str, role: &str) -> Report {
         questions,
         exit_code,
         prev_target,
+        completed_tasks,
     }
+}
+
+/// Extracts the `completed_tasks` list from a PORPOISE_META block.
+pub fn parse_completed_tasks(content: &str) -> Vec<String> {
+    parse_meta_block(content)
+        .map(|m| m.completed_tasks)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -311,6 +331,50 @@ mod tests {
         assert_eq!(report.exit_code, Some(ExitCode::Next));
         assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
         assert_eq!(report.prev_target, None);
+        assert!(report.completed_tasks.is_empty());
+    }
+
+    #[test]
+    fn parse_completed_tasks_single() {
+        let content = "<!-- PORPOISE_META\nstatus: APPROVED\ncompleted_tasks: M1-T01\n-->\n\nNEXT";
+        let tasks = parse_completed_tasks(content);
+        assert_eq!(tasks, vec!["M1-T01".to_string()]);
+    }
+
+    #[test]
+    fn parse_completed_tasks_multiple() {
+        let content = "<!-- PORPOISE_META\nstatus: APPROVED\ncompleted_tasks: M1-T01, M1-T02, M1-T03\nmilestone_complete: false\n-->\n\nNEXT";
+        let tasks = parse_completed_tasks(content);
+        assert_eq!(tasks, vec!["M1-T01", "M1-T02", "M1-T03"]);
+    }
+
+    #[test]
+    fn parse_completed_tasks_absent() {
+        let content = "<!-- PORPOISE_META\nstatus: APPROVED\n-->\n\nNEXT";
+        let tasks = parse_completed_tasks(content);
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn parse_completed_tasks_no_meta_block() {
+        let content = "Some content without meta block\n\nNEXT";
+        let tasks = parse_completed_tasks(content);
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn parse_report_includes_completed_tasks() {
+        let content = "<!-- PORPOISE_META\nstatus: APPROVED\ncompleted_tasks: M2-T01, M2-T02\nmilestone_complete: false\n-->\n\nNEXT";
+        let report = parse_report(content, "reviewer");
+        assert_eq!(report.completed_tasks, vec!["M2-T01", "M2-T02"]);
+        assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
+    }
+
+    #[test]
+    fn parse_report_completed_tasks_empty_when_no_meta() {
+        let content = "Review done. APPROVED\n\nNEXT";
+        let report = parse_report(content, "reviewer");
+        assert!(report.completed_tasks.is_empty());
     }
 
     #[test]
