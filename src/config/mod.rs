@@ -1,3 +1,5 @@
+pub mod workspace;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;

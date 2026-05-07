@@ -1,6 +1,7 @@
 pub mod tree;
 pub mod context;
 pub mod generator;
+pub mod template;
 
 use anyhow::Result;
 use colored::Colorize;
@@ -8,6 +9,7 @@ use dialoguer::Confirm;
 use std::path::Path;
 
 use crate::Args;
+use crate::config::workspace::WorkspaceConfig;
 
 pub fn run(path: &Path, args: &Args) -> Result<()> {
     println!();
@@ -44,10 +46,13 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
 
     let ctx = context::collect_project_context(&tree_output)?;
 
+    // Load workspace config (preserves existing .porpoise/workspace.toml if present)
+    let workspace = WorkspaceConfig::load(path)?;
+
     // Generate docs
     println!();
     println!("{}", "Generating documentation...".cyan());
-    generator::generate_docs(&ctx, path)?;
+    generator::generate_docs(&ctx, path, &workspace)?;
 
     println!();
     println!("{}", "Initialization complete!".green().bold());

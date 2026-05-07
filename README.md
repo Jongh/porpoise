@@ -131,6 +131,16 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.4.0]
+- **프롬프트 리소스화**: `generator.rs` 하드코딩 문자열을 `src/init/prompts/*.md` 7개 파일로 분리 — `include_str!()` 컴파일 타임 임베딩으로 단일 바이너리 유지
+- **템플릿 변수 치환 시스템**: `src/init/template.rs` 추가 — `{{variable}}` 표기법, `str::replace()` 기반, 미치환 변수 경고 출력
+- **`.porpoise/workspace.toml` 신설**: 프로젝트별 DoD, 컨벤션, 역할 추가 지시사항, 프롬프트 완전 교체(override) 지원
+- **초기화 시 workspace.toml 자동 생성**: `porpoise --new` 또는 첫 실행 시 주석 포함 기본값 파일 생성. 기존 파일이 있으면 덮어쓰지 않음
+- **WorkspaceConfig 구조체** (`src/config/workspace.rs`): `[general]`, `[dod]`, `[conventions]`, `[roles]`, `[prompt_overrides]` 5개 섹션, TOML 로드 지원
+- **`[prompt_overrides]` A-3 하이브리드**: 역할별로 커스텀 `.md` 파일 경로 지정 시 기본 템플릿 대신 해당 파일 사용, 파일 없으면 기본값 폴백 + 경고
+- **`[roles].*_extra`**: pm/developer/tester/reviewer 각 역할 프롬프트에 추가 지시사항 섹션 자동 삽입
+- **`[dod].items` / `[conventions].custom_rules`**: 초기화 시 `project.md`의 DoD·컨벤션 섹션에 반영
+
 ### [v0.3.1]
 - **폴더 소유권 분리**: `reports/`(Claude 보고서 저장), `messages/`(Porpoise 출력 캡처), `hints/`(사용자 추가 지시) 역할 확정 및 문서화
 - **`porpoise approve [NEXT|PREV]`** 서브커맨드 추가: Claude가 보고서를 저장하지 않은 경우 수동 판정 파일 생성
