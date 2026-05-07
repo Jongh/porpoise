@@ -18,11 +18,35 @@
 | `.porpoise/hints/` | Porpoise (RESP 흐름) | 사용자 추가 지시사항 |
 | `.porpoise/prompts/` | 초기화 시 생성 | 역할별 프롬프트 파일 |
 
+### 마일스톤 & 작업 체계
+
+마일스톤은 하나의 릴리즈 단위이며, 각각 여러 작업(Task)으로 구성됩니다.
+
+**ID 형식**
+- 마일스톤: `M{n}` (예: M1, M2)
+- 작업: `M{n}-T{nn}` (예: M1-T01, M1-T02)
+
+**작업 목록 형식**
+```
+- [ ] M1-T01: 작업 제목  ← 미완료 (첫 번째 미완료 항목이 현재 사이클 대상)
+- [x] M1-T02: 작업 제목  ← 완료됨
+```
+
+**작업 진행 규칙**
+1. 작업은 목록 순서대로 **하나씩** 처리합니다.
+2. **첫 번째 미완료(`- [ ]`) 항목**이 항상 현재 사이클의 대상 task입니다.
+3. Reviewer가 NEXT를 출력하면 해당 task가 자동으로 완료(`[x]`) 처리됩니다.
+4. `completed_tasks` 메타 필드로 여러 task를 한 사이클에 동시 완료할 수 있습니다.
+
+**마일스톤 완료**
+- 마일스톤의 모든 task가 완료되면 Porpoise가 다음 마일스톤 생성 세션을 자동 실행합니다.
+- Reviewer는 마지막 task 승인 시 PORPOISE_META에 `milestone_complete: true`를 기록하세요.
+
 ## 역할별 책임
-- Planning: 작업 범위 정의, 기술 명세 작성
-- Development: 코드 구현
-- Testing: 테스트 실행 및 버그 리포트
-- Review: 코드 리뷰 및 품질 평가
+- Planning: 현재 task 범위 정의, 기술 명세 작성
+- Development: 현재 task 코드 구현
+- Testing: 현재 task 테스트 실행 및 버그 리포트
+- Review: 코드 리뷰 및 task 완료 최종 승인
 
 ## 완료 기준 (DoD)
 {{dod_items}}

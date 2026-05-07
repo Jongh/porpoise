@@ -30,6 +30,20 @@
 2. 이전 역할의 보고서(`.porpoise/reports/`)를 컨텍스트로 참조합니다.
 3. 사이클은 Review NEXT 코드 출력 후 완료됩니다.
 
+## 마일스톤 & 작업 ID 체계
+
+- **마일스톤 ID**: `M{n}` (예: M1, M2) — 하나의 릴리즈 단위
+- **작업 ID**: `M{n}-T{nn}` (예: M1-T01) — 마일스톤 내 개별 작업
+- 현재 사이클의 대상 task_id는 `.porpoise/project.md`의 **첫 번째 미완료(`- [ ]`) 항목**입니다.
+- 보고서 파일명에 task_id가 포함됩니다: `{task-id}-{role}-C{cycle}-R{retry}.md`
+- Reviewer가 NEXT를 출력하면 해당 task가 완료 처리되고, 다음 미완료 task로 자동 전환됩니다.
+- Reviewer가 `completed_tasks` 필드를 사용하면 여러 task를 한 사이클에 동시 완료할 수 있습니다.
+
+**마일스톤 완료 흐름**
+1. 마일스톤의 모든 task가 완료되면 Porpoise가 마일스톤 생성 세션을 자동 실행합니다.
+2. 마일스톤 생성 세션에서 다음 마일스톤의 task 목록을 수립합니다.
+3. Reviewer는 마지막 task 승인 시 PORPOISE_META에 `milestone_complete: true`를 기록하세요.
+
 ## 종료 코드 규칙
 보고서의 **마지막 줄**에 아래 코드 중 하나를 단독으로 출력합니다:
 - `NEXT`: 현재 역할 완료, 다음 단계 진행
