@@ -15,6 +15,8 @@ const PM_TEMPLATE: &str = include_str!("prompts/01-planning.tmpl");
 const DEVELOPER_TEMPLATE: &str = include_str!("prompts/02-development.tmpl");
 const TESTER_TEMPLATE: &str = include_str!("prompts/03-testing.tmpl");
 const REVIEWER_TEMPLATE: &str = include_str!("prompts/04-review.tmpl");
+// {{next_milestone_id}} in this template is a runtime variable — not substituted at init time.
+const MILESTONE_TEMPLATE: &str = include_str!("prompts/05-milestone.tmpl");
 
 pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceConfig) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -103,6 +105,12 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceCon
         println!("  {} {}", "Created:".green(), prompt_path.display());
     }
 
+    // 05-milestone.md — {{next_milestone_id}} is a runtime variable substituted by milestone_session.
+    // Write the template as-is so the placeholder survives until runtime.
+    let milestone_path = prompts_dir.join("05-milestone.md");
+    write_file(&milestone_path, MILESTONE_TEMPLATE, path)?;
+    println!("  {} {}", "Created:".green(), milestone_path.display());
+
     Ok(())
 }
 
@@ -144,6 +152,7 @@ mod tests {
         assert!(path.join(".porpoise").join("prompts").join("02-development.md").exists());
         assert!(path.join(".porpoise").join("prompts").join("03-testing.md").exists());
         assert!(path.join(".porpoise").join("prompts").join("04-review.md").exists());
+        assert!(path.join(".porpoise").join("prompts").join("05-milestone.md").exists());
         assert!(path.join(".porpoise").join("hints").exists());
         assert!(path.join(".porpoise").join("reports").exists());
     }
@@ -254,6 +263,25 @@ mod tests {
                 filename
             );
         }
+    }
+
+    #[test]
+    fn generate_docs_milestone_prompt_has_runtime_placeholder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+
+        generate_docs(&ctx, path, &workspace).unwrap();
+
+        let content = std::fs::read_to_string(
+            path.join(".porpoise").join("prompts").join("05-milestone.md"),
+        ).unwrap();
+        // {{next_milestone_id}} is intentionally left for runtime substitution
+        assert!(
+            content.contains("{{next_milestone_id}}"),
+            "05-milestone.md should retain the runtime placeholder {{next_milestone_id}}"
+        );
     }
 
     #[test]

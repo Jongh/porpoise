@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::claude::runner::ClaudeRunner;
+use crate::init::template::apply_template;
 use crate::logger::Logger;
 use crate::milestone::{load_all_milestones, Milestone};
 use crate::orchestrator::report::{parse_report, ExitCode};
@@ -25,7 +26,22 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
 
     let milestones_dir = path.join(".porpoise").join("milestones");
     let user_input_path = path.join(".porpoise").join("user_input.md");
-    let prompt_file = path.join(".porpoise").join("prompts").join("00-orche.md");
+    let project_md_path = path.join(".porpoise").join("project.md");
+    let milestone_prompt_path = path.join(".porpoise").join("prompts").join("05-milestone.md");
+
+    // 다음 마일스톤 ID를 미리 계산 (세션 전체에서 고정)
+    let max_id = load_all_milestones(&milestones_dir)
+        .unwrap_or_default()
+        .iter()
+        .map(|m| m.id)
+        .max()
+        .unwrap_or(0);
+    let next_id = max_id + 1;
+
+    // 05-milestone.md 템플릿을 읽어 next_id를 치환
+    let prompt_template = std::fs::read_to_string(&milestone_prompt_path)
+        .with_context(|| format!("05-milestone.md 읽기 실패: {}", milestone_prompt_path.display()))?;
+    let rendered_prompt = apply_template(&prompt_template, &[("next_milestone_id", &next_id.to_string())]);
 
     let runner = ClaudeRunner::new()?;
 
@@ -63,13 +79,16 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
 
         logger.info(
             "milestone_session",
-            &format!("Claude 세션 실행 attempt={}", attempt),
+            &format!("Claude 세션 실행 attempt={} next_id=M{}", attempt, next_id),
         );
         println!("{}", "  Claude 세션 실행 중...".cyan());
 
-        let output = runner.run_with_prompt(
-            &prompt_file,
-            std::slice::from_ref(&user_input_path),
+        // project.md와 user_input.md를 컨텍스트로 제공
+        let context_files = vec![project_md_path.clone(), user_input_path.clone()];
+
+        let output = runner.run_with_prompt_str(
+            &rendered_prompt,
+            &context_files,
             &output_file,
             model,
         )?;

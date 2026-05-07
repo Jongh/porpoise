@@ -29,12 +29,91 @@ impl ClaudeRunner {
         output_file: &Path,
         model: Option<&str>,
     ) -> Result<String> {
+        let role_prompt = fs::read_to_string(prompt_file).with_context(|| {
+            format!("Failed to read prompt file: {}", prompt_file.display())
+        })?;
+        let prompt = self.build_prompt_from_content(&role_prompt, context_files)?;
+        self.execute_claude(&prompt, output_file, model)
+    }
+
+    /// Run claude with an already-rendered prompt string and context files.
+    /// Use this when the prompt content is generated at runtime (e.g., after template substitution).
+    pub fn run_with_prompt_str(
+        &self,
+        prompt_str: &str,
+        context_files: &[PathBuf],
+        output_file: &Path,
+        model: Option<&str>,
+    ) -> Result<String> {
+        let prompt = self.build_prompt_from_content(prompt_str, context_files)?;
+        self.execute_claude(&prompt, output_file, model)
+    }
+
+    /// Build a Command that correctly invokes the claude binary.
+    ///
+    /// On Windows, npm-installed CLIs are `.cmd` batch wrappers that cannot be
+    /// spawned directly — they require `cmd.exe /C` as the launcher.
+    ///
+    /// `--dangerously-skip-permissions` is always passed so that claude can
+    /// write/edit files without prompting for interactive TTY confirmation,
+    /// which is impossible when stdin is a pipe carrying the prompt text.
+    fn make_command(&self) -> Command {
+        #[cfg(windows)]
+        {
+            let ext = self
+                .binary_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if matches!(ext, "cmd" | "bat") {
+                let mut cmd = Command::new("cmd");
+                cmd.arg("/C").arg(&self.binary_path);
+                cmd.arg("--dangerously-skip-permissions");
+                return cmd;
+            }
+        }
+        let mut cmd = Command::new(&self.binary_path);
+        cmd.arg("--dangerously-skip-permissions");
+        cmd
+    }
+
+    /// Build a combined prompt: context file contents prepended, then the role prompt content.
+    fn build_prompt_from_content(
+        &self,
+        prompt_content: &str,
+        context_files: &[PathBuf],
+    ) -> Result<String> {
+        let mut prompt = String::new();
+
+        for ctx_file in context_files {
+            if !ctx_file.exists() {
+                continue;
+            }
+            let content = fs::read_to_string(ctx_file).with_context(|| {
+                format!("Failed to read context file: {}", ctx_file.display())
+            })?;
+            let filename = ctx_file
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| ctx_file.display().to_string());
+            prompt.push_str(&format!("=== {} ===\n{}\n\n", filename, content));
+        }
+
+        prompt.push_str(prompt_content);
+        Ok(prompt)
+    }
+
+    /// Spawn claude, pipe the prompt string via stdin, stream stdout, and save output.
+    fn execute_claude(
+        &self,
+        prompt: &str,
+        output_file: &Path,
+        model: Option<&str>,
+    ) -> Result<String> {
         if let Some(parent) = output_file.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("디렉토리 생성 실패: {}", parent.display()))?;
         }
-
-        let prompt = self.build_prompt(prompt_file, context_files)?;
 
         // On Windows, .cmd/.bat files cannot be spawned directly via CreateProcess.
         // They must be invoked through `cmd.exe /C`.
@@ -98,59 +177,5 @@ impl ClaudeRunner {
         }
 
         Ok(full_output)
-    }
-
-    /// Build a Command that correctly invokes the claude binary.
-    ///
-    /// On Windows, npm-installed CLIs are `.cmd` batch wrappers that cannot be
-    /// spawned directly — they require `cmd.exe /C <path>` as the launcher.
-    ///
-    /// `--dangerously-skip-permissions` is always passed so that claude can
-    /// write/edit files without prompting for interactive TTY confirmation,
-    /// which is impossible when stdin is a pipe carrying the prompt text.
-    fn make_command(&self) -> Command {
-        #[cfg(windows)]
-        {
-            let ext = self
-                .binary_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
-            if matches!(ext, "cmd" | "bat") {
-                let mut cmd = Command::new("cmd");
-                cmd.arg("/C").arg(&self.binary_path);
-                cmd.arg("--dangerously-skip-permissions");
-                return cmd;
-            }
-        }
-        let mut cmd = Command::new(&self.binary_path);
-        cmd.arg("--dangerously-skip-permissions");
-        cmd
-    }
-
-    /// Build a combined prompt: context file contents prepended, then the role prompt.
-    fn build_prompt(&self, prompt_file: &Path, context_files: &[PathBuf]) -> Result<String> {
-        let mut prompt = String::new();
-
-        for ctx_file in context_files {
-            if !ctx_file.exists() {
-                continue;
-            }
-            let content = fs::read_to_string(ctx_file).with_context(|| {
-                format!("Failed to read context file: {}", ctx_file.display())
-            })?;
-            let filename = ctx_file
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| ctx_file.display().to_string());
-            prompt.push_str(&format!("=== {} ===\n{}\n\n", filename, content));
-        }
-
-        let role_prompt = fs::read_to_string(prompt_file).with_context(|| {
-            format!("Failed to read prompt file: {}", prompt_file.display())
-        })?;
-        prompt.push_str(&role_prompt);
-
-        Ok(prompt)
     }
 }
