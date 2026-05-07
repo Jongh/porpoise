@@ -20,7 +20,7 @@ use crate::utils::input::{collect_multiline_input, confirm_or_default};
 use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
-use report::{count_existing_reports, parse_exit_code, report_filename, ExitCode, Report};
+use report::{count_existing_reports, parse_exit_code, parse_prev_target, report_filename, ExitCode, Report};
 use roles::{build_context, find_latest_report, RoleContext, RoleExecutor};
 use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
 
@@ -30,11 +30,6 @@ enum RoleOutcome {
     Stop,
 }
 
-enum PrevReportAction {
-    Continue,
-    ReRun,
-    Stop,
-}
 
 pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     let logger = Logger::new(path, args.verbose)?;
@@ -62,6 +57,23 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                 "Unknown role: '{}'. Valid: planning, development, testing, review",
                 from_role
             ),
+        }
+    }
+
+    // Migration guard: detect legacy report/ folder and warn
+    {
+        let old_report_dir = path.join(".porpoise").join("report");
+        if old_report_dir.exists() {
+            println!(
+                "{}",
+                "\n⚠  구 버전 report/ 폴더가 감지되었습니다 (v0.3.1 이전 형식).\
+                \n   이 폴더의 파일은 자동 라우팅에 사용되지 않습니다.\
+                \n   reports/ 폴더로 이동 후 재실행하세요.\
+                \n   Windows: ren .porpoise\\report .porpoise\\reports\
+                \n   Unix:    mv .porpoise/report .porpoise/reports"
+                    .yellow()
+                    .bold()
+            );
         }
     }
 
@@ -103,6 +115,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
 
     let executor = RoleExecutor::new(effective_model.clone());
     let mut history: Vec<String> = Vec::new();
+    let messages_dir = path.join(".porpoise").join("messages");
     let reports_dir = path.join(".porpoise").join("reports");
 
     loop {
@@ -126,208 +139,224 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             .bold()
         );
 
-        // Determine retry number from existing files on disk
-        let retry = count_existing_reports(
-            &reports_dir,
-            &state.current_task_id,
-            &current_role.to_string(),
-            state.cycle,
+        // retry = reports/ 또는 messages/ 파일 수 중 큰 값 (두 폴더 모두 반영)
+        let retry = std::cmp::max(
+            count_existing_reports(&messages_dir, &state.current_task_id, &current_role.to_string(), state.cycle),
+            count_existing_reports(&reports_dir, &state.current_task_id, &current_role.to_string(), state.cycle),
         );
 
-        // T07: Validate exit code in previous role's report before execution
-        if !args.dry_run {
-            if let Some(prev_role) = current_role.prev() {
-                match validate_prev_report_exit_code(
-                    &reports_dir,
-                    &prev_role,
-                    &state.current_task_id,
-                    &logger,
-                    args.yes,
-                )? {
-                    PrevReportAction::Continue => {}
-                    PrevReportAction::ReRun => {
-                        state.completed_roles.retain(|r| r != &prev_role);
-                        state.current_role = Some(prev_role);
-                        continue;
-                    }
-                    PrevReportAction::Stop => break,
+        let msg_file = find_latest_report(&messages_dir, &current_role.to_string(), &state.current_task_id);
+        let rpt_file = find_latest_report(&reports_dir, &current_role.to_string(), &state.current_task_id);
+
+        // ── 라우팅 결정 ──────────────────────────────────────────────────────
+        // reports/ 파일이 있으면 종료 코드로 라우팅 (실행 없음)
+        // 없으면 RESP: messages/ 도 없으면 역할 실행 후 RESP
+        let (exit_code, rpt_content) = if let Some(ref rf) = rpt_file {
+            let content = std::fs::read_to_string(rf).unwrap_or_default();
+            // [1] 종료 코드 없음 → NEXT 폴백 금지, 명시적 중단
+            match parse_exit_code(&content) {
+                Some(code) => {
+                    println!(
+                        "  {} reports/ 읽음: {} — {}",
+                        "→".cyan(),
+                        rf.file_name().unwrap_or_default().to_string_lossy().dimmed(),
+                        format!("{:?}", code).yellow()
+                    );
+                    (code, content)
+                }
+                None => {
+                    println!(
+                        "{}",
+                        format!(
+                            "⚠ reports/ 파일 '{}' 에 유효한 종료 코드(NEXT/PREV)가 없습니다.\n  파일 마지막 줄을 NEXT 또는 PREV로 수정 후 재실행하세요.",
+                            rf.file_name().unwrap_or_default().to_string_lossy()
+                        ).yellow().bold()
+                    );
+                    logger.warn(&current_role.to_string(), "reports/ 종료 코드 없음 — 세션 중단");
+                    break;
                 }
             }
-        }
+        } else {
+            // RESP 상황 -------------------------------------------------------
+            // messages/ 가 없으면 역할을 먼저 실행한다
+            if msg_file.is_none() {
+                if args.dry_run {
+                    // dry-run: 실행 없이 NEXT로 처리
+                    println!("{}", "  [dry-run] 역할 실행 후 RESP — NEXT로 처리".dimmed());
+                    state.completed_roles.push(current_role.clone());
+                    state.current_role = current_role.next();
+                    continue;
+                }
 
-        if !args.dry_run {
-            let proceed = confirm_or_default(&format!("Execute {}?", current_role.display_name()), true, args.yes)?;
-            if !proceed {
-                logger.info(&current_role.to_string(), "Skipped by user");
-                println!("{}", "Skipped. Run 'porpoise' to resume later.".yellow());
-                break;
+                if !confirm_or_default(&format!("Execute {}?", current_role.display_name()), true, args.yes)? {
+                    logger.info(&current_role.to_string(), "Skipped by user");
+                    println!("{}", "Skipped. Run 'porpoise' to resume later.".yellow());
+                    break;
+                }
+
+                save_current_checkpoint(&state, &current_role, path, retry)?;
+                logger.role_start(&current_role.to_string(), state.cycle);
+
+                let context = build_context(&current_role, state.cycle, path, &state.current_task_id);
+                logger.debug(
+                    &current_role.to_string(),
+                    &format!(
+                        "context: {} project docs, {} prev reports, task_id={}, retry={}",
+                        context.project_docs.len(),
+                        context.previous_reports.len(),
+                        state.current_task_id,
+                        retry,
+                    ),
+                );
+
+                match execute_role(
+                    &executor,
+                    &current_role,
+                    &context,
+                    path,
+                    state.cycle,
+                    &state.current_task_id,
+                    retry,
+                    args.dry_run,
+                    &logger,
+                    &mut history,
+                )? {
+                    RoleOutcome::Retry => continue,
+                    RoleOutcome::Stop => break,
+                    RoleOutcome::Report(_) => {}
+                }
+            } else if let Some(ref mf) = msg_file {
+                println!(
+                    "  {} messages/ 파일 있음: {}",
+                    "⚠".yellow(),
+                    mf.file_name().unwrap_or_default().to_string_lossy().dimmed()
+                );
             }
-        }
 
-        save_current_checkpoint(&state, &current_role, path, retry)?;
-        logger.role_start(&current_role.to_string(), state.cycle);
+            // reports/ 없음 → RESP: 사용자에게 hint 수집 후 세션 종료
+            println!("{}", "\n💡 RESP — reports/ 파일 없음. 추가 지시사항을 입력하면 hint로 저장합니다.".cyan());
+            println!(
+                "{}",
+                "  (Claude가 reports/ 폴더에 보고서를 저장하면 다음 실행 시 자동 라우팅됩니다.\n   또는 'porpoise approve NEXT|PREV'로 수동 판정을 생성할 수 있습니다.)".dimmed()
+            );
 
-        let context = build_context(&current_role, state.cycle, path, &state.current_task_id);
-        logger.debug(
-            &current_role.to_string(),
-            &format!(
-                "context: {} project docs, {} prev reports, task_id={}, retry={}",
-                context.project_docs.len(),
-                context.previous_reports.len(),
-                state.current_task_id,
-                retry,
-            ),
-        );
+            if !args.dry_run {
+                save_resp_hints(&current_role, &state, retry, path, &logger)?;
+            } else {
+                println!("{}", "  [dry-run] RESP — hint 수집 스킵".dimmed());
+            }
 
-        match execute_role(
-            &executor,
-            &current_role,
-            &context,
-            path,
-            state.cycle,
-            &state.current_task_id,
-            retry,
-            args.dry_run,
-            &logger,
-            &mut history,
-        )? {
-            RoleOutcome::Retry => continue,
-            RoleOutcome::Stop => break,
-            RoleOutcome::Report(report) => {
-                let exit_code = report.exit_code.clone().unwrap_or_else(|| {
-                    logger.warn(&current_role.to_string(), "종료 코드 없음 — NEXT로 폴백");
-                    ExitCode::Next
-                });
+            break;
+        };
 
-                match exit_code {
-                    ExitCode::Next => {
-                        if current_role == Role::Reviewer {
-                            // F-4: auto commit
-                            if !args.dry_run {
-                                match auto_commit(&state.current_task_id, &state.current_task_title) {
-                                    Ok(()) => {
-                                        println!(
-                                            "  {} 커밋 완료: [{}] {}",
-                                            "✓".green(),
-                                            state.current_task_id,
-                                            state.current_task_title
-                                        );
-                                        logger.info(
-                                            "reviewer",
-                                            &format!("Auto-commit: [{}]", state.current_task_id),
-                                        );
-                                    }
-                                    Err(e) => {
-                                        println!("{} {}", "⚠  자동 커밋 실패:".yellow(), e);
-                                        logger.warn(
-                                            "reviewer",
-                                            &format!("Auto-commit failed: {}", e),
-                                        );
-                                    }
-                                }
-                                if let Err(e) = mark_task_complete(path, &state.current_task_id, &logger) {
-                                    logger.warn(
-                                        "reviewer",
-                                        &format!("Task mark failed: {}", e),
-                                    );
-                                }
-                            } else {
-                                println!("{}", "  [dry-run] Reviewer NEXT — 자동 커밋 스킵".dimmed());
-                            }
-
-                            // F-5/F-6: check all tasks done
-                            if !args.dry_run && all_tasks_done(path) {
-                                println!("{}", "\n모든 작업 항목 완료!".green().bold());
-                                logger.info("orchestrator", "All tasks completed");
-                                print_history(&history);
-
-                                // M1-T05: 새 마일스톤 생성 여부 확인
-                                let create_new = confirm_or_default("새 마일스톤을 생성하시겠습니까? (아니오: 릴리즈 플로우 진행)", false, args.yes)?;
-
-                                if create_new {
-                                    milestone_session::run_milestone_session(path, false, &logger, effective_model.as_deref())?;
-                                    let new_tasks = parse_tasks_from_project_md(path);
-                                    if let Some(next) = new_tasks.iter().find(|t| !t.completed) {
-                                        println!(
-                                            "  {} 다음 작업: {} — {}",
-                                            "→".cyan(),
-                                            next.id.cyan(),
-                                            next.title
-                                        );
-                                        state.current_task_id = next.id.clone();
-                                        state.current_task_title = next.title.clone();
-                                        state.completed_roles = vec![];
-                                        state.current_role = Some(Role::PM);
-                                        logger.info(
-                                            "orchestrator",
-                                            &format!("New milestone task: {}", state.current_task_id),
-                                        );
-                                        continue;
-                                    } else {
-                                        println!("{}", "새 마일스톤이 생성되지 않았습니다.".yellow());
-                                        break;
-                                    }
-                                }
-
-                                if let Err(e) = run_release_flow(config.github_repo()) {
-                                    println!("{} {}", "⚠  릴리즈 플로우 오류:".yellow(), e);
-                                    logger.warn(
-                                        "orchestrator",
-                                        &format!("Release flow error: {}", e),
-                                    );
-                                }
-                                break;
-                            }
-
-                            // Advance to next task
-                            let tasks = parse_tasks_from_project_md(path);
-                            if let Some(next_task) = tasks.iter().find(|t| !t.completed) {
+        // ── 종료 코드 라우팅 ─────────────────────────────────────────────────
+        match exit_code {
+            ExitCode::Next => {
+                if current_role == Role::Reviewer {
+                    if !args.dry_run {
+                        match auto_commit(&state.current_task_id, &state.current_task_title) {
+                            Ok(()) => {
                                 println!(
-                                    "  {} 다음 작업: {} — {}",
-                                    "→".cyan(),
-                                    next_task.id.cyan(),
-                                    next_task.title
+                                    "  {} 커밋 완료: [{}] {}",
+                                    "✓".green(),
+                                    state.current_task_id,
+                                    state.current_task_title
                                 );
-                                state.current_task_id = next_task.id.clone();
-                                state.current_task_title = next_task.title.clone();
-                                state.completed_roles = vec![];
-                                state.current_role = Some(Role::PM);
                                 logger.info(
-                                    "orchestrator",
-                                    &format!("Next task: {}", state.current_task_id),
+                                    "reviewer",
+                                    &format!("Auto-commit: [{}]", state.current_task_id),
                                 );
-                            } else {
-                                // No structured tasks — new cycle
-                                if args.dry_run {
-                                    println!("{}", "  [dry-run] No structured tasks — stopping after first cycle".dimmed());
-                                    break;
-                                }
-                                state.cycle += 1;
-                                state.completed_roles = vec![];
-                                state.current_role = Some(Role::PM);
-                                logger.info(
-                                    "orchestrator",
-                                    &format!("New cycle: {}", state.cycle),
-                                );
-                                println!("\n{}", format!("사이클 {} 시작...", state.cycle).cyan());
                             }
-                        } else {
-                            state.completed_roles.push(current_role.clone());
-                            state.current_role = current_role.next();
-                            if let Some(ref next) = state.current_role {
-                                println!("  {} Next: {}", "→".cyan(), next.display_name().cyan());
+                            Err(e) => {
+                                println!("{} {}", "⚠  자동 커밋 실패:".yellow(), e);
+                                logger.warn("reviewer", &format!("Auto-commit failed: {}", e));
                             }
                         }
+                        if let Err(e) = mark_task_complete(path, &state.current_task_id, &logger) {
+                            logger.warn("reviewer", &format!("Task mark failed: {}", e));
+                        }
+                    } else {
+                        println!("{}", "  [dry-run] Reviewer NEXT — 자동 커밋 스킵".dimmed());
                     }
 
-                    ExitCode::Prev => {
+                    if !args.dry_run && all_tasks_done(path) {
+                        println!("{}", "\n모든 작업 항목 완료!".green().bold());
+                        logger.info("orchestrator", "All tasks completed");
+                        print_history(&history);
+
+                        let create_new = confirm_or_default(
+                            "새 마일스톤을 생성하시겠습니까? (아니오: 릴리즈 플로우 진행)",
+                            false,
+                            args.yes,
+                        )?;
+
+                        if create_new {
+                            milestone_session::run_milestone_session(path, false, &logger, effective_model.as_deref())?;
+                            let new_tasks = parse_tasks_from_project_md(path);
+                            if let Some(next) = new_tasks.iter().find(|t| !t.completed) {
+                                println!("  {} 다음 작업: {} — {}", "→".cyan(), next.id.cyan(), next.title);
+                                state.current_task_id = next.id.clone();
+                                state.current_task_title = next.title.clone();
+                                state.completed_roles = vec![];
+                                state.current_role = Some(Role::PM);
+                                logger.info("orchestrator", &format!("New milestone task: {}", state.current_task_id));
+                                continue;
+                            } else {
+                                println!("{}", "새 마일스톤이 생성되지 않았습니다.".yellow());
+                                break;
+                            }
+                        }
+
+                        if let Err(e) = run_release_flow(config.github_repo()) {
+                            println!("{} {}", "⚠  릴리즈 플로우 오류:".yellow(), e);
+                            logger.warn("orchestrator", &format!("Release flow error: {}", e));
+                        }
+                        break;
+                    }
+
+                    let tasks = parse_tasks_from_project_md(path);
+                    if let Some(next_task) = tasks.iter().find(|t| !t.completed) {
+                        println!("  {} 다음 작업: {} — {}", "→".cyan(), next_task.id.cyan(), next_task.title);
+                        state.current_task_id = next_task.id.clone();
+                        state.current_task_title = next_task.title.clone();
+                        state.completed_roles = vec![];
+                        state.current_role = Some(Role::PM);
+                        logger.info("orchestrator", &format!("Next task: {}", state.current_task_id));
+                    } else {
+                        if args.dry_run {
+                            println!("{}", "  [dry-run] No structured tasks — stopping".dimmed());
+                            break;
+                        }
                         state.cycle += 1;
                         state.completed_roles = vec![];
                         state.current_role = Some(Role::PM);
+                        logger.info("orchestrator", &format!("New cycle: {}", state.cycle));
+                        println!("\n{}", format!("사이클 {} 시작...", state.cycle).cyan());
+                    }
+                } else {
+                    state.completed_roles.push(current_role.clone());
+                    state.current_role = current_role.next();
+                    if let Some(ref next) = state.current_role {
+                        println!("  {} Next: {}", "→".cyan(), next.display_name().cyan());
+                    }
+                }
+            }
+
+            ExitCode::Prev => {
+                // [2] prev_target 메타데이터가 있으면 해당 역할부터 재시작 (사이클 유지)
+                let target_role = parse_prev_target(&rpt_content)
+                    .and_then(|t| Role::from_str(&t));
+
+                match target_role {
+                    Some(ref role) if *role != Role::PM => {
+                        let start_idx = Role::all().iter().position(|r| r == role).unwrap_or(0);
+                        state.completed_roles = Role::all()[..start_idx].to_vec();
+                        state.current_role = Some(role.clone());
                         println!(
                             "{}",
                             format!(
-                                "  ← PREV: 사이클 {} — PM부터 재시작",
+                                "  ← PREV → {} 역할부터 재시작 (사이클 {} 유지)",
+                                role.display_name(),
                                 state.cycle
                             )
                             .yellow()
@@ -335,101 +364,34 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                         );
                         logger.warn(
                             &current_role.to_string(),
-                            &format!("PREV → cycle {} restarting from PM", state.cycle),
+                            &format!("PREV → {} (cycle {} retained)", role, state.cycle),
                         );
-
-                        if !args.dry_run {
-                            let additional = collect_multiline_input(
-                                "추가 지시사항 (생략 시 바로 다음 사이클 시작)",
-                            )?;
-                            if !additional.trim().is_empty() {
-                                let additional_path = reports_dir.join(format!(
-                                    "{}-prev-additional-C{}.md",
-                                    state.current_task_id, state.cycle
-                                ));
-                                let file_content = format!(
-                                    "# 사용자 추가 지시사항 — 사이클 {}\n\n{}\n",
-                                    state.cycle,
-                                    additional.trim()
-                                );
-                                if let Err(e) =
-                                    write_file(&additional_path, &file_content, path)
-                                {
-                                    logger.warn(
-                                        "orchestrator",
-                                        &format!("추가 내용 저장 실패: {}", e),
-                                    );
-                                }
-                            }
-                        } else {
-                            println!(
-                                "{}",
-                                "  [dry-run] PREV — 추가 입력 수집 스킵".dimmed()
-                            );
-                        }
                     }
-
-                    ExitCode::Resp => {
-                        println!("{}", "\n💡 RESP → 사용자 답변 수집 후 hint 파일 저장".cyan().bold());
-                        logger.info(&current_role.to_string(), "RESP → collecting user answers and saving hint file");
-
-                        if report.questions.is_empty() {
-                            println!("{}", "⚠  RESP 코드이지만 질문이 없음 — NEXT로 처리".yellow());
-                        } else if args.dry_run {
-                            println!("{}", "  [dry-run] RESP → hint 파일 생성 스킵".dimmed());
-                        } else {
-                            let mut qa_pairs: Vec<String> = Vec::new();
-                            for (i, q) in report.questions.iter().enumerate() {
-                                println!("  {}. {}", i + 1, q.yellow());
-                                let answer: String = Input::new()
-                                    .with_prompt(format!("  답변 {}", i + 1))
-                                    .interact_text()?;
-                                qa_pairs.push(format!("{}. Q: {}\n   A: {}", i + 1, q, answer.trim()));
-                            }
-
-                            let hints_dir = path.join(".porpoise").join("hints");
-                            if let Err(e) = std::fs::create_dir_all(&hints_dir) {
-                                logger.warn(
-                                    &current_role.to_string(),
-                                    &format!("hints 디렉토리 생성 실패: {}", e),
-                                );
-                            } else {
-                                let hint_filename = format!(
-                                    "{}-{}-C{}-R{}-hints.md",
-                                    state.current_task_id,
-                                    current_role,
-                                    state.cycle,
-                                    retry
-                                );
-                                let hint_path = hints_dir.join(&hint_filename);
-                                let hint_content = format!(
-                                    "# 사용자 답변 — {} 사이클 {}\n\n{}\n",
-                                    current_role.display_name(),
-                                    state.cycle,
-                                    qa_pairs.join("\n\n")
-                                );
-                                if let Err(e) = write_file(&hint_path, &hint_content, path) {
-                                    logger.warn(
-                                        &current_role.to_string(),
-                                        &format!("hint 저장 실패: {}", e),
-                                    );
-                                } else {
-                                    println!(
-                                        "  {} hint 파일 저장: {}",
-                                        "✓".green(),
-                                        hint_filename.dimmed()
-                                    );
-                                }
-                            }
-                        }
-
-                        // Treat as NEXT: advance to next role
-                        state.completed_roles.push(current_role.clone());
-                        state.current_role = current_role.next();
-                        if let Some(ref next) = state.current_role {
-                            println!("  {} Next: {}", "→".cyan(), next.display_name().cyan());
-                        }
+                    _ => {
+                        state.cycle += 1;
+                        state.completed_roles = vec![];
+                        state.current_role = Some(Role::PM);
+                        println!(
+                            "{}",
+                            format!("  ← PREV: 사이클 {} — Planning부터 재시작", state.cycle)
+                                .yellow()
+                                .bold()
+                        );
+                        logger.warn(
+                            &current_role.to_string(),
+                            &format!("PREV → cycle {} restarting from Planning", state.cycle),
+                        );
                     }
+                }
+            }
+
+            ExitCode::Resp => {
+                // reports/ 파일이 RESP를 담고 있는 경우: NEXT로 처리
+                logger.warn(&current_role.to_string(), "reports/ 파일의 RESP 코드 — NEXT로 처리");
+                state.completed_roles.push(current_role.clone());
+                state.current_role = current_role.next();
+                if let Some(ref next) = state.current_role {
+                    println!("  {} Next: {}", "→".cyan(), next.display_name().cyan());
                 }
             }
         }
@@ -804,37 +766,30 @@ fn print_history(history: &[String]) {
     }
 }
 
-fn validate_prev_report_exit_code(
-    reports_dir: &Path,
-    prev_role: &Role,
-    task_id: &str,
+fn save_resp_hints(
+    current_role: &Role,
+    state: &OrchestratorState,
+    retry: u32,
+    path: &Path,
     logger: &Logger,
-    auto_approve: bool,
-) -> Result<PrevReportAction> {
-    if let Some(report_path) = find_latest_report(reports_dir, &prev_role.to_string(), task_id) {
-        if let Ok(content) = std::fs::read_to_string(&report_path) {
-            if parse_exit_code(&content).is_none() {
-                println!(
-                    "{}",
-                    format!(
-                        "⚠ 직전 리포트({})에 유효한 종료 코드가 없습니다. (비정상 완료)",
-                        report_path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                    )
-                    .yellow()
-                    .bold()
-                );
-                logger.warn(&prev_role.to_string(), "유효한 종료 코드 없음 — 비정상 완료된 리포트");
-                let rerun = confirm_or_default(&format!("{} 역할을 재실행하시겠습니까?", prev_role.display_name()), true, auto_approve)?;
-                if rerun {
-                    return Ok(PrevReportAction::ReRun);
-                }
-                let cont = confirm_or_default("비정상 종료된 리포트를 무시하고 계속하시겠습니까?", false, auto_approve)?;
-                return Ok(if cont { PrevReportAction::Continue } else { PrevReportAction::Stop });
-            }
-        }
+) -> Result<()> {
+    let input = collect_multiline_input("추가 지시사항 입력 (hint로 저장)")?;
+    if input.trim().is_empty() {
+        println!("{}", "  (입력 없음 — hint 저장 건너뜀)".dimmed());
+        return Ok(());
     }
-    Ok(PrevReportAction::Continue)
+    let hints_dir = path.join(".porpoise").join("hints");
+    std::fs::create_dir_all(&hints_dir).context("hints 디렉토리 생성 실패")?;
+    let filename = format!(
+        "{}-{}-C{}-R{}-hints.md",
+        state.current_task_id,
+        current_role,
+        state.cycle,
+        retry,
+    );
+    let hint_path = hints_dir.join(&filename);
+    write_file(&hint_path, &input, path)?;
+    println!("  {} hint 저장: {}", "✓".green(), filename.dimmed());
+    logger.info(&current_role.to_string(), &format!("RESP hint 저장: {}", filename));
+    Ok(())
 }

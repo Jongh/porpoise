@@ -15,7 +15,7 @@ use config::Config;
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Archive old reports to .porpoise/reports/archive/
+    /// Archive old messages to .porpoise/messages/archive/
     Clean {
         /// Reports older than this many days are archived (default: from porpoise.toml or 30)
         #[arg(long)]
@@ -23,6 +23,12 @@ pub enum Commands {
         /// Print what would be moved without actually moving
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Create a verdict file in .porpoise/reports/ for the current role
+    Approve {
+        /// Verdict: NEXT or PREV (default: NEXT)
+        #[arg(default_value = "NEXT")]
+        verdict: String,
     },
 }
 
@@ -79,6 +85,9 @@ fn run() -> Result<()> {
             Commands::Clean { days, dry_run } => {
                 return run_clean(&current_dir, *days, *dry_run, &config);
             }
+            Commands::Approve { verdict } => {
+                return run_approve(&current_dir, verdict);
+            }
         }
     }
 
@@ -100,14 +109,73 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+fn run_approve(path: &Path, verdict: &str) -> Result<()> {
+    use chrono::Local;
+    use colored::Colorize;
+
+    let verdict_upper = verdict.trim().to_uppercase();
+    if verdict_upper != "NEXT" && verdict_upper != "PREV" {
+        anyhow::bail!("유효한 판정값: NEXT 또는 PREV (입력값: {})", verdict);
+    }
+
+    let messages_dir = path.join(".porpoise").join("messages");
+    let reports_dir = path.join(".porpoise").join("reports");
+
+    if !messages_dir.exists() {
+        println!("{}", "messages/ 폴더가 없습니다. 먼저 porpoise를 실행하세요.".yellow());
+        return Ok(());
+    }
+
+    // messages/ 에는 있고 reports/ 에는 없는 최신 파일을 찾아 판정 파일 생성
+    let entries = std::fs::read_dir(&messages_dir)?;
+    let mut candidates: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && !name.starts_with("checkpoint") && !name.contains("-hints") {
+                let rpt_path = reports_dir.join(&name);
+                if !rpt_path.exists() {
+                    Some(name)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    candidates.sort();
+
+    match candidates.last() {
+        Some(name) => {
+            std::fs::create_dir_all(&reports_dir)?;
+            let report_file = reports_dir.join(name);
+            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let content = format!(
+                "# 수동 판정\n\n작성 시각: {}\n판정: {}\n\n{}\n",
+                timestamp, verdict_upper, verdict_upper
+            );
+            std::fs::write(&report_file, &content)?;
+            println!("  {} 판정 파일 생성: {}", "✓".green(), name.dimmed());
+            println!("  {} {}", "판정:".cyan(), verdict_upper.yellow().bold());
+        }
+        None => {
+            println!("{}", "판정 대상 파일이 없습니다 (messages/ 파일이 없거나 이미 reports/ 파일이 존재합니다).".yellow());
+        }
+    }
+
+    Ok(())
+}
+
 fn run_clean(path: &Path, days: Option<u32>, dry_run: bool, config: &Config) -> Result<()> {
     use chrono::Local;
 
     let effective_days = days.unwrap_or(config.archive_after_days());
-    let reports_dir = path.join(".porpoise").join("reports");
+    let reports_dir = path.join(".porpoise").join("messages");
 
     if !reports_dir.exists() {
-        println!("리포트 디렉토리가 없습니다: {}", reports_dir.display());
+        println!("메세지 디렉토리가 없습니다: {}", reports_dir.display());
         return Ok(());
     }
 

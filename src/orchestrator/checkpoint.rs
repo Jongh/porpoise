@@ -42,7 +42,7 @@ impl Checkpoint {
 }
 
 pub fn save_checkpoint(checkpoint: &Checkpoint, path: &Path) -> Result<()> {
-    let reports_dir = path.join(".porpoise").join("reports");
+    let reports_dir = path.join(".porpoise").join("messages");
     let checkpoint_path = reports_dir.join("checkpoint.json");
 
     let content = serde_json::to_string_pretty(checkpoint)
@@ -54,7 +54,7 @@ pub fn save_checkpoint(checkpoint: &Checkpoint, path: &Path) -> Result<()> {
 }
 
 pub fn load_checkpoint(path: &Path) -> Result<Checkpoint> {
-    let reports_dir = path.join(".porpoise").join("reports");
+    let reports_dir = path.join(".porpoise").join("messages");
 
     let json_path = reports_dir.join("checkpoint.json");
     if json_path.exists() {

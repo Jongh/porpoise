@@ -54,52 +54,95 @@ porpoise --dry-run
 
 # Verbose output
 porpoise --verbose
+
+# Create a manual verdict for the current role (when Claude did not save to reports/)
+porpoise approve NEXT
+porpoise approve PREV
+
+# Archive old messages
+porpoise clean [--days N] [--dry-run]
 ```
 
 ## How it works
 
 1. **Initialization** (first run): Scans project directory, generates `CLAUDE.md` and `.porpoise/` structure
-2. **Planning session**: Defines scope, writes technical spec, creates task list
-3. **Development session**: Implements code per Planning report
-4. **Testing session**: Runs tests, documents bugs
-5. **Review session**: Code review → APPROVED / CHANGES_REQUESTED / REJECTED
+2. **Planning session**: Claude saves a formatted PM report to `.porpoise/reports/`
+3. **Development session**: Claude implements code and saves the developer report
+4. **Testing session**: Claude tests and saves the tester report
+5. **Review session**: Code review → APPROVED / CHANGES_REQUESTED / REJECTED; report saved to `.porpoise/reports/`
+6. **Routing**: Porpoise reads the last line of the latest `reports/` file to determine NEXT or PREV
 
-Reports are saved to `.porpoise/reports/` as `{task-id}-{session}-C{cycle}-R{retry}.md`. Checkpoints enable resuming after interruption.
+Checkpoints enable resuming after interruption. Use `porpoise approve NEXT|PREV` to create a manual verdict when Claude did not save a report.
 
 ## File structure (generated)
 
 ```
 {project}/
-├── CLAUDE.md                 # Project context for Claude Code
+├── CLAUDE.md                      # Pointer to .porpoise/project.md
 └── .porpoise/
-    ├── project.md            # Development routine & conventions
+    ├── project.md                 # Full project context (file tree, conventions, folder ownership)
     ├── prompts/
-    │   ├── 00-orche.md         # Master orchestrator prompt
-    │   ├── 01-planning.md      # Planning session prompt
-    │   ├── 02-development.md   # Development session prompt
-    │   ├── 03-testing.md       # Testing session prompt
-    │   └── 04-review.md        # Review session prompt
-    └── reports/
-        ├── checkpoint.md
-        ├── {task-id}-planning-C{n}-R{n}.md
-        ├── {task-id}-development-C{n}-R{n}.md
-        ├── {task-id}-testing-C{n}-R{n}.md
-        └── {task-id}-review-C{n}-R{n}.md
+    │   ├── 00-orche.md              # Master orchestrator prompt
+    │   ├── 01-planning.md           # Planning session prompt
+    │   ├── 02-development.md        # Development session prompt
+    │   ├── 03-testing.md            # Testing session prompt
+    │   └── 04-review.md             # Review session prompt
+    ├── reports/                   # Claude's formatted role reports (written by Claude)
+    │   ├── {task-id}-planning-C{n}-R{n}.md
+    │   ├── {task-id}-development-C{n}-R{n}.md
+    │   ├── {task-id}-testing-C{n}-R{n}.md
+    │   └── {task-id}-review-C{n}-R{n}.md
+    ├── messages/                  # Porpoise's captured output (written by Porpoise)
+    │   ├── checkpoint.json
+    │   └── {task-id}-{role}-C{n}-R{n}.md
+    └── hints/                     # User additional instructions (written by Porpoise on RESP)
+        └── {task-id}-{role}-C{n}-R{n}-hints.md
 ```
+
+### Folder ownership
+
+| Folder | Writer | Purpose |
+|--------|--------|---------|
+| `reports/` | Claude (exclusive) | Formatted role reports with NEXT/PREV exit code |
+| `messages/` | Porpoise (exclusive) | Raw Claude output (questions, summaries, token warnings) |
+| `hints/` | Porpoise (RESP flow) | User-provided additional instructions |
 
 ## Exit codes (role protocol)
 
-Each role appends one of these codes as the **last line** of its report:
+Each role appends one of these codes as the **last line** of its `reports/` file:
 
 | Code | Meaning | Orchestrator action |
 |------|---------|---------------------|
 | `NEXT` | Role complete, proceed | Advance to next role (Reviewer NEXT → auto-commit) |
-| `PREV` | Previous role needs rework | Re-run previous role (retry R+1) |
-| `RESP` | User input required | Save hint file to `.porpoise/hints/`, advance to next role |
+| `PREV` | Previous role needs rework | Restart from target role (`prev_target` in META block) or Planning |
+
+### PREV target routing
+
+Reviewers can specify which role to restart from using the `PORPOISE_META` block:
+
+```markdown
+<!-- PORPOISE_META
+status: CHANGES_REQUESTED
+prev_target: development
+-->
+```
+
+Allowed values for `prev_target`: `development`, `testing`. Omit to restart from Planning (default).
 
 ## CHANGELOG
 
 ### [v0.3.1]
+- **폴더 소유권 분리**: `reports/`(Claude 보고서 저장), `messages/`(Porpoise 출력 캡처), `hints/`(사용자 추가 지시) 역할 확정 및 문서화
+- **`porpoise approve [NEXT|PREV]`** 서브커맨드 추가: Claude가 보고서를 저장하지 않은 경우 수동 판정 파일 생성
+- **ExitCode 폴백 제거**: `reports/` 파일에 종료 코드가 없으면 NEXT로 폴백하지 않고 명시적 경고 후 중단
+- **PREV 복귀 대상 역할 지정**: Reviewer가 `PORPOISE_META` 블록의 `prev_target` 필드로 복귀 역할 지정 가능 (`development` / `testing`)
+- **Tester 독립 재검증 지시**: Developer 리포트를 신뢰하지 말고 PM 명세 기준으로 독립 재검증하도록 Tester 프롬프트 강화
+- **hint 파일 포함 콘솔 출력**: 역할 실행 시 포함된 hint 파일 목록을 콘솔에 표시
+- **상태 복원 폴백 개선**: 체크포인트 없을 때 `messages/`와 `reports/` 양쪽을 모두 참조해 역할 상태 추론
+- **컨텍스트 파일 수 제한**: PREV 추가 지시사항 파일 최대 5개로 제한
+- **마이그레이션 경고**: 구 버전 `report/` 폴더가 감지되면 `reports/`로 이동 안내 출력
+- **CLAUDE.md 최소화**: 생성되는 `CLAUDE.md`를 `project.md` 참조 포인터 한 줄로 단순화
+- **`project.md` 강화**: 파일 구조(tree), 폴더 소유권 표, 보고서 파일명 규칙을 단일 소스로 통합
 - RESP 코드 처리 시 사용자 답변 직접 수집: 각 질문에 터미널 입력 프롬프트 표시 후 Q&A 쌍을 hint 파일에 저장
 - 역할 실행 중 스피너 메시지에 Cycle/Task ID 정보 포함 (`[ Cycle N | M7-T01 ] Running PM ...`)
 - 토큰 사용량 모니터(`--token-warn`) 제거 — 불필요한 의존성 및 오경고 원인 삭제

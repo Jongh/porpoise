@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Local;
 use colored::Colorize;
 use std::path::Path;
@@ -9,26 +9,19 @@ use crate::utils::fs::write_file;
 pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // Generate CLAUDE.md
+    // Generate CLAUDE.md — minimal reference pointer to .porpoise/project.md
     let claude_md_path = path.join("CLAUDE.md");
     let claude_md_content = format!(
         r#"# {project_name}
 
-## 파일 구조
-{tree}
-
-## Porpoise 오케스트레이션
-이 프로젝트는 Porpoise 오케스트레이션 도구로 관리됩니다.
-- 리포트 위치: .porpoise/reports/
-- 프롬프트 위치: .porpoise/prompts/
+프로젝트의 개발 루틴, 파일 구조, 오케스트레이션 규칙은 `.porpoise/project.md`를 참조하세요.
 "#,
         project_name = ctx.project_name,
-        tree = ctx.tree_output,
     );
     write_file(&claude_md_path, &claude_md_content, path)?;
     println!("  {} {}", "Created:".green(), claude_md_path.display());
 
-    // Generate .porpoise/project.md with M{n}-T{nn} task ID format
+    // Generate .porpoise/project.md — single source of truth for all project context
     let docs_dir = path.join(".porpoise");
     let project_md_path = docs_dir.join("project.md");
     let project_md_content = format!(
@@ -36,6 +29,20 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 
 ## 프로젝트: {project_name}
 ## 초기화: {timestamp}
+
+## 파일 구조
+{tree}
+
+## Porpoise 오케스트레이션
+이 프로젝트는 Porpoise 오케스트레이션 도구로 관리됩니다.
+
+### 폴더 역할
+| 폴더 | 쓰기 주체 | 내용 |
+|------|----------|------|
+| `.porpoise/reports/` | Claude (단독) | 포맷된 역할 보고서 |
+| `.porpoise/messages/` | Porpoise (단독) | Claude 실행 전체 출력 |
+| `.porpoise/hints/` | Porpoise (RESP 흐름) | 사용자 추가 지시사항 |
+| `.porpoise/prompts/` | 초기화 시 생성 | 역할별 프롬프트 파일 |
 
 ## 역할별 책임
 - Planning: 작업 범위 정의, 기술 명세 작성
@@ -51,13 +58,24 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path) -> Result<()> {
 ## 컨벤션
 - 커밋 메시지: 한국어 허용
 - 브랜치 전략: main 브랜치 직접 커밋 (소규모 프로젝트)
-- 리포트 파일명: {{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md
+- 보고서 파일명: {{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md
 "#,
         project_name = ctx.project_name,
         timestamp = timestamp,
+        tree = ctx.tree_output,
     );
     write_file(&project_md_path, &project_md_content, path)?;
     println!("  {} {}", "Created:".green(), project_md_path.display());
+
+    // Create hints directory (populated at runtime by RESP answers)
+    let hints_dir = docs_dir.join("hints");
+    std::fs::create_dir_all(&hints_dir)
+        .with_context(|| format!("hints 디렉토리 생성 실패: {}", hints_dir.display()))?;
+
+    // Create reports directory (Claude saves formatted role reports here)
+    let reports_dir = docs_dir.join("reports");
+    std::fs::create_dir_all(&reports_dir)
+        .with_context(|| format!("reports 디렉토리 생성 실패: {}", reports_dir.display()))?;
 
     // Generate prompt files
     let prompts_dir = docs_dir.join("prompts");
@@ -86,26 +104,58 @@ fn generate_orche_prompt(ctx: &ProjectContext) -> String {
 당신은 Porpoise 오케스트레이션 시스템의 일부입니다. 소프트웨어 개발 사이클을 Planning → Development → Testing → Review 순서로 진행합니다.
 
 ## 프로젝트
+프로젝트 상세 정보는 `.porpoise/project.md`를 참조하세요.
 - 이름: {project_name}
+
+## 폴더 구조 및 쓰기 권한
+
+| 폴더 | 쓰기 주체 | 내용 |
+|------|----------|------|
+| `.porpoise/reports/` | **Claude (당신)** | 포맷된 역할 보고서 |
+| `.porpoise/messages/` | Porpoise (시스템) | Claude 실행 전체 출력 |
+| `.porpoise/hints/` | Porpoise (시스템) | 사용자 추가 지시사항 |
+| `.porpoise/prompts/` | 초기화 시 생성 | 역할별 프롬프트 파일 |
+
+**⚠ 중요**: `.porpoise/reports/`에만 보고서를 저장하세요. `.porpoise/messages/`에는 절대 직접 쓰지 않습니다.
+
+## 보고서 저장 규칙
+역할 수행 완료 후 보고서를 아래 경로에 저장합니다:
+`.porpoise/reports/{{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md`
+예: `.porpoise/reports/M1-T01-planning-C1-R0.md`
+
+**기존 파일이 존재하면 절대 덮어쓰지 않습니다.** 파일이 이미 있으면 retry 번호를 증가시켜 새 파일로 저장합니다.
 
 ## 오케스트레이션 규칙
 1. 각 역할은 독립적으로 실행됩니다.
-2. 각 역할의 결과는 `.porpoise/reports/` 에 저장됩니다.
-3. 다음 역할은 이전 역할의 리포트를 참고합니다.
-4. 사이클은 Review NEXT 코드 출력 후 완료됩니다.
-
-## 리포트 파일명 규칙
-`{{task-id}}-{{role}}-C{{cycle}}-R{{retry}}.md`
-예: M1-T01-planning-C1-R0.md, M1-T01-development-C1-R1.md
+2. 이전 역할의 보고서(`.porpoise/reports/`)를 컨텍스트로 참조합니다.
+3. 사이클은 Review NEXT 코드 출력 후 완료됩니다.
 
 ## 종료 코드 규칙
-응답의 **마지막 줄**에 아래 코드 중 하나를 단독으로 출력합니다:
+보고서의 **마지막 줄**에 아래 코드 중 하나를 단독으로 출력합니다:
 - `NEXT`: 현재 역할 완료, 다음 단계 진행
 - `PREV`: 이전 역할 재작업 필요
-- `RESP`: 사용자 입력 필요 (본문에 `## 사용자 확인 필요` 섹션 포함)
+
+## Hint 파일
+`.porpoise/hints/` 폴더에는 이전 RESP 라운드에서 사용자가 제공한 답변이 저장됩니다.
+파일명 패턴: `{{task-id}}-{{role}}-C{{cycle}}-R{{retry}}-hints.md`
+각 역할은 실행 시 해당 hint 파일이 컨텍스트에 포함되면 그 내용을 최우선으로 반영합니다.
 "#,
         project_name = ctx.project_name,
     )
+}
+
+fn hint_section() -> &'static str {
+    r#"
+---
+
+## Hint 파일 참조
+
+`.porpoise/hints/` 폴더의 hint 파일이 컨텍스트에 포함된 경우, 그 내용은 **사용자가 직접 제공한 추가 지시사항**입니다.
+
+- hint 파일의 지시사항은 다른 어떤 컨텍스트보다 **우선순위가 높습니다**.
+- hint 내용과 이전 명세가 충돌할 경우 hint를 따르세요.
+- hint 내용을 그대로 반영했음을 리포트의 서두에 명시하세요.
+"#
 }
 
 fn exit_code_section() -> &'static str {
@@ -120,14 +170,6 @@ fn exit_code_section() -> &'static str {
 |------|------|
 | `NEXT` | 현재 역할 완료, 다음 단계 진행 가능 |
 | `PREV` | 이전 역할 재작업 필요 (Critical 버그, 명세 오류 등) |
-| `RESP` | 사용자 확인 필요 (본문에 `## 사용자 확인 필요` 섹션 추가) |
-
-RESP 사용 시 본문에 추가:
-
-```
-## 사용자 확인 필요
-- Q: {질문 내용}
-```
 "#
 }
 
@@ -173,7 +215,8 @@ fn generate_pm_prompt() -> String {
 - 모호한 요구사항은 명확히 해야 합니다.
 - 기술적 부채를 최소화하는 방향으로 설계하세요.
 - 구현 불가능한 치명적 문제 발견 시 PREV를 사용하세요.
-{exit_code}"#,
+{hint}{exit_code}"#,
+        hint = hint_section(),
         exit_code = exit_code_section()
     )
 }
@@ -221,7 +264,8 @@ fn generate_developer_prompt() -> String {
 - 테스트 가능한 코드를 작성하세요.
 - PM 명세에 구현 불가능한 오류가 있으면 PREV를 사용하세요.
 - unwrap() 신규 추가 금지.
-{exit_code}"#,
+{hint}{exit_code}"#,
+        hint = hint_section(),
         exit_code = exit_code_section()
     )
 }
@@ -267,10 +311,13 @@ fn generate_tester_prompt() -> String {
 
 ## 중요 지침
 - 모든 PM 요구사항을 커버하는 테스트를 수행하세요.
+- **Developer 리포트에서 '완료'로 표시된 항목을 그대로 신뢰하지 말 것.** PM 명세를 기준으로 독립적으로 재검증하세요.
+- Developer 리포트의 판단과 별개로, 각 기능이 실제로 명세를 충족하는지 직접 확인하세요.
 - Critical 버그(수정 없이 릴리즈 불가) 발견 시 반드시 PREV를 사용하세요.
 - Minor 버그만 있으면 NEXT를 사용하세요.
 - 엣지 케이스를 반드시 테스트하세요.
-{exit_code}"#,
+{hint}{exit_code}"#,
+        hint = hint_section(),
         exit_code = exit_code_section()
     )
 }
@@ -322,6 +369,7 @@ fn generate_reviewer_prompt() -> String {
 - CHANGES_REQUESTED → PREV 출력: Developer 또는 Tester로 재작업 라우팅됩니다.
 - REJECTED (근본적 재설계 필요) → PREV 출력: PM으로 재라우팅됩니다.
 - 머지 블로커가 있으면 반드시 PREV를 사용하세요.
+- hint 파일이 있으면 해당 내용을 리뷰 기준에 반영하세요.
 - 릴리즈 태스크(빌드 버전 업데이트 등 마일스톤 최종 태스크)를 리뷰하는 경우, `README.md`의
   `## CHANGELOG` 섹션에 새 버전 항목을 추가하세요.
   형식: `### [vX.Y.Z]\n- 변경사항` (기존 항목 형식 유지).
@@ -334,9 +382,16 @@ fn generate_reviewer_prompt() -> String {
 <!-- PORPOISE_META
 status: APPROVED
 milestone_complete: false
+prev_target: development
 -->
 ```
-{exit_code}"#,
+
+- `prev_target`: PREV 출력 시 복귀할 역할. 생략하면 Planning부터 재시작.
+  - 허용값: `development`, `testing` (PM은 기본값이므로 생략)
+  - 예: Reviewer가 코드 품질 문제만 발견한 경우 `prev_target: development`
+  - 예: Reviewer가 테스트 커버리지 문제만 발견한 경우 `prev_target: testing`
+{hint}{exit_code}"#,
+        hint = hint_section(),
         exit_code = exit_code_section()
     )
 }

@@ -58,7 +58,7 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
 
         let output_file = path
             .join(".porpoise")
-            .join("reports")
+            .join("messages")
             .join(format!("milestone-session-R{}.md", attempt));
 
         logger.info(

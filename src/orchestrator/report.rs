@@ -35,6 +35,8 @@ pub struct Report {
     pub milestone_complete: bool,
     pub questions: Vec<String>,
     pub exit_code: Option<ExitCode>,
+    /// PREV 시 복귀 대상 역할 (PORPOISE_META prev_target 필드)
+    pub prev_target: Option<String>,
 }
 
 impl Report {
@@ -46,6 +48,7 @@ impl Report {
             milestone_complete: false,
             questions: vec![],
             exit_code: Some(ExitCode::Next),
+            prev_target: None,
         }
     }
 }
@@ -91,6 +94,7 @@ pub fn parse_exit_code(content: &str) -> Option<ExitCode> {
 struct MetaBlock {
     status: Option<ReviewStatus>,
     milestone_complete: bool,
+    prev_target: Option<String>,
 }
 
 fn parse_meta_block(content: &str) -> Option<MetaBlock> {
@@ -101,6 +105,7 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
 
     let mut status = None;
     let mut milestone_complete = false;
+    let mut prev_target = None;
 
     for line in block.lines() {
         let line = line.trim();
@@ -113,19 +118,30 @@ fn parse_meta_block(content: &str) -> Option<MetaBlock> {
             };
         } else if let Some(val) = line.strip_prefix("milestone_complete:") {
             milestone_complete = val.trim() == "true";
+        } else if let Some(val) = line.strip_prefix("prev_target:") {
+            let t = val.trim().to_string();
+            if !t.is_empty() {
+                prev_target = Some(t);
+            }
         }
     }
 
     Some(MetaBlock {
         status,
         milestone_complete,
+        prev_target,
     })
 }
 
+/// Extracts the `prev_target` role string from a PORPOISE_META block, if present.
+pub fn parse_prev_target(content: &str) -> Option<String> {
+    parse_meta_block(content).and_then(|m| m.prev_target)
+}
+
 pub fn parse_report(content: &str, role: &str) -> Report {
-    let (review_status, milestone_complete) =
+    let (review_status, milestone_complete, prev_target) =
         if let Some(meta) = parse_meta_block(content) {
-            (meta.status, meta.milestone_complete)
+            (meta.status, meta.milestone_complete, meta.prev_target)
         } else {
             let content_upper = content.to_uppercase();
             let review_status = if content_upper.contains("APPROVED")
@@ -142,7 +158,7 @@ pub fn parse_report(content: &str, role: &str) -> Report {
             let milestone_complete = content.contains("마일스톤 완료")
                 || content.contains("MILESTONE_COMPLETE")
                 || content.contains("milestone complete");
-            (review_status, milestone_complete)
+            (review_status, milestone_complete, None)
         };
 
     let exit_code = parse_exit_code(content);
@@ -181,6 +197,7 @@ pub fn parse_report(content: &str, role: &str) -> Report {
         milestone_complete,
         questions,
         exit_code,
+        prev_target,
     }
 }
 
@@ -293,5 +310,28 @@ mod tests {
         let report = Report::stub("pm");
         assert_eq!(report.exit_code, Some(ExitCode::Next));
         assert!(matches!(report.review_status, Some(ReviewStatus::Approved)));
+        assert_eq!(report.prev_target, None);
+    }
+
+    #[test]
+    fn parse_prev_target_present() {
+        let content = "Review content\n<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\nprev_target: development\n-->\n\nPREV";
+        let target = parse_prev_target(content);
+        assert_eq!(target, Some("development".to_string()));
+        let report = parse_report(content, "reviewer");
+        assert_eq!(report.prev_target, Some("development".to_string()));
+        assert_eq!(report.exit_code, Some(ExitCode::Prev));
+    }
+
+    #[test]
+    fn parse_prev_target_absent() {
+        let content = "Review content\n<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\n-->\n\nPREV";
+        assert_eq!(parse_prev_target(content), None);
+    }
+
+    #[test]
+    fn parse_prev_target_testing() {
+        let content = "<!-- PORPOISE_META\nstatus: CHANGES_REQUESTED\nprev_target: testing\nmilestone_complete: false\n-->\n\nPREV";
+        assert_eq!(parse_prev_target(content), Some("testing".to_string()));
     }
 }

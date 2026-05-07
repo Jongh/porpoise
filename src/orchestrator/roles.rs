@@ -94,7 +94,7 @@ impl RoleExecutor {
         let output_filename = report_filename(task_id, &role.to_string(), cycle, retry);
         let output_file = path
             .join(".porpoise")
-            .join("reports")
+            .join("messages")
             .join(&output_filename);
 
         let runner = match &self.runner {
@@ -140,37 +140,41 @@ pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> Rol
         ctx = ctx.with_project_doc(claude_md);
     }
 
+    // Claude's formatted reports are in reports/ — use these for predecessor context
     let reports_dir = path.join(".porpoise").join("reports");
-    if !reports_dir.exists() {
-        return ctx;
-    }
+    if reports_dir.exists() {
+        let predecessor_roles: Vec<&str> = match role {
+            Role::PM if cycle > 1 => vec!["review", "testing", "development"],
+            Role::PM => vec![],
+            Role::Developer => vec!["planning"],
+            Role::Tester => vec!["planning", "development"],
+            Role::Reviewer => vec!["planning", "development", "testing"],
+        };
 
-    let predecessor_roles: Vec<&str> = match role {
-        // PM in subsequent cycles gets previous cycle's reports for context
-        Role::PM if cycle > 1 => vec!["review", "testing", "development"],
-        Role::PM => vec![],
-        Role::Developer => vec!["planning"],
-        Role::Tester => vec!["planning", "development"],
-        Role::Reviewer => vec!["planning", "development", "testing"],
-    };
-
-    for prev_role in &predecessor_roles {
-        if let Some(latest) = find_latest_report(&reports_dir, prev_role, task_id) {
-            ctx = ctx.with_previous_report(latest);
+        for prev_role in &predecessor_roles {
+            if let Some(latest) = find_latest_report(&reports_dir, prev_role, task_id) {
+                ctx = ctx.with_previous_report(latest);
+            }
         }
     }
 
-    // For PM: include user-provided additional instructions from PREV cycles
-    if matches!(role, Role::PM) {
-        for f in find_prev_additional_files(&reports_dir, task_id) {
+    // For PM: include PREV reason files from reports/ (max 5).
+    // reports/ holds Claude's formatted reports which contain the PREV reason and instructions.
+    if matches!(role, Role::PM) && reports_dir.exists() {
+        for f in find_prev_additional_files(&reports_dir, task_id).into_iter().take(5) {
             ctx = ctx.with_project_doc(f);
         }
     }
 
-    // Include hint files for the current role (AI questions from prior RESP rounds)
+    // Include hint files — log each one to console so user can verify inclusion
     let hints_dir = path.join(".porpoise").join("hints");
     let hint_files = find_hint_files(&hints_dir, task_id, &role.to_string());
     for hint_file in hint_files {
+        println!(
+            "  {} hint 포함: {}",
+            "→".cyan(),
+            hint_file.file_name().unwrap_or_default().to_string_lossy().dimmed()
+        );
         ctx = ctx.with_project_doc(hint_file);
     }
 
@@ -270,6 +274,9 @@ mod tests {
 
     #[test]
     fn find_latest_report_normalizes_task_id() {
+        // This test uses a temp dir to simulate .porpoise/reports/ (Claude's formatted reports).
+        // find_latest_report is reused for both reports/ and messages/ lookups,
+        // so the folder semantics depend on the caller — the function itself is folder-agnostic.
         let temp = tempfile::tempdir().unwrap();
         let reports_dir = temp.path();
         std::fs::write(reports_dir.join("M2-T09-planning-C1-R0.md"), "content").unwrap();

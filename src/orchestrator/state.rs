@@ -176,7 +176,7 @@ impl OrchestratorState {
 }
 
 pub fn load_state(path: &Path) -> Result<OrchestratorState> {
-    let reports_dir = path.join(".porpoise").join("reports");
+    let reports_dir = path.join(".porpoise").join("messages");
 
     if !reports_dir.exists() {
         return Ok(build_state_with_tasks(OrchestratorState::new(path), path));
@@ -209,15 +209,24 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
         }
     }
 
-    // Fallback: infer state from report filenames
+    // Fallback: infer state from report filenames.
+    // Check both messages/ (Porpoise output) and reports/ (Claude's formatted reports).
     let mut report_files: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&reports_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if (name.ends_with("-report.md") || name.ends_with(".md"))
-                && name != "checkpoint.md"
-            {
-                report_files.push(name);
+    let fallback_dirs = [
+        reports_dir.clone(),
+        path.join(".porpoise").join("reports"),
+    ];
+    for dir in &fallback_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if (name.ends_with("-report.md") || name.ends_with(".md"))
+                    && name != "checkpoint.md"
+                    && !name.starts_with("checkpoint")
+                    && !report_files.contains(&name)
+                {
+                    report_files.push(name);
+                }
             }
         }
     }
