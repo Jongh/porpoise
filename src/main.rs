@@ -104,6 +104,9 @@ fn run() -> Result<()> {
             println!("{}", "Initializing new Porpoise project...".green().bold());
         }
         init::run(&current_dir, &args)?;
+        // Immediately proceed to orchestration so the first milestone session starts
+        // without requiring a separate `porpoise` invocation.
+        orchestrator::run(&current_dir, &args, &config)?;
     }
 
     Ok(())

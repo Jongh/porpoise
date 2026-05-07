@@ -7,7 +7,7 @@
     Manufacturer='김종현'
     Language='1033'
     Codepage='1252'
-    Version='0.2.3.0'
+    Version='0.5.0.0'
   >
     <Package
       Id='*'

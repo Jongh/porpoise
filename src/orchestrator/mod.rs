@@ -270,7 +270,10 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                 )? {
                     RoleOutcome::Retry => continue,
                     RoleOutcome::Stop => break,
-                    RoleOutcome::Report(_) => {}
+                    // Re-enter the loop so the next iteration reads the report Claude wrote
+                    // to reports/ and routes based on exit code. If Claude didn't write a
+                    // report, the next iteration finds msg_file=Some → RESP break as before.
+                    RoleOutcome::Report(_) => continue,
                 }
             } else if let Some(ref mf) = msg_file {
                 println!(

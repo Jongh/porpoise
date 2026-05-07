@@ -119,6 +119,8 @@ pub struct Task {
 
 /// Parses M{n}-T{nn} task items from .porpoise/project.md.
 /// Returns empty vec if project.md is absent or has no M-T formatted tasks.
+/// Lines inside markdown code fences (``` blocks) are skipped to prevent
+/// example task items in documentation from being parsed as real tasks.
 pub fn parse_tasks_from_project_md(path: &Path) -> Vec<Task> {
     let project_md = path.join(".porpoise").join("project.md");
     let content = match std::fs::read_to_string(&project_md) {
@@ -127,8 +129,17 @@ pub fn parse_tasks_from_project_md(path: &Path) -> Vec<Task> {
     };
 
     let mut tasks = Vec::new();
+    let mut in_code_block = false;
 
     for line in content.lines() {
+        if line.trim().starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+
         let trimmed = line.trim();
         if trimmed.starts_with("- [ ] ") || trimmed.starts_with("- [x] ") {
             let completed = trimmed.starts_with("- [x] ");
@@ -456,6 +467,42 @@ mod tests {
         .unwrap();
         let tasks = parse_tasks_from_project_md(temp.path());
         assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn parse_tasks_skips_lines_inside_code_block() {
+        let temp = tempfile::tempdir().unwrap();
+        let docs = temp.path().join(".porpoise");
+        std::fs::create_dir_all(&docs).unwrap();
+        let project_md = docs.join("project.md");
+        // Example task lines inside a code fence must not be parsed
+        std::fs::write(
+            &project_md,
+            "## 예시\n```\n- [ ] M1-T01: 예시 작업\n- [x] M1-T02: 완료 예시\n```\n\n## 실제 작업\n- [ ] M2-T01: 실제 작업\n",
+        )
+        .unwrap();
+        let tasks = parse_tasks_from_project_md(temp.path());
+        assert_eq!(tasks.len(), 1, "코드 블록 내 예시 항목은 파싱되지 않아야 합니다");
+        assert_eq!(tasks[0].id, "M2-T01");
+        assert_eq!(tasks[0].title, "실제 작업");
+    }
+
+    #[test]
+    fn parse_tasks_code_block_toggle_multiple_fences() {
+        let temp = tempfile::tempdir().unwrap();
+        let docs = temp.path().join(".porpoise");
+        std::fs::create_dir_all(&docs).unwrap();
+        let project_md = docs.join("project.md");
+        // Two code blocks, real tasks between and after
+        std::fs::write(
+            &project_md,
+            "```\n- [ ] M1-T01: 블록1 내 예시\n```\n- [ ] M1-T01: 실제1\n```\n- [ ] M1-T02: 블록2 내 예시\n```\n- [ ] M1-T02: 실제2\n",
+        )
+        .unwrap();
+        let tasks = parse_tasks_from_project_md(temp.path());
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].id, "M1-T01");
+        assert_eq!(tasks[1].id, "M1-T02");
     }
 
     #[test]
