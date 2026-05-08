@@ -1,6 +1,7 @@
 pub mod context;
 pub mod generator;
 pub mod lang_template;
+pub mod model_template;
 pub mod template;
 pub mod tree;
 
@@ -9,12 +10,15 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use std::path::Path;
 
-use crate::Args;
 use crate::config::workspace::WorkspaceConfig;
+use crate::Args;
 
 pub fn run(path: &Path, args: &Args) -> Result<()> {
     println!();
-    println!("{}", "=== Porpoise Project Initialization ===".green().bold());
+    println!(
+        "{}",
+        "=== Porpoise Project Initialization ===".green().bold()
+    );
     println!();
 
     if args.verbose {
@@ -48,6 +52,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
 
     // 언어 템플릿 선택 (비대화형이거나 --yes면 건너뜀)
     let lang_template = select_lang_template(args.yes, path);
+    let model_template = select_model_template(args.yes, path);
 
     // Load workspace config (preserves existing .porpoise/workspace.toml if present)
     let workspace = WorkspaceConfig::load(path)?;
@@ -55,7 +60,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
     // Generate docs
     println!();
     println!("{}", "Generating documentation...".cyan());
-    generator::generate_docs(&ctx, path, &workspace, lang_template)?;
+    generator::generate_docs(&ctx, path, &workspace, lang_template, model_template)?;
 
     println!();
     println!("{}", "Initialization complete!".green().bold());
@@ -92,6 +97,36 @@ fn select_lang_template(yes: bool, path: &Path) -> Option<&'static lang_template
     {
         Ok(Some(idx)) if idx < lang_template::ALL_TEMPLATES.len() => {
             Some(lang_template::ALL_TEMPLATES[idx])
+        }
+        _ => None,
+    }
+}
+
+fn select_model_template(yes: bool, path: &Path) -> Option<&'static model_template::ModelTemplate> {
+    // --yes 이거나 workspace.toml이 이미 있으면 선택 건너뜀
+    if yes || path.join(".porpoise").join("workspace.toml").exists() {
+        return None;
+    }
+
+    // 비대화형 환경 감지
+    if !is_interactive() {
+        return None;
+    }
+
+    let items: Vec<&str> = model_template::ALL_TEMPLATES
+        .iter()
+        .map(|t| t.display_name)
+        .chain(std::iter::once("커스텀 (선택 안 함)"))
+        .collect();
+
+    match dialoguer::Select::new()
+        .with_prompt("모델 템플릿을 선택하세요")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+    {
+        Ok(Some(idx)) if idx < model_template::ALL_TEMPLATES.len() => {
+            Some(&model_template::ALL_TEMPLATES[idx])
         }
         _ => None,
     }
