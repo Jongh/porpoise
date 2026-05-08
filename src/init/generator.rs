@@ -56,7 +56,7 @@ pub fn generate_docs(
     println!("  {} {}", "Created:".green(), project_md_path.display());
 
     // Directories
-    for dir_name in &["hints", "reports"] {
+    for dir_name in &["hints", "reports", "sessions"] {
         let dir = docs_dir.join(dir_name);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("{} 디렉토리 생성 실패: {}", dir_name, dir.display()))?;
@@ -312,6 +312,22 @@ mod tests {
             .exists());
         assert!(path.join(".porpoise").join("hints").exists());
         assert!(path.join(".porpoise").join("reports").exists());
+        assert!(path.join(".porpoise").join("sessions").exists());
+    }
+
+    #[test]
+    fn generate_docs_initializes_json_session_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+
+        generate_docs(&ctx, path, &workspace, None, None).unwrap();
+
+        assert!(
+            crate::session::is_new_format(path),
+            "freshly generated projects should use JSON session mode"
+        );
     }
 
     #[test]

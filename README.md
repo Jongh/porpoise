@@ -65,13 +65,13 @@ porpoise clean [--days N] [--dry-run]
 
 ## How it works
 
-1. **Initialization** (`porpoise --new`): Scans project directory, generates `CLAUDE.md` and `.porpoise/` structure, then automatically starts the milestone creation session
-2. **Milestone session**: User describes the next milestone; Claude creates `.porpoise/milestones/M{n}.md` with task list
-3. **Planning session**: Claude saves a formatted PM report to `.porpoise/reports/`
-4. **Development session**: Claude implements code and saves the developer report
-5. **Testing session**: Claude tests and saves the tester report
-6. **Review session**: Code review → APPROVED / CHANGES_REQUESTED / REJECTED; report saved to `.porpoise/reports/`
-7. **Routing**: Porpoise reads the last line of the latest `reports/` file to determine NEXT or PREV; on PREV, automatically re-executes the target role without requiring a separate invocation
+1. **Initialization** (`porpoise --new`): Scans project directory, generates `CLAUDE.md` and `.porpoise/` structure, and creates `.porpoise/sessions/` so new projects run in JSON session mode.
+2. **Milestone session**: User describes the next milestone; Claude creates `.porpoise/milestones/M{n}.md` with task list.
+3. **Planning session**: Claude/adapter writes structured Planning output to `.porpoise/sessions/`.
+4. **Development session**: Claude/adapter implements code and writes structured Development output to `.porpoise/sessions/`.
+5. **Testing session**: Claude/adapter tests and writes structured Testing output to `.porpoise/sessions/`.
+6. **Review session**: Code review → NEXT / PREV / RESP; structured Review output is saved to `.porpoise/sessions/`.
+7. **Routing**: For new projects, Porpoise routes from JSON session status. The legacy `reports/`/`messages/` router remains only for older projects that do not have `.porpoise/sessions/`.
 
 Checkpoints enable resuming after interruption. Use `porpoise approve NEXT|PREV` to create a manual verdict when Claude did not save a report.
 
@@ -91,14 +91,14 @@ Checkpoints enable resuming after interruption. Use `porpoise approve NEXT|PREV`
     │   └── 05-milestone.md          # Milestone creation session prompt
     ├── milestones/                # Milestone definition files (written by Claude)
     │   └── M{n}.md
-    ├── reports/                   # Claude's formatted role reports (written by Claude)
-    │   ├── {task-id}-planning-C{n}-R{n}.md
-    │   ├── {task-id}-development-C{n}-R{n}.md
-    │   ├── {task-id}-testing-C{n}-R{n}.md
-    │   └── {task-id}-review-C{n}-R{n}.md
-    ├── messages/                  # Porpoise's captured output (written by Porpoise)
-    │   ├── checkpoint.json
-    │   └── {task-id}-{role}-C{n}-R{n}.md
+    ├── sessions/                  # JSON session mode outputs (new projects)
+    │   ├── {task-id}-planning-C{n}-R{n}.json
+    │   ├── {task-id}-development-C{n}-R{n}.json
+    │   ├── {task-id}-testing-C{n}-R{n}.json
+    │   └── {task-id}-review-C{n}-R{n}.json
+    ├── reports/                   # Legacy formatted role reports
+    ├── messages/                  # Legacy captured output and checkpoint data
+    │   └── checkpoint.json
     └── hints/                     # User additional instructions (written by Porpoise on RESP)
         └── {task-id}-{role}-C{n}-R{n}-hints.md
 ```
@@ -107,8 +107,9 @@ Checkpoints enable resuming after interruption. Use `porpoise approve NEXT|PREV`
 
 | Folder | Writer | Purpose |
 |--------|--------|---------|
-| `reports/` | Claude (exclusive) | Formatted role reports with NEXT/PREV exit code |
-| `messages/` | Porpoise (exclusive) | Raw Claude output (questions, summaries, token warnings) |
+| `sessions/` | Porpoise/model adapter | JSON session envelopes used by new projects |
+| `reports/` | Claude (exclusive) | Legacy formatted role reports with NEXT/PREV exit code |
+| `messages/` | Porpoise (exclusive) | Legacy raw Claude output (questions, summaries, token warnings) |
 | `hints/` | Porpoise (RESP flow) | User-provided additional instructions |
 
 ## Exit codes (role protocol)
