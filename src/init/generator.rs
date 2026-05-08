@@ -513,6 +513,39 @@ mod tests {
     }
 
     #[test]
+    fn claude_code_template_writes_empty_model_id_policy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+
+        generate_docs(
+            &ctx,
+            path,
+            &workspace,
+            None,
+            Some(&crate::init::model_template::CLAUDE_CODE_DEFAULT),
+        )
+        .unwrap();
+
+        let ws_content =
+            std::fs::read_to_string(path.join(".porpoise").join("workspace.toml")).unwrap();
+        assert!(ws_content.contains("[model]"), "[model] 섹션 없음");
+        assert!(ws_content.contains("adapter = \"claude_code\""));
+        assert!(ws_content.contains("model_id = \"\""));
+
+        let cfg: WorkspaceConfig = toml::from_str(&ws_content).unwrap();
+        assert_eq!(
+            cfg.model_adapter_type(),
+            crate::model::adapter::AdapterType::ClaudeCode
+        );
+        assert_eq!(
+            cfg.model_id_for_role(&crate::orchestrator::state::Role::Developer),
+            Some("")
+        );
+    }
+
+    #[test]
     fn model_template_populates_workspace_model_section() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path();
