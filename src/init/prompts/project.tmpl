@@ -9,12 +9,14 @@
 ## Porpoise 오케스트레이션
 이 프로젝트는 Porpoise 오케스트레이션 도구로 관리됩니다.
 - 응답 언어: {{language}}
+- 신규 프로젝트는 JSON session mode로 실행됩니다.
 
 ### 폴더 역할
 | 폴더 | 쓰기 주체 | 내용 |
 |------|----------|------|
-| `.porpoise/reports/` | Claude (단독) | 포맷된 역할 보고서 |
-| `.porpoise/messages/` | Porpoise (단독) | Claude 실행 전체 출력 |
+| `.porpoise/sessions/` | Porpoise/model adapter | JSON session mode 출력 |
+| `.porpoise/reports/` | Claude (단독) | 레거시 포맷 역할 보고서 |
+| `.porpoise/messages/` | Porpoise (단독) | 레거시 Claude 실행 전체 출력 |
 | `.porpoise/hints/` | Porpoise (RESP 흐름) | 사용자 추가 지시사항 |
 | `.porpoise/prompts/` | 초기화 시 생성 | 역할별 프롬프트 파일 |
 
@@ -53,4 +55,5 @@
 
 ## 컨벤션
 {{conventions}}
-- 보고서 파일명: {task-id}-{role}-C{cycle}-R{retry}.md
+- JSON session 파일명: {task-id}-{role}-C{cycle}-R{retry}.json
+- 레거시 보고서 파일명: {task-id}-{role}-C{cycle}-R{retry}.md

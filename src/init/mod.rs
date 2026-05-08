@@ -65,6 +65,10 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
     println!();
     println!("{}", "Initialization complete!".green().bold());
     println!(
+        "{}",
+        "신규 프로젝트는 JSON session mode로 실행됩니다.".green()
+    );
+    println!(
         "Run {} again to start the orchestration cycle.",
         "porpoise".cyan()
     );

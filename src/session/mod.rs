@@ -80,8 +80,13 @@ pub fn count_existing_sessions(path: &Path, task_id: &str, role: &str, cycle: u3
     }
 }
 
+/// Returns true when the project uses JSON session mode.
+///
+/// Fresh projects created by `porpoise --new` always create `.porpoise/sessions`,
+/// so the legacy report/message router is reserved for pre-session-directory
+/// workspaces that must remain compatible with older Porpoise releases.
 pub fn is_new_format(path: &Path) -> bool {
-    path.join(".porpoise").join("sessions").exists()
+    path.join(".porpoise").join("sessions").is_dir()
 }
 
 #[cfg(test)]
@@ -90,6 +95,18 @@ mod tests {
     use crate::session::planning::PlanningOutput;
     use crate::session::output::ExitCode;
     use crate::session::input::SessionInput;
+
+    #[test]
+    fn is_new_format_requires_sessions_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+
+        assert!(!is_new_format(path));
+
+        std::fs::create_dir_all(path.join(".porpoise").join("sessions")).unwrap();
+
+        assert!(is_new_format(path));
+    }
 
     #[test]
     fn session_filename_format() {

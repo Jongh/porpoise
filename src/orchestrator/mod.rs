@@ -162,7 +162,9 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
         }
     }
 
-    // T07: 형식 감지 및 분기 — sessions/ 폴더가 있으면 JSON 기반 라우팅
+    // T07: 형식 감지 및 분기 — 신규 초기화 프로젝트는 `.porpoise/sessions/`를
+    // 항상 생성하므로 JSON 기반 라우팅을 사용한다. 레거시 분기는 해당 폴더가
+    // 없는 기존 워크스페이스의 v0.5.0 호환성 경로로만 유지한다.
     if session::is_new_format(path) {
         return run_new_format(path, args, config, &workspace, &state, effective_model.as_deref(), &logger);
     } else {
