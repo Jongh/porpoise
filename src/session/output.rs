@@ -4,6 +4,7 @@ use crate::session::development::DevelopmentOutput;
 use crate::session::testing::TestingOutput;
 use crate::session::review::ReviewOutput;
 use crate::session::milestone::MilestoneOutput;
+use crate::session::v0_7::{FileOperation, VerifyCommand};
 
 // ExitCode: 기존 orchestrator/report.rs에서 이동 (re-export 유지)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,6 +151,20 @@ impl RoleOutputData {
     pub fn review_status(&self) -> Option<&str> {
         match self {
             RoleOutputData::Review(o) => Some(&o.review_status),
+            _ => None,
+        }
+    }
+
+    pub fn file_operations(&self) -> Option<&Vec<FileOperation>> {
+        match self {
+            RoleOutputData::Development(o) => o.file_operations.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn verify_commands(&self) -> Option<&Vec<VerifyCommand>> {
+        match self {
+            RoleOutputData::Development(o) => o.verify_commands.as_ref(),
             _ => None,
         }
     }

@@ -100,14 +100,56 @@ impl ModelAdapter for AnthropicApiAdapter {
 
 fn build_context_text(input: &SessionInput) -> String {
     let mut parts = Vec::new();
+
     if !input.project_summary.is_empty() {
-        parts.push(format!("프로젝트 정보:\n{}", input.project_summary));
+        parts.push(format!("## 프로젝트 정보\n\n{}", input.project_summary));
     }
-    if !input.hints.is_empty() {
-        parts.push(format!("추가 지시사항:\n{}", input.hints.join("\n")));
+
+    if let Some(tech) = &input.tech_context {
+        parts.push(format!("## 기술 스택\n\n{}", tech));
     }
-    parts.push(format!("현재 작업: {} - {}", input.task_id, input.task_title));
+
+    if !input.dod.is_empty() {
+        parts.push(format!("## 완료 기준 (DoD)\n\n{}", input.dod.join("\n")));
+    }
+
+    if !input.conventions.is_empty() {
+        parts.push(format!("## 코딩 컨벤션\n\n{}", input.conventions.join("\n")));
+    }
+
+    parts.push(format!("## 현재 작업\n\n{} — {}", input.task_id, input.task_title));
     parts.push(format!("역할: {}", input.role));
+
+    if let Some(snap) = &input.workspace_snapshot {
+        let snap_text = crate::workspace::snapshot::snapshot_to_context_text(snap);
+        if !snap_text.is_empty() {
+            parts.push(format!("## 소스 코드 스냅샷\n\n{}", snap_text));
+        }
+    }
+
+    if let Some(prev) = &input.previous_reports.planning {
+        parts.push(format!("## 기획 보고서 요약\n\n{}", prev.summary));
+    }
+    if let Some(prev) = &input.previous_reports.development {
+        parts.push(format!("## 개발 보고서 요약\n\n{}", prev.summary));
+    }
+
+    if !input.execution_results.is_empty() {
+        let er_text: Vec<String> = input.execution_results.iter().map(|r| {
+            format!("### {} (exit={})\nstdout: {}\nstderr: {}",
+                r.purpose, r.exit_code, r.stdout.trim(), r.stderr.trim())
+        }).collect();
+        parts.push(format!("## 실행 결과\n\n{}", er_text.join("\n\n")));
+    }
+
+    if !input.hints.is_empty() {
+        parts.push(format!("## 추가 지시사항\n\n{}", input.hints.join("\n")));
+    }
+
+    if !input.prev_reasons.is_empty() {
+        parts.push(format!("## PREV 사유\n\n{}", input.prev_reasons.join("\n")));
+    }
+
     parts.join("\n\n")
 }
 

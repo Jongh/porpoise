@@ -171,6 +171,8 @@ pub struct OrchestratorState {
     pub project_path: PathBuf,
     pub current_task_id: String,
     pub current_task_title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_execution_results: Vec<crate::session::v0_7::ExecutionResult>,
 }
 
 impl OrchestratorState {
@@ -182,6 +184,7 @@ impl OrchestratorState {
             project_path: path.to_path_buf(),
             current_task_id: "M0-T00".to_string(),
             current_task_title: "미지정".to_string(),
+            pending_execution_results: vec![],
         }
     }
 }
@@ -216,6 +219,7 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
                 project_path: path.to_path_buf(),
                 current_task_id: task_id,
                 current_task_title: task_title,
+                pending_execution_results: vec![],
             });
         }
     }
@@ -275,6 +279,7 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
         project_path: path.to_path_buf(),
         current_task_id: "M0-T00".to_string(),
         current_task_title: "미지정".to_string(),
+        pending_execution_results: vec![],
     };
     Ok(build_state_with_tasks(state, path))
 }

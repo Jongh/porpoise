@@ -83,6 +83,8 @@ impl ModelAdapter for ClaudeCodeAdapter {
         Ok(fallback_from_markdown(&raw, &input.role, &input.task_id, input.cycle))
     }
 
+    fn requires_file_mediation(&self) -> bool { false }
+
     fn adapter_name(&self) -> &str {
         "claude_code"
     }
@@ -145,7 +147,7 @@ pub fn build_context_from_input(input: &SessionInput) -> String {
     parts.join("\n\n")
 }
 
-fn try_parse_json_output(raw: &str, role: &str) -> Option<RoleOutputData> {
+pub fn try_parse_json_output(raw: &str, role: &str) -> Option<RoleOutputData> {
     // 1) 전체가 JSON인지 시도
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
         if let Ok(output) = parse_role_output_from_value(&v, role) {

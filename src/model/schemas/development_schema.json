@@ -21,7 +21,33 @@
       }
     },
     "test_instructions": {"type": "string"},
-    "known_issues": {"type": "array", "items": {"type": "string"}}
+    "known_issues": {"type": "array", "items": {"type": "string"}},
+    "file_operations": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {"type": "string", "enum": ["write", "delete", "rename"]},
+          "path": {"type": "string"},
+          "content": {"type": ["string", "null"]},
+          "new_path": {"type": ["string", "null"]}
+        },
+        "required": ["op", "path"]
+      }
+    },
+    "verify_commands": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string"},
+          "args": {"type": "array", "items": {"type": "string"}},
+          "purpose": {"type": "string"},
+          "expected_exit_code": {"type": "integer"}
+        },
+        "required": ["command", "args", "purpose", "expected_exit_code"]
+      }
+    }
   },
   "required": ["role", "task_id", "cycle", "status", "summary", "questions", "changes", "test_instructions", "known_issues"]
 }

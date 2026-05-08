@@ -20,9 +20,10 @@ pub struct SessionInput {
     pub previous_reports: PreviousReports,
     pub hints: Vec<String>,
     pub prev_reasons: Vec<String>,
-    // v0.7.0 준비 필드
+    // v0.7.0 필드
     pub workspace_snapshot: Option<WorkspaceSnapshot>,
     pub execution_results: Vec<ExecutionResult>,
+    pub tech_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

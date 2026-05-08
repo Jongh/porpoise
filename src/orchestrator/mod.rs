@@ -1035,7 +1035,25 @@ fn run_new_format(
                 "[ Cycle {} | {} ] Running {} ...",
                 state.cycle, state.current_task_id, current_role.display_name()
             ));
-            let input = build_session_input(&state, path, workspace)?;
+
+            // SessionInput 구성
+            let mut input = build_session_input(&state, path, workspace)?;
+
+            // 이전 Developer 역할의 실행 결과 주입
+            if !state.pending_execution_results.is_empty() {
+                input.execution_results = std::mem::take(&mut state.pending_execution_results);
+            }
+
+            // 파일 미디에이션: API 어댑터이면 WorkspaceSnapshot 주입
+            if adapter.requires_file_mediation() {
+                let target_files = collect_target_files_from_planning(&state, path);
+                let budget = workspace.snapshot_token_budget();
+                match crate::workspace::snapshot::build_workspace_snapshot(path, &target_files, budget) {
+                    Ok(snapshot) => input.workspace_snapshot = Some(snapshot),
+                    Err(e) => logger.warn("orchestrator", &format!("snapshot 빌드 실패: {}", e)),
+                }
+            }
+
             let result = execute_role_new(
                 &*adapter, &current_role, input, path, workspace,
                 state.cycle, retry, false, effective_model, logger,
@@ -1045,6 +1063,33 @@ fn run_new_format(
             match result {
                 Ok(o) => {
                     logger.role_end(&current_role.to_string(), state.cycle, true);
+
+                    // 파일 미디에이션 후처리: Developer 역할 완료 시 파일 적용 + Verify
+                    if adapter.requires_file_mediation() && current_role == Role::Developer {
+                        if let Some(ops) = o.file_operations() {
+                            match crate::workspace::apply::apply_file_operations(path, ops) {
+                                Ok(summary) => println!(
+                                    "  {} 파일 적용: 작성={} 삭제={} 이동={}",
+                                    "✓".green(), summary.files_written, summary.files_deleted, summary.files_renamed
+                                ),
+                                Err(e) => logger.warn("orchestrator", &format!("파일 적용 실패: {}", e)),
+                            }
+                        }
+                        let verify_cmds = o.verify_commands().cloned()
+                            .unwrap_or_else(|| workspace.default_verify_commands());
+                        if !verify_cmds.is_empty() {
+                            let results = crate::workspace::executor::run_verify_commands(
+                                path,
+                                &verify_cmds,
+                                &workspace.allowed_command_prefixes(),
+                                workspace.verify_timeout_secs(),
+                            );
+                            let passed = results.iter().filter(|r| r.exit_code == 0).count();
+                            println!("  {} 검증: {}/{} 통과", "✓".green(), passed, results.len());
+                            state.pending_execution_results = results;
+                        }
+                    }
+
                     o
                 }
                 Err(e) => {
@@ -1168,6 +1213,29 @@ fn run_new_format(
     Ok(())
 }
 
+fn collect_target_files_from_planning(state: &OrchestratorState, path: &Path) -> Vec<String> {
+    let sf = match crate::session::find_latest_session(path, &state.current_task_id, "planning") {
+        Some(p) => p,
+        None => return vec![],
+    };
+    let content = match std::fs::read_to_string(&sf) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let env: crate::session::SessionEnvelope = match serde_json::from_str(&content) {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+    if let Some(crate::session::RoleOutputData::Planning(p)) = env.output {
+        p.implementation_plan
+            .iter()
+            .flat_map(|step| step.target_files.iter().cloned())
+            .collect()
+    } else {
+        vec![]
+    }
+}
+
 fn build_session_input(
     state: &OrchestratorState,
     path: &Path,
@@ -1259,6 +1327,7 @@ fn build_session_input(
         prev_reasons: vec![],
         workspace_snapshot: None,
         execution_results: vec![],
+        tech_context: workspace.tech_context(),
     })
 }
 

@@ -7,6 +7,7 @@ mod model;
 mod orchestrator;
 mod session;
 mod utils;
+mod workspace;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

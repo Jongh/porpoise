@@ -4,6 +4,7 @@ use colored::Colorize;
 use std::path::Path;
 
 use super::context::ProjectContext;
+use super::lang_template::LangTemplate;
 use super::template::apply_template;
 use crate::config::workspace::WorkspaceConfig;
 use crate::utils::fs::write_file;
@@ -18,7 +19,12 @@ const REVIEWER_TEMPLATE: &str = include_str!("prompts/04-review.tmpl");
 // {{next_milestone_id}} in this template is a runtime variable — not substituted at init time.
 const MILESTONE_TEMPLATE: &str = include_str!("prompts/05-milestone.tmpl");
 
-pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceConfig) -> Result<()> {
+pub fn generate_docs(
+    ctx: &ProjectContext,
+    path: &Path,
+    workspace: &WorkspaceConfig,
+    lang_template: Option<&'static LangTemplate>,
+) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     // CLAUDE.md — minimal reference pointer
@@ -60,8 +66,18 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceCon
     // .porpoise/workspace.toml — skip if exists (preserve user customizations)
     let workspace_toml_path = docs_dir.join("workspace.toml");
     if !workspace_toml_path.exists() {
-        write_file(&workspace_toml_path, WorkspaceConfig::default_toml(), path)?;
-        println!("  {} {}", "Created:".green(), workspace_toml_path.display());
+        let toml_content = if let Some(tmpl) = lang_template {
+            workspace_toml_from_template(tmpl)
+        } else {
+            WorkspaceConfig::default_toml().to_string()
+        };
+        write_file(&workspace_toml_path, &toml_content, path)?;
+        if lang_template.is_some() {
+            println!("  {} {} ({})", "Created:".green(), workspace_toml_path.display(),
+                lang_template.map(|t| t.display_name).unwrap_or(""));
+        } else {
+            println!("  {} {}", "Created:".green(), workspace_toml_path.display());
+        }
     } else {
         println!(
             "  {} {} (기존 설정 유지)",
@@ -114,6 +130,59 @@ pub fn generate_docs(ctx: &ProjectContext, path: &Path, workspace: &WorkspaceCon
     Ok(())
 }
 
+fn workspace_toml_from_template(t: &LangTemplate) -> String {
+    let dod_items: String = t.dod_items.iter()
+        .map(|d| format!("    \"{}\",\n", d))
+        .collect();
+    let conventions: String = t.conventions.iter()
+        .map(|c| format!("    \"{}\",\n", c))
+        .collect();
+    let prefixes: String = t.default_allowed_command_prefixes.iter()
+        .map(|p| format!("\"{}\"", p))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        r#"# Porpoise 작업 환경 설정 — {} 템플릿
+
+[general]
+language = "ko"
+
+[dod]
+items = [
+{dod_items}]
+
+[conventions]
+custom_rules = [
+{conventions}]
+
+[roles]
+pm_extra = ""
+developer_extra = ""
+tester_extra = ""
+reviewer_extra = ""
+
+[tech]
+stack = "{stack}"
+build_command = "{build}"
+test_command = "{test}"
+lint_command = "{lint}"
+
+[security]
+allowed_command_prefixes = [{prefixes}]
+verify_timeout_secs = 60
+"#,
+        t.display_name,
+        dod_items = dod_items,
+        conventions = conventions,
+        stack = t.tech_stack,
+        build = t.build_command,
+        test = t.test_command,
+        lint = t.lint_command,
+        prefixes = prefixes,
+    )
+}
+
 fn format_list_items(items: &[String]) -> String {
     items
         .iter()
@@ -142,7 +211,7 @@ mod tests {
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         assert!(path.join("CLAUDE.md").exists());
         assert!(path.join(".porpoise").join("project.md").exists());
@@ -164,7 +233,7 @@ mod tests {
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         let claude_md = std::fs::read_to_string(path.join("CLAUDE.md")).unwrap();
         assert!(claude_md.contains("test-project"));
@@ -190,14 +259,14 @@ mod tests {
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         // Modify workspace.toml
         let ws_path = path.join(".porpoise").join("workspace.toml");
         std::fs::write(&ws_path, "# custom content").unwrap();
 
         // Re-run init
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         let content = std::fs::read_to_string(&ws_path).unwrap();
         assert_eq!(content, "# custom content");
@@ -215,7 +284,7 @@ mod tests {
             ..Default::default()
         };
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         let project_md = std::fs::read_to_string(
             path.join(".porpoise").join("project.md"),
@@ -236,7 +305,7 @@ mod tests {
             ..Default::default()
         };
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         let tester_prompt = std::fs::read_to_string(
             path.join(".porpoise").join("prompts").join("03-testing.md"),
@@ -251,7 +320,7 @@ mod tests {
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         for filename in &["01-planning.md", "02-development.md", "03-testing.md", "04-review.md"] {
             let content = std::fs::read_to_string(
@@ -272,7 +341,7 @@ mod tests {
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
 
-        generate_docs(&ctx, path, &workspace).unwrap();
+        generate_docs(&ctx, path, &workspace, None).unwrap();
 
         let content = std::fs::read_to_string(
             path.join(".porpoise").join("prompts").join("05-milestone.md"),
@@ -293,5 +362,38 @@ mod tests {
     #[test]
     fn format_list_items_empty() {
         assert_eq!(format_list_items(&[]), "");
+    }
+
+    #[test]
+    fn from_template_populates_all_sections() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+
+        generate_docs(&ctx, path, &workspace, Some(&crate::init::lang_template::RUST)).unwrap();
+
+        let ws_content = std::fs::read_to_string(
+            path.join(".porpoise").join("workspace.toml"),
+        ).unwrap();
+        assert!(ws_content.contains("cargo test"), "test_command 없음");
+        assert!(ws_content.contains("cargo clippy"), "lint_command 없음");
+        assert!(ws_content.contains("[tech]"), "[tech] 섹션 없음");
+        assert!(ws_content.contains("[security]"), "[security] 섹션 없음");
+    }
+
+    #[test]
+    fn from_template_sets_allowed_prefixes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+
+        generate_docs(&ctx, path, &workspace, Some(&crate::init::lang_template::RUST)).unwrap();
+
+        let ws_content = std::fs::read_to_string(
+            path.join(".porpoise").join("workspace.toml"),
+        ).unwrap();
+        assert!(ws_content.contains("\"cargo\""), "allowed_prefixes에 cargo 없음");
     }
 }

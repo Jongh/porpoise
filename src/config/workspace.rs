@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use crate::session::v0_7::VerifyCommand;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceGeneral {
@@ -39,6 +40,23 @@ pub struct WorkspaceModel {
     pub model_id: Option<String>,
     pub api_base_url: Option<String>,
     pub per_role: Option<WorkspaceModelPerRole>,
+    pub api_key_env: Option<String>,
+    pub structured_output_mode: Option<String>,
+    pub snapshot_token_budget: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceTech {
+    pub stack: Option<String>,
+    pub build_command: Option<String>,
+    pub test_command: Option<String>,
+    pub lint_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceSecurity {
+    pub allowed_command_prefixes: Option<Vec<String>>,
+    pub verify_timeout_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -58,6 +76,8 @@ pub struct WorkspaceConfig {
     pub roles: Option<WorkspaceRoles>,
     pub prompt_overrides: Option<WorkspacePromptOverrides>,
     pub model: Option<WorkspaceModel>,
+    pub tech: Option<WorkspaceTech>,
+    pub security: Option<WorkspaceSecurity>,
 }
 
 impl WorkspaceConfig {
@@ -172,9 +192,84 @@ impl WorkspaceConfig {
             .and_then(|m| m.adapter.as_deref())
             .map(|a| match a {
                 "anthropic_api" => AdapterType::AnthropicApi,
+                "openai_compatible" => AdapterType::OpenAiCompatible,
                 _ => AdapterType::ClaudeCode,
             })
             .unwrap_or(AdapterType::ClaudeCode)
+    }
+
+    pub fn allowed_command_prefixes(&self) -> Vec<String> {
+        self.security
+            .as_ref()
+            .and_then(|s| s.allowed_command_prefixes.as_ref())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn verify_timeout_secs(&self) -> u32 {
+        self.security
+            .as_ref()
+            .and_then(|s| s.verify_timeout_secs)
+            .unwrap_or(60)
+    }
+
+    pub fn snapshot_token_budget(&self) -> usize {
+        self.model
+            .as_ref()
+            .and_then(|m| m.snapshot_token_budget)
+            .unwrap_or(32_000) as usize
+    }
+
+    pub fn default_verify_commands(&self) -> Vec<VerifyCommand> {
+        let tech = match self.tech.as_ref() {
+            Some(t) => t,
+            None => return vec![],
+        };
+        let mut cmds = Vec::new();
+        if let Some(test_cmd) = &tech.test_command {
+            if let Some(cmd) = parse_command_string(test_cmd, "테스트 실행") {
+                cmds.push(cmd);
+            }
+        }
+        if let Some(lint_cmd) = &tech.lint_command {
+            if let Some(cmd) = parse_command_string(lint_cmd, "린트 검사") {
+                cmds.push(cmd);
+            }
+        }
+        cmds
+    }
+
+    pub fn tech_context(&self) -> Option<String> {
+        let tech = self.tech.as_ref()?;
+        let mut parts = Vec::new();
+        if let Some(stack) = &tech.stack {
+            parts.push(format!("Tech Stack: {}", stack));
+        }
+        if let Some(build) = &tech.build_command {
+            parts.push(format!("Build: `{}`", build));
+        }
+        if let Some(test) = &tech.test_command {
+            parts.push(format!("Test: `{}`", test));
+        }
+        if let Some(lint) = &tech.lint_command {
+            parts.push(format!("Lint: `{}`", lint));
+        }
+        if parts.is_empty() { None } else { Some(parts.join("\n")) }
+    }
+
+    pub fn openai_api_key_env(&self) -> Option<&str> {
+        self.model.as_ref()?.api_key_env.as_deref()
+    }
+
+    pub fn structured_output_mode(&self) -> &str {
+        self.model
+            .as_ref()
+            .and_then(|m| m.structured_output_mode.as_deref())
+            .unwrap_or("auto")
+    }
+
+    pub fn openai_api_base_url(&self) -> Option<&str> {
+        self.model.as_ref()?.api_base_url.as_deref()
     }
 
     pub fn model_id_for_role(&self, role: &crate::orchestrator::state::Role) -> Option<&str> {
@@ -227,8 +322,57 @@ reviewer_extra = ""
 # developer = ".porpoise/custom-prompts/02-development.md"
 # tester = ".porpoise/custom-prompts/03-testing.md"
 # reviewer = ".porpoise/custom-prompts/04-review.md"
+
+# === 모델 설정 ===
+# [model]
+# adapter = "claude_code"          # claude_code | anthropic_api | openai_compatible
+# model_id = "claude-sonnet-4-6"  # 어댑터별 모델 ID
+#
+# --- OpenAI Codex 설정 예시 ---
+# adapter = "openai_compatible"
+# model_id = "codex-mini-latest"
+# api_base_url = "https://api.openai.com/v1"
+# api_key_env = "OPENAI_API_KEY"
+# structured_output_mode = "function_calling"   # auto | function_calling | json_mode | text_extraction
+# snapshot_token_budget = 80000
+#
+# --- Ollama (gemma4:e4b) 설정 예시 ---
+# adapter = "openai_compatible"
+# model_id = "gemma4:e4b"
+# api_base_url = "http://localhost:11434/v1"
+# api_key_env = ""                 # 빈 문자열 = 무인증
+# structured_output_mode = "json_mode"
+# snapshot_token_budget = 12000
+
+# === 기술 스택 설정 (언어 템플릿 초기화 시 자동 입력) ===
+# [tech]
+# stack = "Rust (Cargo, Clippy)"
+# build_command = "cargo build --release"
+# test_command = "cargo test"
+# lint_command = "cargo clippy -- -D warnings"
+
+# === 보안 설정 (VerifyCommand 허용 명령 — 기본값 [] = 모든 실행 차단) ===
+# [security]
+# allowed_command_prefixes = ["cargo", "rustfmt"]
+# verify_timeout_secs = 60
 "#
     }
+}
+
+fn parse_command_string(s: &str, purpose: &str) -> Option<VerifyCommand> {
+    const SHELL_METACHARS: &[char] = &['&', '|', ';', '`', '$'];
+    if s.chars().any(|c| SHELL_METACHARS.contains(&c)) {
+        eprintln!(
+            "경고: parse_command_string: '{}' 에 shell 메타문자가 포함되어 있어 건너뜁니다. \
+             workspace.toml에서 verify_commands의 command와 args를 분리하여 지정하세요.",
+            s
+        );
+        return None;
+    }
+    let mut parts = s.split_whitespace();
+    let command = parts.next()?.to_string();
+    let args: Vec<String> = parts.map(str::to_string).collect();
+    Some(VerifyCommand { command, args, purpose: purpose.to_string(), expected_exit_code: 0 })
 }
 
 fn resolve_path(override_path: &str, project_path: &Path) -> std::path::PathBuf {
@@ -358,5 +502,123 @@ mod tests {
         };
         let content = cfg.prompt_override_content("pm", tmp.path());
         assert_eq!(content, Some("custom pm prompt".to_string()));
+    }
+
+    #[test]
+    fn tech_and_security_sections_parse() {
+        let toml = r#"
+[tech]
+stack = "Rust"
+build_command = "cargo build"
+test_command = "cargo test"
+lint_command = "cargo clippy"
+
+[security]
+allowed_command_prefixes = ["cargo"]
+verify_timeout_secs = 30
+"#;
+        let cfg: WorkspaceConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.tech.as_ref().unwrap().stack.as_deref(), Some("Rust"));
+        assert_eq!(cfg.tech.as_ref().unwrap().test_command.as_deref(), Some("cargo test"));
+        assert_eq!(cfg.allowed_command_prefixes(), vec!["cargo".to_string()]);
+        assert_eq!(cfg.verify_timeout_secs(), 30);
+    }
+
+    #[test]
+    fn allowed_command_prefixes_defaults_empty() {
+        let cfg = WorkspaceConfig::default();
+        assert!(cfg.allowed_command_prefixes().is_empty());
+    }
+
+    #[test]
+    fn default_verify_commands_from_tech() {
+        let cfg = WorkspaceConfig {
+            tech: Some(WorkspaceTech {
+                stack: None,
+                build_command: None,
+                test_command: Some("cargo test".to_string()),
+                lint_command: Some("cargo clippy -- -D warnings".to_string()),
+            }),
+            ..Default::default()
+        };
+        let cmds = cfg.default_verify_commands();
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0].command, "cargo");
+        assert_eq!(cmds[0].args, vec!["test"]);
+        assert_eq!(cmds[1].command, "cargo");
+        assert_eq!(cmds[1].args, vec!["clippy", "--", "-D", "warnings"]);
+    }
+
+    #[test]
+    fn snapshot_token_budget_default() {
+        let cfg = WorkspaceConfig::default();
+        assert_eq!(cfg.snapshot_token_budget(), 32_000);
+    }
+
+    #[test]
+    fn tech_context_with_stack() {
+        let cfg = WorkspaceConfig {
+            tech: Some(WorkspaceTech {
+                stack: Some("Rust".to_string()),
+                test_command: Some("cargo test".to_string()),
+                build_command: None,
+                lint_command: None,
+            }),
+            ..Default::default()
+        };
+        let ctx = cfg.tech_context().unwrap();
+        assert!(ctx.contains("Rust"));
+        assert!(ctx.contains("cargo test"));
+    }
+
+    #[test]
+    fn openai_adapter_type_parses() {
+        let toml = "[model]\nadapter = \"openai_compatible\"\n";
+        let cfg: WorkspaceConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.model_adapter_type(), crate::model::adapter::AdapterType::OpenAiCompatible);
+    }
+
+    #[test]
+    fn parse_command_string_accepts_simple() {
+        let cmd = parse_command_string("cargo test", "테스트").unwrap();
+        assert_eq!(cmd.command, "cargo");
+        assert_eq!(cmd.args, vec!["test"]);
+        assert_eq!(cmd.purpose, "테스트");
+
+        let cmd2 = parse_command_string("ruff check .", "린트").unwrap();
+        assert_eq!(cmd2.command, "ruff");
+        assert_eq!(cmd2.args, vec!["check", "."]);
+    }
+
+    #[test]
+    fn parse_command_string_rejects_compound() {
+        // && 포함
+        assert!(parse_command_string("ruff check . && mypy .", "린트").is_none());
+        // || 포함
+        assert!(parse_command_string("cargo test || true", "테스트").is_none());
+        // ; 포함
+        assert!(parse_command_string("echo a; echo b", "출력").is_none());
+        // | 포함
+        assert!(parse_command_string("cat file | grep x", "검색").is_none());
+        // $ 포함
+        assert!(parse_command_string("echo $HOME", "출력").is_none());
+    }
+
+    #[test]
+    fn parse_command_string_compound_skipped_in_default_verify() {
+        let cfg = WorkspaceConfig {
+            tech: Some(WorkspaceTech {
+                stack: None,
+                build_command: None,
+                test_command: Some("cargo test && echo done".to_string()),
+                lint_command: Some("cargo clippy".to_string()),
+            }),
+            ..Default::default()
+        };
+        // 복합 명령은 건너뜀 — lint만 남아야 함
+        let cmds = cfg.default_verify_commands();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command, "cargo");
+        assert_eq!(cmds[0].args, vec!["clippy"]);
     }
 }

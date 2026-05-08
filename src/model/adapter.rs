@@ -9,6 +9,9 @@ pub trait ModelAdapter: Send + Sync {
     #[allow(dead_code)]
     fn supports_structured_output(&self) -> bool;
     fn last_raw_text(&self) -> Option<String> { None }
+    /// API 기반 어댑터는 true — Porpoise가 파일 스냅샷 전달·변경 적용 담당.
+    /// ClaudeCodeAdapter는 false — CLI가 직접 파일을 읽고 씀.
+    fn requires_file_mediation(&self) -> bool { true }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,4 +36,5 @@ impl Default for ModelConfig {
 pub enum AdapterType {
     ClaudeCode,
     AnthropicApi,
+    OpenAiCompatible,
 }

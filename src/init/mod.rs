@@ -1,7 +1,8 @@
-pub mod tree;
 pub mod context;
 pub mod generator;
+pub mod lang_template;
 pub mod template;
+pub mod tree;
 
 use anyhow::Result;
 use colored::Colorize;
@@ -22,7 +23,6 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
     }
 
     // --new 플래그이고 기존 .porpoise/가 존재하면 덮어쓰기 여부를 한 번만 확인한다.
-    // 기존 작업 이력(.porpoise/messages/) 전체가 소실될 수 있으므로 명시적 동의 필요.
     if args.new && path.join(".porpoise").exists() {
         let overwrite = Confirm::new()
             .with_prompt(
@@ -46,13 +46,16 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
 
     let ctx = context::collect_project_context(&tree_output)?;
 
+    // 언어 템플릿 선택 (비대화형이거나 --yes면 건너뜀)
+    let lang_template = select_lang_template(args.yes, path);
+
     // Load workspace config (preserves existing .porpoise/workspace.toml if present)
     let workspace = WorkspaceConfig::load(path)?;
 
     // Generate docs
     println!();
     println!("{}", "Generating documentation...".cyan());
-    generator::generate_docs(&ctx, path, &workspace)?;
+    generator::generate_docs(&ctx, path, &workspace, lang_template)?;
 
     println!();
     println!("{}", "Initialization complete!".green().bold());
@@ -62,4 +65,39 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
     );
 
     Ok(())
+}
+
+fn select_lang_template(yes: bool, path: &Path) -> Option<&'static lang_template::LangTemplate> {
+    // --yes 이거나 workspace.toml이 이미 있으면 선택 건너뜀
+    if yes || path.join(".porpoise").join("workspace.toml").exists() {
+        return None;
+    }
+
+    // 비대화형 환경 감지
+    if !is_interactive() {
+        return None;
+    }
+
+    let items: Vec<&str> = lang_template::ALL_TEMPLATES
+        .iter()
+        .map(|t| t.display_name)
+        .chain(std::iter::once("커스텀 (선택 안 함)"))
+        .collect();
+
+    match dialoguer::Select::new()
+        .with_prompt("언어/프레임워크 템플릿을 선택하세요")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+    {
+        Ok(Some(idx)) if idx < lang_template::ALL_TEMPLATES.len() => {
+            Some(lang_template::ALL_TEMPLATES[idx])
+        }
+        _ => None,
+    }
+}
+
+fn is_interactive() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }
