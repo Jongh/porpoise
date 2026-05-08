@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "role": {"type": "string"},
+    "task_id": {"type": "string"},
+    "cycle": {"type": "integer"},
+    "status": {"type": "string", "enum": ["NEXT", "PREV", "RESP"]},
+    "summary": {"type": "string"},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "prev_reason": {"type": ["string", "null"]},
+    "implementation_plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": {"type": "integer"},
+          "description": {"type": "string"},
+          "target_files": {"type": "array", "items": {"type": "string"}},
+          "acceptance_criteria": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["step", "description", "target_files", "acceptance_criteria"]
+      }
+    },
+    "dod_checklist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item": {"type": "string"},
+          "verification_method": {"type": "string"}
+        },
+        "required": ["item", "verification_method"]
+      }
+    },
+    "risks": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["role", "task_id", "cycle", "status", "summary", "questions", "implementation_plan", "dod_checklist", "risks"]
+}

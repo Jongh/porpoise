@@ -34,12 +34,30 @@ pub struct WorkspacePromptOverrides {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceModel {
+    pub adapter: Option<String>,
+    pub model_id: Option<String>,
+    pub api_base_url: Option<String>,
+    pub per_role: Option<WorkspaceModelPerRole>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceModelPerRole {
+    pub planning: Option<String>,
+    pub development: Option<String>,
+    pub testing: Option<String>,
+    pub review: Option<String>,
+    pub milestone: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     pub general: Option<WorkspaceGeneral>,
     pub dod: Option<WorkspaceDod>,
     pub conventions: Option<WorkspaceConventions>,
     pub roles: Option<WorkspaceRoles>,
     pub prompt_overrides: Option<WorkspacePromptOverrides>,
+    pub model: Option<WorkspaceModel>,
 }
 
 impl WorkspaceConfig {
@@ -146,6 +164,31 @@ impl WorkspaceConfig {
                 None
             }
         }
+    }
+
+    pub fn model_adapter_type(&self) -> crate::model::adapter::AdapterType {
+        use crate::model::adapter::AdapterType;
+        self.model.as_ref()
+            .and_then(|m| m.adapter.as_deref())
+            .map(|a| match a {
+                "anthropic_api" => AdapterType::AnthropicApi,
+                _ => AdapterType::ClaudeCode,
+            })
+            .unwrap_or(AdapterType::ClaudeCode)
+    }
+
+    pub fn model_id_for_role(&self, role: &crate::orchestrator::state::Role) -> Option<&str> {
+        let m = self.model.as_ref()?;
+        let per_role_id = m.per_role.as_ref().and_then(|pr| {
+            use crate::orchestrator::state::Role;
+            match role {
+                Role::PM => pr.planning.as_deref(),
+                Role::Developer => pr.development.as_deref(),
+                Role::Tester => pr.testing.as_deref(),
+                Role::Reviewer => pr.review.as_deref(),
+            }
+        });
+        per_role_id.or_else(|| m.model_id.as_deref())
     }
 
     pub fn default_toml() -> &'static str {

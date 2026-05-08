@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "role": {"type": "string"},
+    "milestone_id": {"type": "string"},
+    "status": {"type": "string", "enum": ["NEXT", "PREV", "RESP"]},
+    "title": {"type": "string"},
+    "version": {"type": "string"},
+    "goal": {"type": "string"},
+    "summary": {"type": "string"},
+    "background": {"type": ["string", "null"]},
+    "constraints": {"type": "array", "items": {"type": "string"}},
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "description": {"type": ["string", "null"]}
+        },
+        "required": ["id", "title"]
+      }
+    },
+    "questions": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["role", "milestone_id", "status", "title", "version", "goal", "summary", "tasks", "questions"]
+}

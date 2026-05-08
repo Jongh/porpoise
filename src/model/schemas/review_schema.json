@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "role": {"type": "string"},
+    "task_id": {"type": "string"},
+    "cycle": {"type": "integer"},
+    "status": {"type": "string", "enum": ["NEXT", "PREV", "RESP"]},
+    "summary": {"type": "string"},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "prev_reason": {"type": ["string", "null"]},
+    "review_status": {"type": "string", "enum": ["APPROVED", "CHANGES_REQUESTED", "REJECTED"]},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {"type": "string"},
+          "file": {"type": ["string", "null"]},
+          "description": {"type": "string"},
+          "suggestion": {"type": ["string", "null"]}
+        },
+        "required": ["severity", "description"]
+      }
+    },
+    "completed_tasks": {"type": "array", "items": {"type": "string"}},
+    "milestone_complete": {"type": "boolean"},
+    "prev_target": {"type": ["string", "null"]}
+  },
+  "required": ["role", "task_id", "cycle", "status", "summary", "questions", "review_status", "findings", "completed_tasks", "milestone_complete"]
+}

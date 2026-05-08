@@ -3,7 +3,9 @@ mod config;
 mod init;
 mod logger;
 mod milestone;
+mod model;
 mod orchestrator;
+mod session;
 mod utils;
 
 use anyhow::Result;

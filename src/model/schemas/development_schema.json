@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "role": {"type": "string"},
+    "task_id": {"type": "string"},
+    "cycle": {"type": "integer"},
+    "status": {"type": "string", "enum": ["NEXT", "PREV", "RESP"]},
+    "summary": {"type": "string"},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "prev_reason": {"type": ["string", "null"]},
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {"type": "string"},
+          "change_type": {"type": "string"},
+          "description": {"type": "string"}
+        },
+        "required": ["file", "change_type", "description"]
+      }
+    },
+    "test_instructions": {"type": "string"},
+    "known_issues": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["role", "task_id", "cycle", "status", "summary", "questions", "changes", "test_instructions", "known_issues"]
+}

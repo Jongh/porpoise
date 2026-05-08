@@ -25,6 +25,8 @@ use report::{count_existing_reports, parse_completed_tasks, parse_exit_code, par
 use roles::{build_context, find_latest_report, RoleContext, RoleExecutor};
 use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
 
+use crate::session;
+
 enum RoleOutcome {
     Report(Report),
     Retry,
@@ -158,6 +160,14 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                 }
             }
         }
+    }
+
+    // T07: 형식 감지 및 분기 — sessions/ 폴더가 있으면 JSON 기반 라우팅
+    if session::is_new_format(path) {
+        return run_new_format(path, args, config, &workspace, &state, effective_model.as_deref(), &logger);
+    } else {
+        println!("{}", "⚠  레거시 모드: sessions/ 폴더가 없습니다. v0.5.0 호환 모드로 실행합니다.".yellow());
+        println!("{}", "   새 형식으로 전환하려면 sessions/ 폴더를 생성하세요.".dimmed());
     }
 
     let executor = RoleExecutor::new(effective_model.clone());
@@ -924,4 +934,408 @@ fn save_resp_hints(
     println!("  {} hint 저장: {}", "✓".green(), filename.dimmed());
     logger.info(&current_role.to_string(), &format!("RESP hint 저장: {}", filename));
     Ok(())
+}
+
+// ─── v0.6.0 JSON 기반 라우팅 ──────────────────────────────────────────────────
+
+fn run_new_format(
+    path: &Path,
+    args: &Args,
+    config: &Config,
+    workspace: &WorkspaceConfig,
+    initial_state: &OrchestratorState,
+    effective_model: Option<&str>,
+    logger: &Logger,
+) -> Result<()> {
+    use crate::model::factory::make_adapter;
+    use crate::session::{self, find_latest_session};
+
+    let mut state = initial_state.clone();
+    let mut history: Vec<String> = Vec::new();
+
+    let adapter = match make_adapter(workspace, path) {
+        Ok(a) => a,
+        Err(e) => {
+            println!("{} {}", "⚠ 어댑터 초기화 실패:".red().bold(), e);
+            return Err(e);
+        }
+    };
+
+    loop {
+        let current_role = match &state.current_role {
+            Some(r) => r.clone(),
+            None => {
+                println!("{}", "All roles completed for this cycle.".green().bold());
+                break;
+            }
+        };
+
+        println!(
+            "{}",
+            format!(
+                "\n[ Cycle {} | {} ] ─── {} ─── [JSON mode]",
+                state.cycle, state.current_task_id, current_role.display_name()
+            ).bold()
+        );
+
+        // retry = 현재 사이클의 기존 세션 수
+        let retry = session::count_existing_sessions(
+            path,
+            &state.current_task_id,
+            &current_role.to_string(),
+            state.cycle,
+        );
+
+        // 현재 사이클의 완료된 세션만 재사용 (다른 사이클 세션은 무시)
+        let cached_output = find_latest_session(
+            path,
+            &state.current_task_id,
+            &current_role.to_string(),
+        ).and_then(|sf| {
+            let content = std::fs::read_to_string(&sf).ok()?;
+            let env: session::SessionEnvelope = serde_json::from_str(&content).ok()?;
+            if env.cycle != state.cycle {
+                return None;  // 다른 사이클 세션 — 재사용 금지
+            }
+            if env.output.is_none() {
+                println!("{}", "⚠ 세션 파일이 있지만 output이 없습니다. 재실행합니다.".yellow());
+                return None;
+            }
+            let o = env.output.clone()?;
+            let fname = sf.file_name().unwrap_or_default().to_string_lossy().to_string();
+            println!(
+                "  {} sessions/ 읽음: {} — {}",
+                "→".cyan(),
+                fname.dimmed(),
+                format!("{}", o.status()).yellow()
+            );
+            Some(o)
+        });
+
+        let output_data = if let Some(o) = cached_output {
+            o
+        } else {
+            // 현재 사이클의 세션 없음 → 역할 실행
+            if args.dry_run {
+                println!("{}", "  [dry-run] 역할 실행 후 NEXT로 처리".dimmed());
+                state.completed_roles.push(current_role.clone());
+                state.current_role = current_role.next();
+                continue;
+            }
+
+            if !confirm_or_default(&format!("Execute {}?", current_role.display_name()), true, args.yes)? {
+                println!("{}", "Skipped.".yellow());
+                break;
+            }
+
+            save_current_checkpoint(&state, &current_role, path, retry)?;
+            logger.role_start(&current_role.to_string(), state.cycle);
+
+            let spinner = make_spinner(&format!(
+                "[ Cycle {} | {} ] Running {} ...",
+                state.cycle, state.current_task_id, current_role.display_name()
+            ));
+            let input = build_session_input(&state, path, workspace)?;
+            let result = execute_role_new(
+                &*adapter, &current_role, input, path, workspace,
+                state.cycle, retry, false, effective_model, logger,
+            );
+            spinner.finish_and_clear();
+
+            match result {
+                Ok(o) => {
+                    logger.role_end(&current_role.to_string(), state.cycle, true);
+                    o
+                }
+                Err(e) => {
+                    logger.role_end(&current_role.to_string(), state.cycle, false);
+                    println!("{} {}", "Error:".red().bold(), e);
+                    let retry_choice = dialoguer::Confirm::new()
+                        .with_prompt("Retry?")
+                        .default(true)
+                        .interact()?;
+                    if retry_choice { continue; } else { break; }
+                }
+            }
+        };
+
+        // ── 히스토리 기록 ─────────────────────────────────────────────────────
+        history.push(format!(
+            "[{} / C{}] {} → {}",
+            state.current_task_id, state.cycle,
+            current_role.display_name(),
+            output_data.status()
+        ));
+
+        // ── 라우팅 ────────────────────────────────────────────────────────────
+        match output_data.status() {
+            session::ExitCode::Next => {
+                if current_role == Role::Reviewer {
+                    if !args.dry_run {
+                        let mut task_ids = output_data.completed_tasks().to_vec();
+                        let mut seen = std::collections::HashSet::new();
+                        task_ids.retain(|id| seen.insert(id.clone()));
+                        if !task_ids.contains(&state.current_task_id) {
+                            task_ids.push(state.current_task_id.clone());
+                        }
+                        let project_tasks = parse_tasks_from_project_md(path);
+                        let commit_tasks: Vec<(String, String)> = task_ids.iter().map(|id| {
+                            let title = project_tasks.iter().find(|t| t.id == *id)
+                                .map(|t| t.title.clone())
+                                .unwrap_or_else(|| {
+                                    if *id == state.current_task_id {
+                                        state.current_task_title.clone()
+                                    } else {
+                                        String::new()
+                                    }
+                                });
+                            (id.clone(), title)
+                        }).collect();
+
+                        match auto_commit(&commit_tasks) {
+                            Ok(()) => println!("  {} 커밋 완료", "✓".green()),
+                            Err(e) => println!("{} {}", "⚠ 커밋 실패:".yellow(), e),
+                        }
+                        let commit_ids: Vec<String> = commit_tasks.iter().map(|(id, _)| id.clone()).collect();
+                        let _ = mark_tasks_complete(path, &commit_ids, logger);
+                    }
+
+                    if !args.dry_run && all_tasks_done(path) {
+                        println!("{}", "\n모든 작업 항목 완료!".green().bold());
+                        let create_new = confirm_or_default(
+                            "새 마일스톤을 생성하시겠습니까?",
+                            false,
+                            args.yes,
+                        )?;
+                        if create_new {
+                            milestone_session::run_milestone_session(path, false, logger, effective_model)?;
+                        } else {
+                            let _ = run_release_flow(config.github_repo());
+                        }
+                        break;
+                    }
+
+                    let tasks = parse_tasks_from_project_md(path);
+                    if let Some(next_task) = tasks.iter().find(|t| !t.completed) {
+                        state.current_task_id = next_task.id.clone();
+                        state.current_task_title = next_task.title.clone();
+                        state.completed_roles = vec![];
+                        state.current_role = Some(Role::PM);
+                    } else {
+                        state.cycle += 1;
+                        state.completed_roles = vec![];
+                        state.current_role = Some(Role::PM);
+                    }
+                } else {
+                    state.completed_roles.push(current_role.clone());
+                    state.current_role = current_role.next();
+                    if let Some(ref next) = state.current_role {
+                        println!("  {} Next: {}", "→".cyan(), next.display_name().cyan());
+                    }
+                }
+            }
+
+            session::ExitCode::Prev => {
+                let target_role = output_data.prev_target().and_then(|t| Role::from_str(t));
+                match target_role {
+                    Some(ref role) if *role != Role::PM => {
+                        let start_idx = Role::all().iter().position(|r| r == role).unwrap_or(0);
+                        state.completed_roles = Role::all()[..start_idx].to_vec();
+                        state.current_role = Some(role.clone());
+                        println!("{}", format!("  ← PREV → {}", role.display_name()).yellow().bold());
+                    }
+                    _ => {
+                        state.cycle += 1;
+                        state.completed_roles = vec![];
+                        state.current_role = Some(Role::PM);
+                        println!("{}", format!("  ← PREV: 사이클 {} — Planning부터 재시작", state.cycle).yellow().bold());
+                    }
+                }
+            }
+
+            session::ExitCode::Resp => {
+                if !args.dry_run {
+                    save_resp_hints(&current_role, &state, retry, path, logger)?;
+                }
+                break;
+            }
+        }
+    }
+
+    print_history(&history);
+    println!();
+    println!("{}", "세션 종료.".dimmed());
+    Ok(())
+}
+
+fn build_session_input(
+    state: &OrchestratorState,
+    path: &Path,
+    workspace: &WorkspaceConfig,
+) -> Result<crate::session::SessionInput> {
+    use crate::session::input::{MilestoneInfo, PreviousReports, SessionInput};
+    use crate::session::SessionEnvelope;
+
+    let project_summary = std::fs::read_to_string(path.join(".porpoise").join("project.md"))
+        .unwrap_or_default();
+
+    // 마일스톤 정보 추출
+    let milestone_id = state.current_task_id
+        .split('-')
+        .next()
+        .unwrap_or("M1")
+        .to_string();
+    let milestone = MilestoneInfo {
+        id: milestone_id,
+        title: String::new(),
+        version: String::new(),
+        goal: String::new(),
+    };
+
+    // 이전 역할 세션 로드
+    let load_output = |role_str: &str| -> Option<crate::session::RoleOutputData> {
+        let sf = crate::session::find_latest_session(path, &state.current_task_id, role_str)?;
+        let content = std::fs::read_to_string(&sf).ok()?;
+        let envelope: SessionEnvelope = serde_json::from_str(&content).ok()?;
+        envelope.output
+    };
+
+    let previous_reports = {
+        let planning = load_output("planning").and_then(|o| {
+            if let crate::session::RoleOutputData::Planning(p) = o { Some(p) } else { None }
+        });
+        let development = load_output("development").and_then(|o| {
+            if let crate::session::RoleOutputData::Development(d) = o { Some(d) } else { None }
+        });
+        let testing = load_output("testing").and_then(|o| {
+            if let crate::session::RoleOutputData::Testing(t) = o { Some(t) } else { None }
+        });
+        let review = if state.cycle > 1 {
+            load_output("review").and_then(|o| {
+                if let crate::session::RoleOutputData::Review(r) = o { Some(r) } else { None }
+            })
+        } else {
+            None
+        };
+
+        PreviousReports { planning, development, testing, review }
+    };
+
+    // 힌트 파일 로드
+    let hints_dir = path.join(".porpoise").join("hints");
+    let role_str = state.current_role.as_ref().map(|r| r.to_string()).unwrap_or_default();
+    let hints = std::fs::read_dir(&hints_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.starts_with(&format!("{}-{}-", state.current_task_id, role_str))
+                        && name.contains("-hints")
+                        && name.ends_with(".md")
+                    {
+                        std::fs::read_to_string(e.path()).ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(SessionInput {
+        role: role_str,
+        task_id: state.current_task_id.clone(),
+        task_title: state.current_task_title.clone(),
+        cycle: state.cycle,
+        retry: 0,
+        language: workspace.language().to_string(),
+        project_summary,
+        conventions: workspace.convention_lines(),
+        dod: workspace.dod_items(),
+        milestone,
+        previous_reports,
+        hints,
+        prev_reasons: vec![],
+        workspace_snapshot: None,
+        execution_results: vec![],
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_role_new(
+    adapter: &dyn crate::model::adapter::ModelAdapter,
+    current_role: &Role,
+    mut input: crate::session::SessionInput,
+    path: &Path,
+    workspace: &WorkspaceConfig,
+    cycle: u32,
+    retry: u32,
+    dry_run: bool,
+    effective_model: Option<&str>,
+    logger: &Logger,
+) -> Result<crate::session::RoleOutputData> {
+    use crate::model::factory::make_model_config;
+    use crate::session::{save_session, session_filename, SessionEnvelope};
+    use crate::session::renderer;
+    use chrono::Local;
+
+    if dry_run {
+        use crate::session::ExitCode;
+        let role_str = current_role.to_string();
+        let task_id = input.task_id.clone();
+        let status = ExitCode::Next;
+        let summary = "[dry-run]".to_string();
+        return Ok(match current_role {
+            Role::PM => crate::session::RoleOutputData::Planning(crate::session::planning::PlanningOutput {
+                role: role_str, task_id, cycle, status, summary, ..Default::default()
+            }),
+            Role::Developer => crate::session::RoleOutputData::Development(crate::session::development::DevelopmentOutput {
+                role: role_str, task_id, cycle, status, summary, ..Default::default()
+            }),
+            Role::Tester => crate::session::RoleOutputData::Testing(crate::session::testing::TestingOutput {
+                role: role_str, task_id, cycle, status, summary, ..Default::default()
+            }),
+            Role::Reviewer => crate::session::RoleOutputData::Review(crate::session::review::ReviewOutput {
+                role: role_str, task_id, cycle, status, summary, ..Default::default()
+            }),
+        });
+    }
+
+    input.retry = retry;
+
+    let mut config = make_model_config(workspace, current_role);
+    // args.model 오버라이드
+    if let Some(m) = effective_model {
+        if !m.is_empty() {
+            config.model_id = m.to_string();
+        }
+    }
+
+    let output = adapter.execute(&input, &config)?;
+    let raw_text = adapter.last_raw_text();
+
+    let envelope = SessionEnvelope {
+        schema_version: "1".to_string(),
+        task_id: input.task_id.clone(),
+        role: current_role.to_string(),
+        cycle,
+        retry,
+        timestamp: Local::now().to_rfc3339(),
+        model: config.model_id.clone(),
+        adapter: adapter.adapter_name().to_string(),
+        input: input.clone(),
+        output: Some(output.clone()),
+        raw_text,
+    };
+
+    save_session(path, &envelope)?;
+    if let Err(e) = renderer::render_and_save_report(path, &envelope) {
+        logger.warn(&current_role.to_string(), &format!("reports/ 마크다운 생성 실패: {}", e));
+    }
+
+    let filename = session_filename(&input.task_id, &current_role.to_string(), cycle, retry);
+    println!("  {} Session: {}", "✓".green(), filename.dimmed());
+
+    Ok(output)
 }

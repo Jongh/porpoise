@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "role": {"type": "string"},
+    "task_id": {"type": "string"},
+    "cycle": {"type": "integer"},
+    "status": {"type": "string", "enum": ["NEXT", "PREV", "RESP"]},
+    "summary": {"type": "string"},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "prev_reason": {"type": ["string", "null"]},
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "result": {"type": "string"},
+          "command": {"type": ["string", "null"]},
+          "details": {"type": ["string", "null"]}
+        },
+        "required": ["name", "result"]
+      }
+    },
+    "overall_result": {"type": "string"},
+    "issues_found": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["role", "task_id", "cycle", "status", "summary", "questions", "test_cases", "overall_result", "issues_found"]
+}
