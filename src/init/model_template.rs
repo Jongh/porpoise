@@ -12,7 +12,8 @@ pub struct ModelTemplate {
 pub static CLAUDE_CODE_DEFAULT: ModelTemplate = ModelTemplate {
     display_name: "Claude Code CLI 기본값",
     adapter: "claude_code",
-    model_id: None,
+    // Claude Code는 빈 model_id를 명시해 CLI 기본 모델을 사용한다.
+    model_id: Some(""),
     api_base_url: None,
     api_key_env: None,
     structured_output_mode: None,
