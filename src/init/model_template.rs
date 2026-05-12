@@ -1,3 +1,11 @@
+#[derive(Debug, Clone)]
+pub struct ResolvedModel {
+    pub template: &'static ModelTemplate,
+    pub model_id: Option<String>,      // Some이면 template.model_id 대신 사용
+    pub api_key_env: Option<String>,   // Some이면 template.api_key_env 대신 사용
+    pub api_base_url: Option<String>,  // Some이면 template.api_base_url 대신 사용
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelTemplate {
     pub display_name: &'static str,

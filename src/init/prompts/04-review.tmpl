@@ -91,6 +91,31 @@ completed_tasks: M1-T01, M1-T02
 
 ---
 
+## JSON 출력 형식 (필수)
+
+마크다운 보고서 작성 후, 응답 마지막 부분에 아래 JSON 블록을 포함하세요.
+
+```json
+{
+  "role": "review",
+  "task_id": "M1-T01",
+  "cycle": 1,
+  "status": "NEXT",
+  "summary": "리뷰 결과 요약",
+  "questions": [],
+  "prev_reason": null,
+  "review_status": "APPROVED",
+  "findings": [
+    {"severity": "minor", "file": "src/example.rs", "description": "발견 사항", "suggestion": "개선안"}
+  ],
+  "completed_tasks": ["M1-T01"],
+  "milestone_complete": false,
+  "prev_target": null
+}
+```
+
+---
+
 ## 응답 종료 코드
 
 응답의 **마지막 줄**에 아래 코드 중 하나를 **단독으로** 출력한다. 다른 텍스트가 뒤따르면 안 된다.

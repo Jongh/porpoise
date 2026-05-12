@@ -882,6 +882,7 @@ fn save_current_checkpoint(
         vec![],
         &state.current_task_id,
         retry_count,
+        state.prev_reasons.clone(),
     );
     save_checkpoint(&cp, path)
 }
@@ -954,6 +955,24 @@ fn run_new_format(
 
     let mut state = initial_state.clone();
     let mut history: Vec<String> = Vec::new();
+
+    // IMP-02: JSON 출력 섹션 미존재 경고 (기존 프로젝트가 porpoise --new 미실행 시)
+    {
+        let prompts_dir = path.join(".porpoise").join("prompts");
+        let needs_update = ["01-planning.md", "02-development.md", "03-testing.md", "04-review.md"]
+            .iter()
+            .any(|f| {
+                std::fs::read_to_string(prompts_dir.join(f))
+                    .map(|c| !c.contains("JSON 출력 형식"))
+                    .unwrap_or(false)
+            });
+        if needs_update {
+            println!(
+                "{}",
+                "⚠  프롬프트 파일에 JSON 출력 섹션이 없습니다. 'porpoise --new'를 실행해 프롬프트를 최신화하세요.".yellow()
+            );
+        }
+    }
 
     let adapter = match make_adapter(workspace, path) {
         Ok(a) => a,
@@ -1183,6 +1202,14 @@ fn run_new_format(
             }
 
             session::ExitCode::Prev => {
+                // prev_reason 수집 (최근 3개 유지)
+                if let Some(reason) = output_data.prev_reason() {
+                    state.prev_reasons.push(reason.to_string());
+                    if state.prev_reasons.len() > 3 {
+                        state.prev_reasons.remove(0);
+                    }
+                }
+
                 let target_role = output_data.prev_target().and_then(|t| Role::from_str(t));
                 match target_role {
                     Some(ref role) if *role != Role::PM => {
@@ -1255,11 +1282,30 @@ fn build_session_input(
         .next()
         .unwrap_or("M1")
         .to_string();
-    let milestone = MilestoneInfo {
-        id: milestone_id,
-        title: String::new(),
-        version: String::new(),
-        goal: String::new(),
+    let milestone = {
+        let milestone_file = path
+            .join(".porpoise")
+            .join("milestones")
+            .join(format!("{}.md", milestone_id));
+
+        let (title, version, goal) = if milestone_file.exists() {
+            match crate::milestone::parser::parse_milestone_file(&milestone_file) {
+                Ok(m) => {
+                    let goal = m.raw_sections.get("목표").cloned().unwrap_or_default();
+                    (m.title, m.version.unwrap_or_default(), goal)
+                }
+                Err(_) => (String::new(), String::new(), String::new()),
+            }
+        } else {
+            (String::new(), String::new(), String::new())
+        };
+
+        MilestoneInfo {
+            id: milestone_id,
+            title,
+            version,
+            goal,
+        }
     };
 
     // 이전 역할 세션 로드
@@ -1313,6 +1359,16 @@ fn build_session_input(
         })
         .unwrap_or_default();
 
+    // role_str("planning"/"development"/"testing"/"review") → workspace key("pm"/"developer"/"tester"/"reviewer")
+    let workspace_role_key = match role_str.as_str() {
+        "planning" => "pm",
+        "development" => "developer",
+        "testing" => "tester",
+        "review" => "reviewer",
+        other => other,
+    };
+    let role_extra = workspace.role_extra_formatted(workspace_role_key);
+
     Ok(SessionInput {
         role: role_str,
         task_id: state.current_task_id.clone(),
@@ -1326,10 +1382,11 @@ fn build_session_input(
         milestone,
         previous_reports,
         hints,
-        prev_reasons: vec![],
+        prev_reasons: state.prev_reasons.clone(),
         workspace_snapshot: None,
         execution_results: vec![],
         tech_context: workspace.tech_context(),
+        role_extra,
     })
 }
 

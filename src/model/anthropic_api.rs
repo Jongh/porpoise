@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::sync::Mutex;
 
 use crate::model::adapter::{ModelAdapter, ModelConfig};
+use crate::model::context::{build_context_text, parse_role_output_from_value};
 use crate::session::input::SessionInput;
 use crate::session::output::RoleOutputData;
 
@@ -11,6 +12,31 @@ const DEVELOPMENT_SCHEMA: &str = include_str!("schemas/development_schema.json")
 const TESTING_SCHEMA: &str = include_str!("schemas/testing_schema.json");
 const REVIEW_SCHEMA: &str = include_str!("schemas/review_schema.json");
 const MILESTONE_SCHEMA: &str = include_str!("schemas/milestone_schema.json");
+
+// 역할 프롬프트 템플릿 임베딩
+const PLANNING_PROMPT: &str = include_str!("../init/prompts/01-planning.tmpl");
+const DEVELOPMENT_PROMPT: &str = include_str!("../init/prompts/02-development.tmpl");
+const TESTING_PROMPT: &str = include_str!("../init/prompts/03-testing.tmpl");
+const REVIEW_PROMPT: &str = include_str!("../init/prompts/04-review.tmpl");
+const MILESTONE_PROMPT: &str = include_str!("../init/prompts/05-milestone.tmpl");
+
+fn get_role_system_prompt(role: &str) -> &'static str {
+    match role {
+        "planning" => PLANNING_PROMPT,
+        "development" => DEVELOPMENT_PROMPT,
+        "testing" => TESTING_PROMPT,
+        "review" => REVIEW_PROMPT,
+        "milestone" => MILESTONE_PROMPT,
+        _ => "",
+    }
+}
+
+fn resolve_role_system_prompt(role: &str, role_extra: &str) -> String {
+    get_role_system_prompt(role)
+        .replace("{{role_extra}}", role_extra)
+        .trim()
+        .to_string()
+}
 
 pub struct AnthropicApiAdapter {
     raw_text: Mutex<Option<String>>,
@@ -46,9 +72,10 @@ impl ModelAdapter for AnthropicApiAdapter {
         let tool_schema_str = Self::get_tool_schema(&input.role);
         let tool_schema: serde_json::Value = serde_json::from_str(tool_schema_str)?;
 
+        let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
         let context_text = build_context_text(input);
 
-        let request_body = serde_json::json!({
+        let mut request_body = serde_json::json!({
             "model": config.model_id,
             "max_tokens": 4096,
             "messages": [{"role": "user", "content": context_text}],
@@ -59,6 +86,10 @@ impl ModelAdapter for AnthropicApiAdapter {
             }],
             "tool_choice": {"type": "tool", "name": "submit_report"}
         });
+
+        if !system_prompt.is_empty() {
+            request_body["system"] = serde_json::Value::String(system_prompt);
+        }
 
         let response = ureq::post("https://api.anthropic.com/v1/messages")
             .set("x-api-key", &api_key)
@@ -98,77 +129,6 @@ impl ModelAdapter for AnthropicApiAdapter {
     }
 }
 
-fn build_context_text(input: &SessionInput) -> String {
-    let mut parts = Vec::new();
-
-    if !input.project_summary.is_empty() {
-        parts.push(format!("## 프로젝트 정보\n\n{}", input.project_summary));
-    }
-
-    if let Some(tech) = &input.tech_context {
-        parts.push(format!("## 기술 스택\n\n{}", tech));
-    }
-
-    if !input.dod.is_empty() {
-        parts.push(format!("## 완료 기준 (DoD)\n\n{}", input.dod.join("\n")));
-    }
-
-    if !input.conventions.is_empty() {
-        parts.push(format!("## 코딩 컨벤션\n\n{}", input.conventions.join("\n")));
-    }
-
-    parts.push(format!("## 현재 작업\n\n{} — {}", input.task_id, input.task_title));
-    parts.push(format!("역할: {}", input.role));
-
-    if let Some(snap) = &input.workspace_snapshot {
-        let snap_text = crate::workspace::snapshot::snapshot_to_context_text(snap);
-        if !snap_text.is_empty() {
-            parts.push(format!("## 소스 코드 스냅샷\n\n{}", snap_text));
-        }
-    }
-
-    if let Some(prev) = &input.previous_reports.planning {
-        parts.push(format!("## 기획 보고서 요약\n\n{}", prev.summary));
-    }
-    if let Some(prev) = &input.previous_reports.development {
-        parts.push(format!("## 개발 보고서 요약\n\n{}", prev.summary));
-    }
-
-    if !input.execution_results.is_empty() {
-        let er_text: Vec<String> = input.execution_results.iter().map(|r| {
-            format!("### {} (exit={})\nstdout: {}\nstderr: {}",
-                r.purpose, r.exit_code, r.stdout.trim(), r.stderr.trim())
-        }).collect();
-        parts.push(format!("## 실행 결과\n\n{}", er_text.join("\n\n")));
-    }
-
-    if !input.hints.is_empty() {
-        parts.push(format!("## 추가 지시사항\n\n{}", input.hints.join("\n")));
-    }
-
-    if !input.prev_reasons.is_empty() {
-        parts.push(format!("## PREV 사유\n\n{}", input.prev_reasons.join("\n")));
-    }
-
-    parts.join("\n\n")
-}
-
-fn parse_role_output_from_value(v: &serde_json::Value, role: &str) -> Result<RoleOutputData> {
-    use crate::session::planning::PlanningOutput;
-    use crate::session::development::DevelopmentOutput;
-    use crate::session::testing::TestingOutput;
-    use crate::session::review::ReviewOutput;
-    use crate::session::milestone::MilestoneOutput;
-
-    match role {
-        "planning" => Ok(RoleOutputData::Planning(serde_json::from_value::<PlanningOutput>(v.clone())?)),
-        "development" => Ok(RoleOutputData::Development(serde_json::from_value::<DevelopmentOutput>(v.clone())?)),
-        "testing" => Ok(RoleOutputData::Testing(serde_json::from_value::<TestingOutput>(v.clone())?)),
-        "review" => Ok(RoleOutputData::Review(serde_json::from_value::<ReviewOutput>(v.clone())?)),
-        "milestone" => Ok(RoleOutputData::Milestone(serde_json::from_value::<MilestoneOutput>(v.clone())?)),
-        _ => anyhow::bail!("Unknown role: {}", role),
-    }
-}
 
 #[cfg(test)]
 mod tests {

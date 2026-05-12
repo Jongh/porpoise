@@ -58,6 +58,29 @@
 
 ---
 
+## JSON 출력 형식 (필수)
+
+마크다운 보고서 작성 후, 응답 마지막 부분에 아래 JSON 블록을 포함하세요.
+
+```json
+{
+  "role": "development",
+  "task_id": "M1-T01",
+  "cycle": 1,
+  "status": "NEXT",
+  "summary": "구현 완료 요약",
+  "questions": [],
+  "prev_reason": null,
+  "changes": [
+    {"file": "src/example.rs", "change_type": "modified", "description": "변경 내용"}
+  ],
+  "test_instructions": "테스터에게: 테스트 방법 및 확인 항목",
+  "known_issues": []
+}
+```
+
+---
+
 ## 응답 종료 코드
 
 응답의 **마지막 줄**에 아래 코드 중 하나를 **단독으로** 출력한다. 다른 텍스트가 뒤따르면 안 된다.

@@ -5,7 +5,6 @@ use std::path::Path;
 
 use super::context::ProjectContext;
 use super::lang_template::LangTemplate;
-use super::model_template::ModelTemplate;
 use super::template::apply_template;
 use crate::config::workspace::WorkspaceConfig;
 use crate::utils::fs::write_file;
@@ -20,12 +19,41 @@ const REVIEWER_TEMPLATE: &str = include_str!("prompts/04-review.tmpl");
 // {{next_milestone_id}} in this template is a runtime variable — not substituted at init time.
 const MILESTONE_TEMPLATE: &str = include_str!("prompts/05-milestone.tmpl");
 
+const MODEL_EXAMPLE_COMMENT: &str = r#"
+# === 모델 설정 (아래 주석 해제하여 사용) ===
+# [model]
+# adapter = "claude_code"          # claude_code | anthropic_api | openai_compatible
+# model_id = "claude-sonnet-4-6"  # 어댑터별 모델 ID
+#
+# --- Anthropic API 설정 예시 ---
+# adapter = "anthropic_api"
+# model_id = "claude-sonnet-4-6"
+# api_key_env = "ANTHROPIC_API_KEY"
+# snapshot_token_budget = 80000
+#
+# --- OpenAI Codex 설정 예시 ---
+# adapter = "openai_compatible"
+# model_id = "codex-mini-latest"
+# api_base_url = "https://api.openai.com/v1"
+# api_key_env = "OPENAI_API_KEY"
+# structured_output_mode = "function_calling"
+# snapshot_token_budget = 80000
+#
+# --- Ollama (gemma4:e4b) 설정 예시 ---
+# adapter = "openai_compatible"
+# model_id = "gemma4:e4b"
+# api_base_url = "http://localhost:11434/v1"
+# api_key_env = ""
+# structured_output_mode = "json_mode"
+# snapshot_token_budget = 12000
+"#;
+
 pub fn generate_docs(
     ctx: &ProjectContext,
     path: &Path,
     workspace: &WorkspaceConfig,
     lang_template: Option<&'static LangTemplate>,
-    model_template: Option<&'static ModelTemplate>,
+    model_template: Option<&crate::init::model_template::ResolvedModel>,
 ) -> Result<()> {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -131,7 +159,7 @@ pub fn generate_docs(
 
 fn workspace_toml_from_template(
     t: &LangTemplate,
-    model_template: Option<&ModelTemplate>,
+    model_template: Option<&crate::init::model_template::ResolvedModel>,
 ) -> String {
     let dod_items: String = t
         .dod_items
@@ -171,7 +199,7 @@ pm_extra = ""
 developer_extra = ""
 tester_extra = ""
 reviewer_extra = ""
-{model_section}
+
 [tech]
 stack = "{stack}"
 build_command = "{build}"
@@ -181,7 +209,7 @@ lint_command = "{lint}"
 [security]
 allowed_command_prefixes = [{prefixes}]
 verify_timeout_secs = 60
-"#,
+{model_section}"#,
         t.display_name,
         dod_items = dod_items,
         conventions = conventions,
@@ -194,20 +222,24 @@ verify_timeout_secs = 60
     )
 }
 
-fn workspace_toml_default(model_template: Option<&ModelTemplate>) -> String {
+fn workspace_toml_default(model_template: Option<&crate::init::model_template::ResolvedModel>) -> String {
     let mut content = WorkspaceConfig::default_toml().to_string();
     let model_section = model_toml_section(model_template);
     if !model_section.is_empty() {
         content.push_str("\n");
         content.push_str(&model_section);
+    } else {
+        // 모델 미선택 시 주석 예시 추가
+        content.push_str(MODEL_EXAMPLE_COMMENT);
     }
     content
 }
 
-fn model_toml_section(model_template: Option<&ModelTemplate>) -> String {
-    let Some(t) = model_template else {
+fn model_toml_section(resolved: Option<&crate::init::model_template::ResolvedModel>) -> String {
+    let Some(r) = resolved else {
         return String::new();
     };
+    let t = r.template;
 
     let mut lines = vec![
         format!("# === 모델 설정 — {} ===", t.display_name),
@@ -215,29 +247,38 @@ fn model_toml_section(model_template: Option<&ModelTemplate>) -> String {
         format!("adapter = \"{}\"", escape_toml_string(t.adapter)),
     ];
 
-    if let Some(model_id) = t.model_id {
+    // model_id: override 우선, 없으면 template 값
+    let model_id_val = r.model_id.as_deref().or(t.model_id);
+    if let Some(model_id) = model_id_val {
         lines.push(format!("model_id = \"{}\"", escape_toml_string(model_id)));
     }
-    if let Some(api_base_url) = t.api_base_url {
+
+    // api_base_url: override 우선
+    let api_base_url_val = r.api_base_url.as_deref().or(t.api_base_url);
+    if let Some(api_base_url) = api_base_url_val {
         lines.push(format!(
             "api_base_url = \"{}\"",
             escape_toml_string(api_base_url)
         ));
     }
-    if let Some(api_key_env) = t.api_key_env {
+
+    // api_key_env: override 우선
+    let api_key_env_val = r.api_key_env.as_deref().or(t.api_key_env);
+    if let Some(api_key_env) = api_key_env_val {
         lines.push(format!(
             "api_key_env = \"{}\"",
             escape_toml_string(api_key_env)
         ));
     }
-    if let Some(structured_output_mode) = t.structured_output_mode {
+
+    if let Some(som) = t.structured_output_mode {
         lines.push(format!(
             "structured_output_mode = \"{}\"",
-            escape_toml_string(structured_output_mode)
+            escape_toml_string(som)
         ));
     }
-    if let Some(snapshot_token_budget) = t.snapshot_token_budget {
-        lines.push(format!("snapshot_token_budget = {}", snapshot_token_budget));
+    if let Some(budget) = t.snapshot_token_budget {
+        lines.push(format!("snapshot_token_budget = {}", budget));
     }
 
     format!("\n{}\n", lines.join("\n"))
@@ -530,17 +571,24 @@ mod tests {
 
     #[test]
     fn claude_code_template_writes_empty_model_id_policy() {
+        use crate::init::model_template::{ResolvedModel, CLAUDE_CODE_DEFAULT};
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path();
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &CLAUDE_CODE_DEFAULT,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
 
         generate_docs(
             &ctx,
             path,
             &workspace,
             None,
-            Some(&crate::init::model_template::CLAUDE_CODE_DEFAULT),
+            Some(&resolved),
         )
         .unwrap();
 
@@ -563,17 +611,24 @@ mod tests {
 
     #[test]
     fn model_template_populates_workspace_model_section() {
+        use crate::init::model_template::{ResolvedModel, OPENAI_CODEX};
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path();
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &OPENAI_CODEX,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
 
         generate_docs(
             &ctx,
             path,
             &workspace,
             None,
-            Some(&crate::init::model_template::OPENAI_CODEX),
+            Some(&resolved),
         )
         .unwrap();
 
@@ -596,17 +651,24 @@ mod tests {
 
     #[test]
     fn lang_and_model_templates_can_be_combined() {
+        use crate::init::model_template::{ResolvedModel, OLLAMA_LOCAL};
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path();
         let ctx = make_ctx();
         let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &OLLAMA_LOCAL,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
 
         generate_docs(
             &ctx,
             path,
             &workspace,
             Some(&crate::init::lang_template::RUST),
-            Some(&crate::init::model_template::OLLAMA_LOCAL),
+            Some(&resolved),
         )
         .unwrap();
 

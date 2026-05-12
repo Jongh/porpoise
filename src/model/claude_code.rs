@@ -116,6 +116,34 @@ pub fn build_context_from_input(input: &SessionInput) -> String {
         parts.push(format!("=== project.md ===\n{}", input.project_summary));
     }
 
+    // 마일스톤 정보
+    {
+        let m = &input.milestone;
+        if !m.id.is_empty() || !m.title.is_empty() || !m.goal.is_empty() {
+            let mut lines = vec!["=== 마일스톤 ===".to_string()];
+            if !m.id.is_empty() {
+                let ver = if m.version.is_empty() {
+                    String::new()
+                } else {
+                    format!("  버전: {}", m.version)
+                };
+                lines.push(format!("ID: {}{}", m.id, ver));
+            }
+            if !m.title.is_empty() {
+                lines.push(format!("제목: {}", m.title));
+            }
+            if !m.goal.is_empty() {
+                lines.push(format!("목표:\n{}", m.goal));
+            }
+            parts.push(lines.join("\n"));
+        }
+    }
+
+    // 기술 스택 (프로젝트 요약 직후)
+    if let Some(ref tech) = input.tech_context {
+        parts.push(format!("=== 기술 스택 ===\n{}", tech));
+    }
+
     // 이전 역할 보고서들 (마크다운 렌더링)
     if let Some(ref planning) = input.previous_reports.planning {
         let md = renderer::render_planning(planning, input);
@@ -134,6 +162,15 @@ pub fn build_context_from_input(input: &SessionInput) -> String {
         parts.push(format!("=== 이전 review 보고서 ===\n{}", md));
     }
 
+    // execution_results (이전 보고서 이후)
+    if !input.execution_results.is_empty() {
+        let er_text: Vec<String> = input.execution_results.iter().map(|r| {
+            format!("### {} (exit={})\nstdout: {}\nstderr: {}",
+                r.purpose, r.exit_code, r.stdout.trim(), r.stderr.trim())
+        }).collect();
+        parts.push(format!("=== 실행 결과 ===\n{}", er_text.join("\n\n")));
+    }
+
     // 힌트
     for (i, hint) in input.hints.iter().enumerate() {
         parts.push(format!("=== 추가 지시사항 {} ===\n{}", i + 1, hint));
@@ -147,67 +184,7 @@ pub fn build_context_from_input(input: &SessionInput) -> String {
     parts.join("\n\n")
 }
 
-pub fn try_parse_json_output(raw: &str, role: &str) -> Option<RoleOutputData> {
-    // 1) 전체가 JSON인지 시도
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-        if let Ok(output) = parse_role_output_from_value(&v, role) {
-            return Some(output);
-        }
-    }
-
-    // 2) ```json ... ``` 블록 탐지
-    if let Some(start) = raw.find("```json") {
-        let after = &raw[start + 7..];
-        if let Some(end) = after.find("```") {
-            let json_str = after[..end].trim();
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                if let Ok(output) = parse_role_output_from_value(&v, role) {
-                    return Some(output);
-                }
-            }
-        }
-    }
-
-    // 3) 첫 번째 '{' 부터 마지막 '}' 까지 추출
-    if let (Some(start), Some(end)) = (raw.find('{'), raw.rfind('}')) {
-        if start < end {
-            let json_str = &raw[start..=end];
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                if let Ok(output) = parse_role_output_from_value(&v, role) {
-                    return Some(output);
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn parse_role_output_from_value(v: &serde_json::Value, role: &str) -> Result<RoleOutputData> {
-    match role {
-        "planning" => {
-            let o: PlanningOutput = serde_json::from_value(v.clone())?;
-            Ok(RoleOutputData::Planning(o))
-        }
-        "development" => {
-            let o: DevelopmentOutput = serde_json::from_value(v.clone())?;
-            Ok(RoleOutputData::Development(o))
-        }
-        "testing" => {
-            let o: TestingOutput = serde_json::from_value(v.clone())?;
-            Ok(RoleOutputData::Testing(o))
-        }
-        "review" => {
-            let o: ReviewOutput = serde_json::from_value(v.clone())?;
-            Ok(RoleOutputData::Review(o))
-        }
-        "milestone" => {
-            let o: MilestoneOutput = serde_json::from_value(v.clone())?;
-            Ok(RoleOutputData::Milestone(o))
-        }
-        _ => anyhow::bail!("Unknown role: {}", role),
-    }
-}
+pub use crate::model::context::try_parse_json_output;
 
 pub fn fallback_from_markdown(raw: &str, role: &str, task_id: &str, cycle: u32) -> RoleOutputData {
     let exit_code = match parse_exit_code(raw) {

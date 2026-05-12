@@ -16,6 +16,8 @@ pub struct Checkpoint {
     pub pending_tasks: Vec<String>,
     pub current_task_id: String,
     pub retry_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prev_reasons: Vec<String>,
 }
 
 impl Checkpoint {
@@ -27,6 +29,7 @@ impl Checkpoint {
         pending_tasks: Vec<String>,
         current_task_id: &str,
         retry_count: u32,
+        prev_reasons: Vec<String>,
     ) -> Self {
         Checkpoint {
             timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -37,6 +40,7 @@ impl Checkpoint {
             pending_tasks,
             current_task_id: current_task_id.to_string(),
             retry_count,
+            prev_reasons,
         }
     }
 }
@@ -78,9 +82,11 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
     let mut pending_tasks: Vec<String> = Vec::new();
     let mut current_task_id = String::new();
     let mut retry_count = 0u32;
+    let mut prev_reasons: Vec<String> = Vec::new();
 
     let mut in_completed = false;
     let mut in_pending = false;
+    let mut in_prev_reasons = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -88,16 +94,25 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
         if trimmed.starts_with("## Completed Roles") {
             in_completed = true;
             in_pending = false;
+            in_prev_reasons = false;
             continue;
         }
         if trimmed.starts_with("## Pending Tasks") {
             in_pending = true;
             in_completed = false;
+            in_prev_reasons = false;
+            continue;
+        }
+        if trimmed.starts_with("## Prev Reasons") {
+            in_prev_reasons = true;
+            in_completed = false;
+            in_pending = false;
             continue;
         }
         if trimmed.starts_with("## ") {
             in_completed = false;
             in_pending = false;
+            in_prev_reasons = false;
         }
 
         if in_completed && trimmed.starts_with("- ") {
@@ -112,6 +127,14 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
             let task = trimmed.trim_start_matches("- ").trim().to_string();
             if task != "(none)" {
                 pending_tasks.push(task);
+            }
+            continue;
+        }
+
+        if in_prev_reasons && trimmed.starts_with("- ") {
+            let reason = trimmed.trim_start_matches("- ").trim().to_string();
+            if reason != "(none)" {
+                prev_reasons.push(reason);
             }
             continue;
         }
@@ -140,6 +163,7 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
         pending_tasks,
         current_task_id,
         retry_count,
+        prev_reasons,
     })
 }
 
@@ -180,6 +204,23 @@ mod tests {
         assert_eq!(cp.timestamp, "2026-04-21 10:00:00");
         assert_eq!(cp.current_task_id, "M1-T01");
         assert_eq!(cp.retry_count, 2);
+        assert!(cp.prev_reasons.is_empty());
+    }
+
+    #[test]
+    fn parse_checkpoint_with_prev_reasons() {
+        let content = "# Porpoise Checkpoint\n\n## Metadata\n- cycle: 2\n- current_role: planning\n- next_role: development\n- current_task_id: M1-T01\n- retry_count: 0\n\n## Completed Roles\n- (none)\n\n## Pending Tasks\n- (none)\n\n## Prev Reasons\n- 명세 불명확\n- 테스트 누락\n";
+        let cp = parse_checkpoint(content).unwrap();
+        assert_eq!(cp.prev_reasons, vec!["명세 불명확", "테스트 누락"]);
+    }
+
+    #[test]
+    fn checkpoint_new_roundtrip_with_prev_reasons() {
+        let cp = Checkpoint::new(
+            1, "planning", vec![], "development", vec![],
+            "M1-T01", 0, vec!["사유1".to_string()],
+        );
+        assert_eq!(cp.prev_reasons, vec!["사유1"]);
     }
 
     #[test]

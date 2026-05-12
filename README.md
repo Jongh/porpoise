@@ -136,47 +136,33 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
-### [v0.5.0]
-- **BUG-A 수정**: `parse_tasks_from_project_md`가 마크다운 코드 블록(` ``` `) 내부 라인을 건너뛰도록 개선 — `project.md` 예시 항목이 실제 task로 오파싱되어 마일스톤 세션이 스킵되던 문제 해결
-- **BUG-B 수정**: `project.tmpl` 예시 task ID를 `M{n}-T{nn}` 형식으로 변경 — 파서가 인식하지 못하도록 방어 (BUG-A와 중복 방어)
-- **초기화 자동 연속**: `porpoise --new` 완료 후 별도 재실행 없이 마일스톤 생성 세션 자동 진입
-- **PREV 자동 연속**: `execute_role()` 완료 후 RESP break 대신 루프 재진입 — PREV로 인한 재실행 사이클이 단일 세션에서 자동으로 완주 (Claude가 `reports/`에 보고서를 저장하지 않은 경우에는 기존 RESP break 동작 유지)
-- **테스트 추가**: 코드 블록 파싱 스킵 2개 (총 99개)
+### [v0.8.0]
+- **`model/context.rs` 공유 모듈 신설**: `build_context_text`, `parse_role_output_from_value`, `try_parse_json_output` 를 `anthropic_api` / `openai_compatible` 어댑터가 공유 — 어댑터 간 동작 불일치 해소
+- **마일스톤 정보 컨텍스트 주입**: 모든 어댑터에서 `SessionInput.milestone` (ID·제목·버전·목표)이 실제로 컨텍스트에 포함됨 (이전: 필드만 존재, 미사용)
+- **`role_extra` API 어댑터 지원**: `workspace.toml [roles].*_extra` 설정이 `anthropic_api`·`openai_compatible` 시스템 프롬프트에 전달됨 (이전: `claude_code` 어댑터만 지원)
+- **`prev_reasons` 체크포인트 영속화**: PREV 피드백 이유가 `checkpoint.json`에 저장·복원됨 (이전: 재시작 시 초기화)
+- **모델 템플릿 초기화 선택**: `porpoise init` 시 어댑터 템플릿 목록 제시 및 선택 (Claude Code / Anthropic API / OpenAI Compatible)
+- **OPENAI_CODEX `api_base_url` 입력**: `porpoise init` 시 OpenAI 호환 API Base URL 직접 입력 가능
+- **JSON 세션 디렉터리 자동 생성**: 신규 초기화 프로젝트에 `.porpoise/sessions/` 자동 생성 → 즉시 JSON 모드 진입
+- **IMP-02 경고**: JSON 출력 섹션 누락 프롬프트 파일 감지 시 `porpoise --new` 재실행 안내 출력
+- **IMP-03 경고 (`--verbose`)**: `prompt_overrides` 경로 파일 존재 여부 검증
+- **컨텍스트 순서 정규화**: 모든 어댑터에서 프로젝트 요약 → 마일스톤 → 기술 스택 → 이전 보고서 순서 일관화
+- **테스트 추가**: 7개 신규 테스트 (총 167개)
 
-### [v0.4.4]
-- **마일스톤 생성 세션 명시적 프롬프트**: `05-milestone.tmpl` 신규 생성 — 파일 경로·형식·파서 요건 명시, `{{next_milestone_id}}` 런타임 변수로 구체적 ID 주입
-- **`generator.rs`**: `--new` 시 `05-milestone.md` 자동 생성
-- **`milestone_session.rs`**: 프롬프트 `00-orche.md` → `05-milestone.md` 교체, `next_id` 세션 전 계산 후 템플릿 치환, `project.md` 컨텍스트 파일 추가
-- **`runner.rs`**: `run_with_prompt_str` 메서드 추가 — 런타임 생성 프롬프트 지원, `build_prompt_from_content` / `execute_claude` 내부 분리
-- **`00-orche.tmpl`**: 마일스톤 파일 형식 참조 섹션 추가
+### [v0.7.1]
+- executor 타임아웃 종료 후 좀비 프로세스 회수 (Unix: `wait4`, Windows: `WaitForSingleObject`)
 
-### [v0.4.3]
-- **프롬프트 마일스톤 내용 보강**: 모든 역할 템플릿에 마일스톤 생성·작업 진행·규칙 관련 내용 추가
-- `00-orche.tmpl`: 마일스톤 & 작업 ID 체계, `completed_tasks`, 마일스톤 완료 3단계 흐름 추가
-- `project.tmpl`: `{{language}}` 변수, 마일스톤 & 작업 체계 섹션(ID 형식·진행 규칙·완료 흐름) 추가
-- 역할 프롬프트 4종: 보고서 헤더에 `{task-id} / 사이클 {cycle}` 형식, `## 대상 작업` 섹션 추가
+### [v0.7.0]
+- **파일 미디에이션**: API 어댑터용 파일 읽기·쓰기·이동·삭제 추상화 레이어 (`workspace/apply.rs`, `workspace/executor.rs`)
+- **멀티 모델 지원**: `workspace.toml [models]` 섹션으로 역할별 모델 독립 설정 가능
+- **언어·프레임워크 템플릿**: `porpoise init` 시 언어/프레임워크별 보일러플레이트 템플릿 자동 적용
+- **WorkspaceSnapshot**: API 어댑터용 프로젝트 파일 스냅샷 지원 (`v0_7` 세션 스키마)
 
-### [v0.4.2]
-- **프롬프트 파일 확장자 변경**: `src/init/prompts/*.md` → `*.tmpl` — `.gitignore` 규칙 `claude.md`에 의해 `src/init/prompts/claude.md`가 커밋에서 제외되던 문제 해결
-- `claude.md`(미추적 파일)를 `claude.tmpl`로 신규 추가
-
-### [v0.4.1]
-- **다중 작업 동시 완료**: Reviewer가 `PORPOISE_META` 블록의 `completed_tasks` 필드로 여러 task ID를 쉼표 구분 지정 시 일괄 완료 처리 및 일괄 커밋
-- **자동 커밋 메시지 Markdown 형식**: 제목 `[task-id] 작업 완료`, 본문 `- task-id: 제목` 항목 목록
-- **R-01 안전망**: `completed_tasks`에 현재 task_id가 없으면 자동 추가 + 경고 출력
-- **R-05 경고**: `completed_tasks`의 task ID가 project.md에 없으면 콘솔 경고
-- **IMP-01**: 오케스트레이터 시작 시 `workspace.toml`이 프롬프트 파일보다 최신이면 재생성 안내 경고
-- **IMP-02**: `workspace.toml`의 `[general].language` 값을 `project.md` 응답 언어로 반영 (기본값: `ko`)
-- **IMP-03**: `--verbose` 모드에서 `prompt_overrides` 경로 파일 존재 여부 검증
-- **BUG-01**: `apply_template()`에서 빈 변수 치환 후 3연속 개행 → 2개로 정규화
-
-### [v0.4.0]
-- **프롬프트 리소스화**: `generator.rs` 하드코딩 문자열을 `src/init/prompts/*.md` 7개 파일로 분리 — `include_str!()` 컴파일 타임 임베딩으로 단일 바이너리 유지
-- **템플릿 변수 치환 시스템**: `src/init/template.rs` 추가 — `{{variable}}` 표기법, `str::replace()` 기반, 미치환 변수 경고 출력
-- **`.porpoise/workspace.toml` 신설**: 프로젝트별 DoD, 컨벤션, 역할 추가 지시사항, 프롬프트 완전 교체(override) 지원
-- **WorkspaceConfig 구조체**: `[general]`, `[dod]`, `[conventions]`, `[roles]`, `[prompt_overrides]` 5개 섹션, TOML 로드 지원
-- **`[prompt_overrides]` 하이브리드**: 역할별 커스텀 `.md` 파일 경로 지정 시 기본 템플릿 대신 사용, 파일 없으면 기본값 폴백 + 경고
-- **`[roles].*_extra`**: pm/developer/tester/reviewer 각 역할 프롬프트에 추가 지시사항 섹션 자동 삽입
+### [v0.6.0]
+- **JSON 세션 기반 통신 아키텍처**: 역할 간 데이터를 구조화 JSON 세션 파일(`.porpoise/sessions/`)로 교환
+- **멀티 어댑터 지원**: `claude_code`, `anthropic_api`, `openai_compatible` 어댑터 선택 가능
+- **`SessionInput` / `RoleOutputData`**: 역할 입출력 타입 정의 및 스키마 기반 tool-use 구조화 응답
+- **레거시 호환**: `.porpoise/sessions/` 없는 기존 프로젝트는 `reports/`+`messages/` 기반 레거시 모드 유지
 
 ---
 

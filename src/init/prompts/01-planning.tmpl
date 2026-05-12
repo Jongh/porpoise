@@ -58,6 +58,37 @@
 
 ---
 
+## JSON 출력 형식 (필수)
+
+마크다운 보고서 작성 후, 응답 마지막 부분에 아래 JSON 블록을 포함하세요.
+Porpoise가 이 JSON을 파싱하여 다음 역할(Developer)에 구조화된 정보를 전달합니다.
+
+```json
+{
+  "role": "planning",
+  "task_id": "M1-T01",
+  "cycle": 1,
+  "status": "NEXT",
+  "summary": "이번 사이클 작업 요약 (한 문단)",
+  "questions": [],
+  "prev_reason": null,
+  "implementation_plan": [
+    {
+      "step": 1,
+      "description": "구현 단계 설명",
+      "target_files": ["src/example.rs"],
+      "acceptance_criteria": ["검증 조건 1"]
+    }
+  ],
+  "dod_checklist": [
+    {"item": "완료 기준 항목", "verification_method": "cargo test"}
+  ],
+  "risks": ["리스크 항목"]
+}
+```
+
+---
+
 ## 응답 종료 코드
 
 응답의 **마지막 줄**에 아래 코드 중 하나를 **단독으로** 출력한다. 다른 텍스트가 뒤따르면 안 된다.

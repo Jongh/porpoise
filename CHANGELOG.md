@@ -4,6 +4,46 @@
 
 ---
 
+### [v0.5.0]
+- **BUG-A 수정**: `parse_tasks_from_project_md`가 마크다운 코드 블록(` ``` `) 내부 라인을 건너뛰도록 개선 — `project.md` 예시 항목이 실제 task로 오파싱되어 마일스톤 세션이 스킵되던 문제 해결
+- **BUG-B 수정**: `project.tmpl` 예시 task ID를 `M{n}-T{nn}` 형식으로 변경 — 파서가 인식하지 못하도록 방어
+- **초기화 자동 연속**: `porpoise --new` 완료 후 별도 재실행 없이 마일스톤 생성 세션 자동 진입
+- **PREV 자동 연속**: `execute_role()` 완료 후 RESP break 대신 루프 재진입 — PREV로 인한 재실행 사이클이 단일 세션에서 자동으로 완주
+- **테스트 추가**: 코드 블록 파싱 스킵 2개 (총 99개)
+
+### [v0.4.4]
+- **마일스톤 생성 세션 명시적 프롬프트**: `05-milestone.tmpl` 신규 생성 — 파일 경로·형식·파서 요건 명시, `{{next_milestone_id}}` 런타임 변수로 구체적 ID 주입
+- **`generator.rs`**: `--new` 시 `05-milestone.md` 자동 생성
+- **`milestone_session.rs`**: 프롬프트 `00-orche.md` → `05-milestone.md` 교체, `next_id` 세션 전 계산 후 템플릿 치환, `project.md` 컨텍스트 파일 추가
+- **`runner.rs`**: `run_with_prompt_str` 메서드 추가 — 런타임 생성 프롬프트 지원
+- **`00-orche.tmpl`**: 마일스톤 파일 형식 참조 섹션 추가
+
+### [v0.4.3]
+- **프롬프트 마일스톤 내용 보강**: 모든 역할 템플릿에 마일스톤 생성·작업 진행·규칙 관련 내용 추가
+- `00-orche.tmpl`: 마일스톤 & 작업 ID 체계, `completed_tasks`, 마일스톤 완료 3단계 흐름 추가
+- `project.tmpl`: `{{language}}` 변수, 마일스톤 & 작업 체계 섹션 추가
+- 역할 프롬프트 4종: 보고서 헤더에 `{task-id} / 사이클 {cycle}` 형식, `## 대상 작업` 섹션 추가
+
+### [v0.4.2]
+- **프롬프트 파일 확장자 변경**: `src/init/prompts/*.md` → `*.tmpl` — `.gitignore`로 `src/init/prompts/claude.md`가 누락되던 문제 해결
+- `claude.md`(미추적 파일)를 `claude.tmpl`로 신규 추가
+
+### [v0.4.1]
+- **다중 작업 동시 완료**: Reviewer가 `completed_tasks` 필드로 여러 task ID 일괄 완료 처리 및 커밋
+- **자동 커밋 메시지 Markdown 형식**: 제목 `[task-id] 작업 완료`, 본문 항목 목록
+- **R-01 안전망**: `completed_tasks`에 현재 task_id 자동 추가 + 경고
+- **IMP-01**: `workspace.toml`이 프롬프트 파일보다 최신이면 재생성 안내 경고
+- **IMP-02**: `[general].language` 값을 응답 언어로 반영 (기본값: `ko`)
+- **IMP-03**: `--verbose` 모드에서 `prompt_overrides` 경로 파일 존재 여부 검증
+- **BUG-01**: 빈 변수 치환 후 3연속 개행 → 2개로 정규화
+
+### [v0.4.0]
+- **프롬프트 리소스화**: `generator.rs` 하드코딩 문자열을 `src/init/prompts/*.md` 7개 파일로 분리 — `include_str!()` 컴파일 타임 임베딩
+- **템플릿 변수 치환 시스템**: `src/init/template.rs` — `{{variable}}` 표기법
+- **`.porpoise/workspace.toml` 신설**: 프로젝트별 DoD, 컨벤션, 역할 추가 지시사항, 프롬프트 override 지원
+- **WorkspaceConfig 구조체**: `[general]`, `[dod]`, `[conventions]`, `[roles]`, `[prompt_overrides]` 5개 섹션
+- **`[roles].*_extra`**: 역할별 추가 지시사항 섹션 자동 삽입
+
 ### [v0.3.1]
 - **폴더 소유권 분리**: `reports/`(Claude 보고서 저장), `messages/`(Porpoise 출력 캡처), `hints/`(사용자 추가 지시) 역할 확정 및 문서화
 - **`porpoise approve [NEXT|PREV]`** 서브커맨드 추가: Claude가 보고서를 저장하지 않은 경우 수동 판정 파일 생성

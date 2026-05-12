@@ -323,27 +323,6 @@ reviewer_extra = ""
 # tester = ".porpoise/custom-prompts/03-testing.md"
 # reviewer = ".porpoise/custom-prompts/04-review.md"
 
-# === 모델 설정 ===
-# [model]
-# adapter = "claude_code"          # claude_code | anthropic_api | openai_compatible
-# model_id = "claude-sonnet-4-6"  # 어댑터별 모델 ID
-#
-# --- OpenAI Codex 설정 예시 ---
-# adapter = "openai_compatible"
-# model_id = "codex-mini-latest"
-# api_base_url = "https://api.openai.com/v1"
-# api_key_env = "OPENAI_API_KEY"
-# structured_output_mode = "function_calling"   # auto | function_calling | json_mode | text_extraction
-# snapshot_token_budget = 80000
-#
-# --- Ollama (gemma4:e4b) 설정 예시 ---
-# adapter = "openai_compatible"
-# model_id = "gemma4:e4b"
-# api_base_url = "http://localhost:11434/v1"
-# api_key_env = ""                 # 빈 문자열 = 무인증
-# structured_output_mode = "json_mode"
-# snapshot_token_budget = 12000
-
 # === 기술 스택 설정 (언어 템플릿 초기화 시 자동 입력) ===
 # [tech]
 # stack = "Rust (Cargo, Clippy)"

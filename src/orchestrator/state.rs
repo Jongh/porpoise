@@ -173,6 +173,8 @@ pub struct OrchestratorState {
     pub current_task_title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_execution_results: Vec<crate::session::v0_7::ExecutionResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prev_reasons: Vec<String>,
 }
 
 impl OrchestratorState {
@@ -185,6 +187,7 @@ impl OrchestratorState {
             current_task_id: "M0-T00".to_string(),
             current_task_title: "미지정".to_string(),
             pending_execution_results: vec![],
+            prev_reasons: vec![],
         }
     }
 }
@@ -220,6 +223,7 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
                 current_task_id: task_id,
                 current_task_title: task_title,
                 pending_execution_results: vec![],
+                prev_reasons: checkpoint.prev_reasons.clone(),
             });
         }
     }
@@ -280,6 +284,7 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
         current_task_id: "M0-T00".to_string(),
         current_task_title: "미지정".to_string(),
         pending_execution_results: vec![],
+        prev_reasons: vec![],
     };
     Ok(build_state_with_tasks(state, path))
 }

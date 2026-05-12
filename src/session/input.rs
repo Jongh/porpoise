@@ -24,6 +24,9 @@ pub struct SessionInput {
     pub workspace_snapshot: Option<WorkspaceSnapshot>,
     pub execution_results: Vec<ExecutionResult>,
     pub tech_context: Option<String>,
+    // v0.8.0 필드
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role_extra: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
