@@ -86,10 +86,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
         }
     }
 
-    println!(
-        "Run {} again to start the orchestration cycle.",
-        "porpoise".cyan()
-    );
+    println!("{}", "마일스톤 생성 세션을 시작합니다...".cyan());
 
     Ok(())
 }

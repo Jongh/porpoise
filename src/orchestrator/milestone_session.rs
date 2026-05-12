@@ -4,9 +4,11 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::claude::runner::ClaudeRunner;
+use crate::config::workspace::WorkspaceConfig;
 use crate::init::template::apply_template;
 use crate::logger::Logger;
 use crate::milestone::{load_all_milestones, Milestone};
+use crate::model::adapter::AdapterType;
 use crate::orchestrator::report::{parse_report, ExitCode};
 use crate::utils::fs::write_file;
 use crate::utils::input::collect_multiline_input;
@@ -14,9 +16,13 @@ use crate::utils::input::collect_multiline_input;
 const MAX_MILESTONE_RETRY: u32 = 5;
 
 /// 마일스톤 생성 세션을 실행합니다.
-/// 사용자로부터 마일스톤 정보를 수집하고 Claude 세션을 통해 M{id}.md를 생성한 뒤
-/// project.md에 Milestone 섹션을 추가합니다.
-pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model: Option<&str>) -> Result<()> {
+pub fn run_milestone_session(
+    path: &Path,
+    dry_run: bool,
+    logger: &Logger,
+    model: Option<&str>,
+    workspace: &WorkspaceConfig,
+) -> Result<()> {
     println!("{}", "\n=== 마일스톤 생성 세션 ===".cyan().bold());
 
     if dry_run {
@@ -25,11 +31,6 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
     }
 
     let milestones_dir = path.join(".porpoise").join("milestones");
-    let user_input_path = path.join(".porpoise").join("user_input.md");
-    let project_md_path = path.join(".porpoise").join("project.md");
-    let milestone_prompt_path = path.join(".porpoise").join("prompts").join("05-milestone.md");
-
-    // 다음 마일스톤 ID를 미리 계산 (세션 전체에서 고정)
     let max_id = load_all_milestones(&milestones_dir)
         .unwrap_or_default()
         .iter()
@@ -38,7 +39,23 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
         .unwrap_or(0);
     let next_id = max_id + 1;
 
-    // 05-milestone.md 템플릿을 읽어 next_id를 치환
+    match workspace.model_adapter_type() {
+        AdapterType::ClaudeCode => run_milestone_via_claude_runner(path, logger, model, next_id),
+        _ => run_milestone_via_api(path, logger, model, next_id, workspace),
+    }
+}
+
+fn run_milestone_via_claude_runner(
+    path: &Path,
+    logger: &Logger,
+    model: Option<&str>,
+    next_id: u32,
+) -> Result<()> {
+    let milestones_dir = path.join(".porpoise").join("milestones");
+    let user_input_path = path.join(".porpoise").join("user_input.md");
+    let project_md_path = path.join(".porpoise").join("project.md");
+    let milestone_prompt_path = path.join(".porpoise").join("prompts").join("05-milestone.md");
+
     let prompt_template = std::fs::read_to_string(&milestone_prompt_path)
         .with_context(|| format!("05-milestone.md 읽기 실패: {}", milestone_prompt_path.display()))?;
     let rendered_prompt = apply_template(&prompt_template, &[("next_milestone_id", &next_id.to_string())]);
@@ -65,7 +82,6 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
         write_file(&user_input_path, &input_content, path)
             .context("user_input.md 저장 실패")?;
 
-        // 세션 실행 전 기존 마일스톤 ID 스냅샷
         let before_ids: HashSet<u32> = load_all_milestones(&milestones_dir)
             .unwrap_or_default()
             .iter()
@@ -83,7 +99,6 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
         );
         println!("{}", "  Claude 세션 실행 중...".cyan());
 
-        // project.md와 user_input.md를 컨텍스트로 제공
         let context_files = vec![project_md_path.clone(), user_input_path.clone()];
 
         let output = runner.run_with_prompt_str(
@@ -162,8 +177,201 @@ pub fn run_milestone_session(path: &Path, dry_run: bool, logger: &Logger, model:
     Ok(())
 }
 
+fn run_milestone_via_api(
+    path: &Path,
+    logger: &Logger,
+    model: Option<&str>,
+    next_id: u32,
+    workspace: &WorkspaceConfig,
+) -> Result<()> {
+    use crate::model::factory::{make_adapter, make_model_config};
+    use crate::orchestrator::state::Role;
+    use crate::session::input::{MilestoneInfo, SessionInput};
+    use crate::session::output::{ExitCode as SessionExitCode, RoleOutputData};
+
+    let project_md_path = path.join(".porpoise").join("project.md");
+    let project_summary = std::fs::read_to_string(&project_md_path).unwrap_or_default();
+
+    let adapter = make_adapter(workspace, path)
+        .context("마일스톤 생성 어댑터 초기화 실패")?;
+
+    let mut config = make_model_config(workspace, &Role::PM);
+    if let Some(m) = model {
+        if !m.is_empty() {
+            config.model_id = m.to_string();
+        }
+    }
+
+    for attempt in 0..MAX_MILESTONE_RETRY {
+        println!();
+        println!("마일스톤 정보를 입력하세요. 예시:");
+        println!("  제목: 새 마일스톤 제목");
+        println!("  버전: v0.2.4");
+        println!("  설명: 마일스톤 설명");
+        println!("  작업:");
+        println!("  - 작업 1 설명");
+        println!("  - 작업 2 설명");
+
+        let user_input = collect_multiline_input("마일스톤 정보")?;
+        if user_input.trim().is_empty() {
+            println!("{}", "입력이 없습니다. 취소됨.".yellow());
+            return Ok(());
+        }
+
+        let input = SessionInput {
+            role: "milestone".to_string(),
+            task_id: format!("M{}-plan", next_id),
+            task_title: format!("M{} 마일스톤 계획", next_id),
+            cycle: 1,
+            retry: attempt,
+            language: workspace.language().to_string(),
+            project_summary: project_summary.clone(),
+            hints: vec![user_input.clone()],
+            milestone: MilestoneInfo {
+                id: format!("M{}", next_id),
+                title: String::new(),
+                version: String::new(),
+                goal: String::new(),
+            },
+            ..SessionInput::default()
+        };
+
+        logger.info(
+            "milestone_session",
+            &format!("API 어댑터 마일스톤 생성 attempt={} next_id=M{}", attempt, next_id),
+        );
+        println!("{}", "  API 어댑터로 마일스톤 생성 중...".cyan());
+
+        let output = adapter.execute(&input, &config)
+            .context("마일스톤 생성 API 호출 실패")?;
+
+        match output {
+            RoleOutputData::Milestone(ref m) if m.status == SessionExitCode::Next => {
+                let m = if let RoleOutputData::Milestone(m) = output { m } else { unreachable!() };
+                if m.title.is_empty() {
+                    anyhow::bail!(
+                        "API 어댑터가 마일스톤 제목을 반환하지 않았습니다.\n\
+                         milestone 역할 프롬프트(05-milestone.md)와 스키마를 확인하세요."
+                    );
+                }
+                let milestone_id = m.milestone_id.trim_start_matches('M').parse::<u32>().unwrap_or(next_id);
+                write_milestone_file(path, &m, milestone_id)
+                    .context("M{n}.md 파일 생성 실패")?;
+                let milestone = milestone_output_to_milestone(&m, next_id);
+                append_milestone_to_project_md(path, &milestone)?;
+                logger.info(
+                    "milestone_session",
+                    &format!("마일스톤 생성 완료 (API): M{} — {}", milestone_id, m.title),
+                );
+                println!(
+                    "  {} M{}: {}",
+                    "✓ 마일스톤 생성 완료".green(),
+                    milestone_id,
+                    m.title
+                );
+                return Ok(());
+            }
+            RoleOutputData::Milestone(ref m) if m.status == SessionExitCode::Resp => {
+                println!("{}", "\n⚠  추가 정보 필요 (RESP)".yellow().bold());
+                for (i, q) in m.questions.iter().enumerate() {
+                    println!("  {}. {}", i + 1, q.yellow());
+                }
+                if attempt + 1 >= MAX_MILESTONE_RETRY {
+                    println!(
+                        "{}",
+                        format!("⚠  최대 재시도 횟수({})에 도달했습니다.", MAX_MILESTONE_RETRY)
+                            .yellow()
+                    );
+                    break;
+                }
+                println!("\n수정된 정보를 다시 입력하세요.");
+            }
+            _ => {
+                anyhow::bail!(
+                    "API 어댑터가 Milestone 출력을 반환하지 않았습니다.\n\
+                     role='milestone'로 설정됐는지 확인하세요."
+                );
+            }
+        }
+    }
+
+    println!("{}", "마일스톤 생성 세션이 완료되지 않았습니다.".yellow());
+    Ok(())
+}
+
+fn write_milestone_file(
+    path: &Path,
+    output: &crate::session::milestone::MilestoneOutput,
+    id: u32,
+) -> Result<()> {
+    let milestones_dir = path.join(".porpoise").join("milestones");
+    std::fs::create_dir_all(&milestones_dir).context("milestones/ 디렉토리 생성 실패")?;
+
+    let version_suffix = if output.version.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", output.version)
+    };
+
+    let mut content = format!("# M{}: {}{}\n", id, output.title, version_suffix);
+
+    if !output.goal.is_empty() {
+        content.push_str(&format!("\n## 목표\n{}\n", output.goal));
+    }
+
+    if !output.background.as_deref().unwrap_or("").is_empty() {
+        content.push_str(&format!("\n## 배경\n{}\n", output.background.as_deref().unwrap_or("")));
+    }
+
+    if !output.constraints.is_empty() {
+        content.push_str("\n## 제약사항\n");
+        for c in &output.constraints {
+            content.push_str(&format!("- {}\n", c));
+        }
+    }
+
+    content.push_str("\n## 작업 목록\n");
+    for task in &output.tasks {
+        content.push_str(&format!("- [ ] {}: {}\n", task.id, task.title));
+    }
+
+    let file_path = milestones_dir.join(format!("M{}.md", id));
+    std::fs::write(&file_path, &content)
+        .with_context(|| format!("M{}.md 파일 쓰기 실패: {}", id, file_path.display()))?;
+    Ok(())
+}
+
+fn milestone_output_to_milestone(
+    output: &crate::session::milestone::MilestoneOutput,
+    next_id: u32,
+) -> Milestone {
+    use crate::orchestrator::state::Task;
+    use std::collections::HashMap;
+
+    let id = output.milestone_id.trim_start_matches('M').parse::<u32>().unwrap_or(next_id);
+    let version = if output.version.is_empty() {
+        None
+    } else {
+        Some(output.version.clone())
+    };
+    let tasks: Vec<Task> = output.tasks.iter().map(|t| Task {
+        id: t.id.clone(),
+        title: t.title.clone(),
+        completed: false,
+    }).collect();
+
+    Milestone {
+        id,
+        title: output.title.clone(),
+        version,
+        tasks,
+        metadata: HashMap::new(),
+        raw_sections: HashMap::new(),
+        file_path: std::path::PathBuf::new(),
+    }
+}
+
 /// 파싱된 마일스톤을 project.md 끝에 Milestone 섹션으로 추가합니다.
-/// `path`는 프로젝트 루트 디렉토리이며, `.porpoise/project.md`를 기준으로 찾습니다.
 pub fn append_milestone_to_project_md(path: &Path, milestone: &Milestone) -> Result<()> {
     let project_md_path = path.join(".porpoise").join("project.md");
     let content = std::fs::read_to_string(&project_md_path)
@@ -313,7 +521,111 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".porpoise").join("milestones")).unwrap();
 
         let logger = crate::logger::Logger::new(dir.path(), false).unwrap();
-        // M1.md 없음 — Ok(()) 이어야 하고 패닉 없어야 함
         crate::milestone::update_task_status(dir.path(), "M1-T01", true, &logger);
+    }
+
+    #[test]
+    fn milestone_output_to_milestone_basic() {
+        use crate::session::milestone::{MilestoneOutput, MilestoneTask};
+        use crate::session::output::ExitCode as SessionExitCode;
+
+        let output = MilestoneOutput {
+            milestone_id: "M3".to_string(),
+            title: "테스트 마일스톤".to_string(),
+            version: "v0.9.0".to_string(),
+            tasks: vec![
+                MilestoneTask {
+                    id: "M3-T01".to_string(),
+                    title: "작업 1".to_string(),
+                    description: None,
+                },
+            ],
+            status: SessionExitCode::Next,
+            ..MilestoneOutput::default()
+        };
+        let m = milestone_output_to_milestone(&output, 3);
+        assert_eq!(m.id, 3);
+        assert_eq!(m.title, "테스트 마일스톤");
+        assert_eq!(m.version, Some("v0.9.0".to_string()));
+        assert_eq!(m.tasks.len(), 1);
+        assert_eq!(m.tasks[0].id, "M3-T01");
+        assert!(!m.tasks[0].completed);
+    }
+
+    #[test]
+    fn milestone_output_to_milestone_no_version() {
+        use crate::session::milestone::MilestoneOutput;
+        use crate::session::output::ExitCode as SessionExitCode;
+
+        let output = MilestoneOutput {
+            milestone_id: "M5".to_string(),
+            title: "버전 없는 마일스톤".to_string(),
+            version: String::new(),
+            status: SessionExitCode::Next,
+            ..MilestoneOutput::default()
+        };
+        let m = milestone_output_to_milestone(&output, 5);
+        assert_eq!(m.id, 5);
+        assert!(m.version.is_none());
+    }
+
+    #[test]
+    fn write_milestone_file_creates_parseable_file() {
+        use crate::milestone::parser::{load_all_milestones, parse_milestone_file};
+        use crate::session::milestone::{MilestoneOutput, MilestoneTask};
+        use crate::session::output::ExitCode as SessionExitCode;
+
+        let dir = tempfile::tempdir().unwrap();
+        let output = MilestoneOutput {
+            milestone_id: "M2".to_string(),
+            title: "두 번째 마일스톤".to_string(),
+            version: "v0.9.0".to_string(),
+            goal: "목표 내용".to_string(),
+            tasks: vec![
+                MilestoneTask { id: "M2-T01".to_string(), title: "작업 A".to_string(), description: None },
+                MilestoneTask { id: "M2-T02".to_string(), title: "작업 B".to_string(), description: None },
+            ],
+            status: SessionExitCode::Next,
+            ..MilestoneOutput::default()
+        };
+
+        write_milestone_file(dir.path(), &output, 2).unwrap();
+
+        let file_path = dir.path().join(".porpoise").join("milestones").join("M2.md");
+        assert!(file_path.exists());
+
+        let parsed = parse_milestone_file(&file_path).unwrap();
+        assert_eq!(parsed.id, 2);
+        assert_eq!(parsed.title, "두 번째 마일스톤");
+        assert_eq!(parsed.version, Some("v0.9.0".to_string()));
+        assert_eq!(parsed.tasks.len(), 2);
+        assert_eq!(parsed.tasks[0].id, "M2-T01");
+        assert_eq!(parsed.tasks[1].id, "M2-T02");
+        assert!(!parsed.tasks[0].completed);
+    }
+
+    #[test]
+    fn write_milestone_file_enables_correct_next_id() {
+        use crate::milestone::parser::load_all_milestones;
+        use crate::session::milestone::{MilestoneOutput, MilestoneTask};
+        use crate::session::output::ExitCode as SessionExitCode;
+
+        let dir = tempfile::tempdir().unwrap();
+        let milestones_dir = dir.path().join(".porpoise").join("milestones");
+
+        // M1 생성
+        let m1 = MilestoneOutput {
+            milestone_id: "M1".to_string(),
+            title: "첫 번째".to_string(),
+            tasks: vec![MilestoneTask { id: "M1-T01".to_string(), title: "T01".to_string(), description: None }],
+            status: SessionExitCode::Next,
+            ..MilestoneOutput::default()
+        };
+        write_milestone_file(dir.path(), &m1, 1).unwrap();
+
+        // 다음 ID 계산
+        let max_id = load_all_milestones(&milestones_dir).unwrap()
+            .iter().map(|m| m.id).max().unwrap_or(0);
+        assert_eq!(max_id + 1, 2, "M1.md가 생성되었으므로 next_id는 2여야 함");
     }
 }

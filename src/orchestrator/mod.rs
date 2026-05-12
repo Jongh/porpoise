@@ -141,7 +141,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
         if tasks.iter().all(|t| t.completed) {
             logger.info("orchestrator", "No pending tasks — entering milestone session");
             println!("{}", "\n미완료 작업이 없습니다. 마일스톤 생성 세션을 시작합니다.".cyan().bold());
-            milestone_session::run_milestone_session(path, args.dry_run, &logger, effective_model.as_deref())?;
+            milestone_session::run_milestone_session(path, args.dry_run, &logger, effective_model.as_deref(), &workspace)?;
             let new_tasks = parse_tasks_from_project_md(path);
             match new_tasks.iter().find(|t| !t.completed) {
                 Some(next) => {
@@ -396,12 +396,12 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
 
                         let create_new = confirm_or_default(
                             "새 마일스톤을 생성하시겠습니까? (아니오: 릴리즈 플로우 진행)",
-                            false,
+                            args.yes,
                             args.yes,
                         )?;
 
                         if create_new {
-                            milestone_session::run_milestone_session(path, false, &logger, effective_model.as_deref())?;
+                            milestone_session::run_milestone_session(path, false, &logger, effective_model.as_deref(), &workspace)?;
                             let new_tasks = parse_tasks_from_project_md(path);
                             if let Some(next) = new_tasks.iter().find(|t| !t.completed) {
                                 println!("  {} 다음 작업: {} — {}", "→".cyan(), next.id.cyan(), next.title);
@@ -1164,17 +1164,33 @@ fn run_new_format(
                         }
                         let commit_ids: Vec<String> = commit_tasks.iter().map(|(id, _)| id.clone()).collect();
                         let _ = mark_tasks_complete(path, &commit_ids, logger);
+
+                        if output_data.milestone_complete() && !all_tasks_done(path) {
+                            println!("{}", "⚠  Reviewer가 milestone_complete=true를 반환했지만 project.md에 미완료 작업이 있습니다. project.md를 확인하세요.".yellow());
+                            logger.warn("reviewer", "milestone_complete=true 반환, all_tasks_done=false — project.md 불일치");
+                        }
                     }
 
                     if !args.dry_run && all_tasks_done(path) {
                         println!("{}", "\n모든 작업 항목 완료!".green().bold());
                         let create_new = confirm_or_default(
                             "새 마일스톤을 생성하시겠습니까?",
-                            false,
+                            args.yes,
                             args.yes,
                         )?;
                         if create_new {
-                            milestone_session::run_milestone_session(path, false, logger, effective_model)?;
+                            milestone_session::run_milestone_session(path, false, logger, effective_model, workspace)?;
+                            let new_tasks = parse_tasks_from_project_md(path);
+                            if let Some(next) = new_tasks.iter().find(|t| !t.completed) {
+                                println!("  {} 다음 작업: {} — {}", "→".cyan(), next.id.cyan(), next.title);
+                                state.current_task_id = next.id.clone();
+                                state.current_task_title = next.title.clone();
+                                state.completed_roles = vec![];
+                                state.current_role = Some(Role::PM);
+                                logger.info("orchestrator", &format!("New milestone task: {}", state.current_task_id));
+                                continue;
+                            }
+                            println!("{}", "새 마일스톤이 생성되지 않았습니다.".yellow());
                         } else {
                             let _ = run_release_flow(config.github_repo());
                         }
@@ -1213,6 +1229,7 @@ fn run_new_format(
                 let target_role = output_data.prev_target().and_then(|t| Role::from_str(t));
                 match target_role {
                     Some(ref role) if *role != Role::PM => {
+                        invalidate_sessions_from_role(path, &state.current_task_id, role, state.cycle, logger);
                         let start_idx = Role::all().iter().position(|r| r == role).unwrap_or(0);
                         state.completed_roles = Role::all()[..start_idx].to_vec();
                         state.current_role = Some(role.clone());
@@ -1240,6 +1257,39 @@ fn run_new_format(
     println!();
     println!("{}", "세션 종료.".dimmed());
     Ok(())
+}
+
+fn invalidate_sessions_from_role(
+    path: &Path,
+    task_id: &str,
+    start_role: &Role,
+    cycle: u32,
+    logger: &Logger,
+) {
+    use crate::orchestrator::state::TaskId;
+    let sessions_dir = path.join(".porpoise").join("sessions");
+    let start_idx = Role::all().iter().position(|r| r == start_role).unwrap_or(0);
+    let role_strs: Vec<String> = Role::all()[start_idx..]
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+    let normalized = TaskId::new(task_id).to_string();
+
+    let Ok(entries) = std::fs::read_dir(&sessions_dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        for role_str in &role_strs {
+            let pattern = format!("{}-{}-C{}-R", normalized, role_str, cycle);
+            if name.starts_with(&pattern) && name.ends_with(".json") {
+                let invalidated = entry.path().with_extension("json.prev-invalidated");
+                match std::fs::rename(entry.path(), &invalidated) {
+                    Ok(_) => logger.info("orchestrator", &format!("PREV: 세션 무효화 → {}", name)),
+                    Err(e) => logger.warn("orchestrator", &format!("세션 무효화 실패 {}: {}", name, e)),
+                }
+                break;
+            }
+        }
+    }
 }
 
 fn collect_target_files_from_planning(state: &OrchestratorState, path: &Path) -> Vec<String> {
@@ -1466,4 +1516,46 @@ fn execute_role_new(
     println!("  {} Session: {}", "✓".green(), filename.dimmed());
 
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalidate_sessions_from_role_renames_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        std::fs::write(sessions.join("M1-T01-planning-C1-R0.json"), "{}").unwrap();
+        std::fs::write(sessions.join("M1-T01-development-C1-R0.json"), "{}").unwrap();
+        std::fs::write(sessions.join("M1-T01-testing-C1-R0.json"), "{}").unwrap();
+
+        let logger = Logger::new(dir.path(), false).unwrap();
+        invalidate_sessions_from_role(dir.path(), "M1-T01", &Role::Developer, 1, &logger);
+
+        assert!(sessions.join("M1-T01-planning-C1-R0.json").exists());
+        assert!(!sessions.join("M1-T01-development-C1-R0.json").exists());
+        assert!(sessions.join("M1-T01-development-C1-R0.json.prev-invalidated").exists());
+        assert!(!sessions.join("M1-T01-testing-C1-R0.json").exists());
+        assert!(sessions.join("M1-T01-testing-C1-R0.json.prev-invalidated").exists());
+    }
+
+    #[test]
+    fn invalidate_sessions_from_role_skips_other_cycles() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        std::fs::write(sessions.join("M1-T01-development-C1-R0.json"), "{}").unwrap();
+        std::fs::write(sessions.join("M1-T01-development-C2-R0.json"), "{}").unwrap();
+
+        let logger = Logger::new(dir.path(), false).unwrap();
+        invalidate_sessions_from_role(dir.path(), "M1-T01", &Role::Developer, 1, &logger);
+
+        assert!(!sessions.join("M1-T01-development-C1-R0.json").exists());
+        assert!(sessions.join("M1-T01-development-C1-R0.json.prev-invalidated").exists());
+        assert!(sessions.join("M1-T01-development-C2-R0.json").exists());
+    }
 }
