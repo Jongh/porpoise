@@ -6,6 +6,8 @@ use crate::session::review::ReviewOutput;
 use crate::session::milestone::MilestoneOutput;
 use crate::session::v0_7::{FileOperation, VerifyCommand};
 
+pub(crate) fn default_exit_code_next() -> ExitCode { ExitCode::Next }
+
 // ExitCode: 기존 orchestrator/report.rs에서 이동 (re-export 유지)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
