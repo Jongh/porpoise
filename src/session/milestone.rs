@@ -3,6 +3,7 @@ use crate::session::output::ExitCode;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MilestoneOutput {
+    #[serde(default)]
     pub role: String,
     pub milestone_id: String,
     pub status: ExitCode,

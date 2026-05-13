@@ -136,6 +136,12 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.11.0]
+- **API 마일스톤 역직렬화 수정**: `MilestoneOutput.role`에 `#[serde(default)]` 추가 — `anthropic_api`·`openai_compatible` 어댑터에서 마일스톤 생성 시 `missing field 'role'` 오류로 중단되던 버그 수정, 빈 문자열 역직렬화 시 `"milestone"`으로 자동 보정
+- **마일스톤 생성 완료 후 파일 출력**: `claude_code`·API 어댑터 양 경로 모두 마일스톤 생성 완료 시 생성된 `M{n}.md` 파일 전체 내용을 콘솔에 출력
+- **역할 완료 후 리포트 파일 출력**: 역할 완료(fresh 실행·캐시 재사용 공통) 시 `output_data.summary()` 요약 대신 `.porpoise/reports/`에 저장된 실제 마크다운 리포트 파일 전체 내용을 출력
+- **태스크 전환 시 cycle 리셋**: Reviewer NEXT로 다음 태스크 또는 새 마일스톤으로 전환될 때 `state.cycle`이 1로 리셋되지 않던 버그 수정 — 신규 포맷·레거시 경로 4개소 모두 적용
+
 ### [v0.10.0]
 - **`messages/` 폴더 제거**: ClaudeCode 어댑터·마일스톤 세션에서 `messages/` 중복 저장 코드 제거 — 신규 프로젝트에서 폴더 미생성
 - **`checkpoint.json` 경로 이동**: `messages/checkpoint.json` → `.porpoise/checkpoint.json` 직접 저장, 구 경로 자동 마이그레이션

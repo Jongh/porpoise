@@ -409,6 +409,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                                 state.current_task_title = next.title.clone();
                                 state.completed_roles = vec![];
                                 state.current_role = Some(Role::PM);
+                                state.cycle = 1;
                                 logger.info("orchestrator", &format!("New milestone task: {}", state.current_task_id));
                                 continue;
                             } else {
@@ -431,6 +432,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                         state.current_task_title = next_task.title.clone();
                         state.completed_roles = vec![];
                         state.current_role = Some(Role::PM);
+                        state.cycle = 1;
                         logger.info("orchestrator", &format!("Next task: {}", state.current_task_id));
                     } else {
                         if args.dry_run {
@@ -1125,18 +1127,17 @@ fn run_new_format(
             }
         };
 
-        // 역할 보고서 요약 출력 (fresh 실행·캐시 재사용 공통, 최대 15줄)
+        // 역할 리포트 파일 출력 (fresh 실행·캐시 재사용 공통)
         {
-            let summary = output_data.summary();
-            if !summary.is_empty() {
-                println!("{}", format!("\n--- {} 보고서 요약 ---", current_role.display_name()).bold());
-                let lines: Vec<&str> = summary.lines().collect();
-                let show_count = lines.len().min(15);
-                for line in &lines[..show_count] {
-                    println!("  {}", line);
-                }
-                if lines.len() > 15 {
-                    println!("  {}", "... (이하 생략)".dimmed());
+            let reports_dir = path.join(".porpoise").join("reports");
+            if let Some(report_path) = find_latest_report(&reports_dir, &current_role.to_string(), &state.current_task_id) {
+                if let Ok(content) = std::fs::read_to_string(&report_path) {
+                    if !content.is_empty() {
+                        println!("{}", format!("\n--- {} 보고서 ---", current_role.display_name()).bold());
+                        for line in content.lines() {
+                            println!("{}", line);
+                        }
+                    }
                 }
             }
         }
@@ -1203,6 +1204,7 @@ fn run_new_format(
                                 state.current_task_title = next.title.clone();
                                 state.completed_roles = vec![];
                                 state.current_role = Some(Role::PM);
+                                state.cycle = 1;
                                 logger.info("orchestrator", &format!("New milestone task: {}", state.current_task_id));
                                 continue;
                             }
@@ -1219,6 +1221,7 @@ fn run_new_format(
                         state.current_task_title = next_task.title.clone();
                         state.completed_roles = vec![];
                         state.current_role = Some(Role::PM);
+                        state.cycle = 1;
                     } else {
                         state.cycle += 1;
                         state.completed_roles = vec![];

@@ -128,6 +128,13 @@ fn run_milestone_via_claude_runner(
                             m.title
                         );
                         let _ = std::fs::remove_file(&user_input_path);
+                        let milestone_file = path.join(".porpoise").join("milestones").join(format!("M{}.md", m.id));
+                        if let Ok(content) = std::fs::read_to_string(&milestone_file) {
+                            println!();
+                            for line in content.lines() {
+                                println!("{}", line);
+                            }
+                        }
                         return Ok(());
                     }
                     None => {
@@ -242,7 +249,10 @@ fn run_milestone_via_api(
 
         match output {
             RoleOutputData::Milestone(ref m) if m.status == SessionExitCode::Next => {
-                let m = if let RoleOutputData::Milestone(m) = output { m } else { unreachable!() };
+                let mut m = if let RoleOutputData::Milestone(m) = output { m } else { unreachable!() };
+                if m.role.is_empty() {
+                    m.role = "milestone".to_string();
+                }
                 if m.title.is_empty() {
                     anyhow::bail!(
                         "API 어댑터가 마일스톤 제목을 반환하지 않았습니다.\n\
@@ -264,6 +274,13 @@ fn run_milestone_via_api(
                     milestone_id,
                     m.title
                 );
+                let milestone_file = path.join(".porpoise").join("milestones").join(format!("M{}.md", milestone_id));
+                if let Ok(content) = std::fs::read_to_string(&milestone_file) {
+                    println!();
+                    for line in content.lines() {
+                        println!("{}", line);
+                    }
+                }
                 return Ok(());
             }
             RoleOutputData::Milestone(ref m) if m.status == SessionExitCode::Resp => {

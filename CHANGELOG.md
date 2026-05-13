@@ -4,6 +4,17 @@
 
 ---
 
+### [v0.10.0]
+- **`messages/` 폴더 제거**: ClaudeCode 어댑터·마일스톤 세션에서 `messages/` 중복 저장 코드 제거 — 신규 프로젝트에서 폴더 미생성
+- **`checkpoint.json` 경로 이동**: `messages/checkpoint.json` → `.porpoise/checkpoint.json` 직접 저장, 구 경로 자동 마이그레이션
+- **프롬프트 `reports/` 저장 지시 제거**: `00-orche.tmpl`에서 Claude에게 `reports/` 폴더에 직접 저장하라는 지시 삭제 — JSON session mode 기반으로 정리
+- **토큰 제한(LIMIT) 감지**: `You've hit your limit` 패턴 감지 시 `ExitCode::Limit` 처리 → "토큰 한도 도달" 메시지 출력 후 세션 종료
+- **LIMIT 세션 캐시 무효화**: 토큰 한도 세션이 캐시되어 재실행 시 LIMIT 메시지만 재표시되던 버그 수정 — 재실행 시 역할 새로 실행
+- **RESP/LIMIT 세션 재사용 방지**: `find_latest_session`에서 RESP·LIMIT 세션 skip — 해당 세션 이후 재구동 시 항상 역할 재실행
+- **역할 완료 후 보고서 요약 출력**: fresh 실행과 캐시 세션 재개 모두에서 역할 완료 시 요약 최대 15줄 콘솔 출력
+- **`porpoise approve` 신규 포맷 안내**: sessions/ 폴더가 있는 신규 프로젝트에서 approve 명령 실행 시 레거시 전용 안내 출력
+- **테스트 추가**: 7개 신규 테스트 (총 180개)
+
 ### [v0.9.0]
 - **API 어댑터 마일스톤 생성**: `run_milestone_via_api` 경로 신설 + `write_milestone_file()` — `anthropic_api`·`openai_compatible` 어댑터도 `claude_code`와 동일하게 `.porpoise/milestones/M{n}.md` 생성 및 `project.md` 갱신
 - **PREV→non-PM 세션 캐시 무효화**: `invalidate_sessions_from_role()` — PREV로 특정 역할부터 재시작 시 해당 역할 이후 캐시된 세션 파일 자동 무효화(`.json.prev-invalidated` 확장자 변경)
