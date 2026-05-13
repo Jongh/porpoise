@@ -1125,6 +1125,22 @@ fn run_new_format(
             }
         };
 
+        // 역할 보고서 요약 출력 (fresh 실행·캐시 재사용 공통, 최대 15줄)
+        {
+            let summary = output_data.summary();
+            if !summary.is_empty() {
+                println!("{}", format!("\n--- {} 보고서 요약 ---", current_role.display_name()).bold());
+                let lines: Vec<&str> = summary.lines().collect();
+                let show_count = lines.len().min(15);
+                for line in &lines[..show_count] {
+                    println!("  {}", line);
+                }
+                if lines.len() > 15 {
+                    println!("  {}", "... (이하 생략)".dimmed());
+                }
+            }
+        }
+
         // ── 히스토리 기록 ─────────────────────────────────────────────────────
         history.push(format!(
             "[{} / C{}] {} → {}",
@@ -1248,6 +1264,13 @@ fn run_new_format(
                 if !args.dry_run {
                     save_resp_hints(&current_role, &state, retry, path, logger)?;
                 }
+                break;
+            }
+
+            session::ExitCode::Limit => {
+                println!("{}", "\n⚠  Claude Code 토큰 한도에 도달했습니다.".yellow().bold());
+                println!("{}", "   한도가 초기화된 후 'porpoise'를 다시 실행하세요.".dimmed());
+                logger.warn("orchestrator", "Token limit reached — session terminated");
                 break;
             }
         }

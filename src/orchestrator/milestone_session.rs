@@ -88,11 +88,6 @@ fn run_milestone_via_claude_runner(
             .map(|m| m.id)
             .collect();
 
-        let output_file = path
-            .join(".porpoise")
-            .join("messages")
-            .join(format!("milestone-session-R{}.md", attempt));
-
         logger.info(
             "milestone_session",
             &format!("Claude 세션 실행 attempt={} next_id=M{}", attempt, next_id),
@@ -104,7 +99,7 @@ fn run_milestone_via_claude_runner(
         let output = runner.run_with_prompt_str(
             &rendered_prompt,
             &context_files,
-            &output_file,
+            None,
             model,
         )?;
 

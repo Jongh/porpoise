@@ -4,6 +4,13 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+const TOKEN_LIMIT_MARKER: &str = "PORPOISE_TOKEN_LIMIT";
+const TOKEN_LIMIT_PATTERNS: &[&str] = &[
+    "You've hit your limit",
+    "you've hit your limit",
+    "You've hit the limit",
+];
+
 pub struct ClaudeRunner {
     binary_path: PathBuf,
 }
@@ -33,16 +40,17 @@ impl ClaudeRunner {
             format!("Failed to read prompt file: {}", prompt_file.display())
         })?;
         let prompt = self.build_prompt_from_content(&role_prompt, context_files)?;
-        self.execute_claude(&prompt, output_file, model)
+        self.execute_claude(&prompt, Some(output_file), model)
     }
 
     /// Run claude with an already-rendered prompt string and context files.
     /// Use this when the prompt content is generated at runtime (e.g., after template substitution).
+    /// Pass `output_file: None` to skip writing to disk.
     pub fn run_with_prompt_str(
         &self,
         prompt_str: &str,
         context_files: &[PathBuf],
-        output_file: &Path,
+        output_file: Option<&Path>,
         model: Option<&str>,
     ) -> Result<String> {
         let prompt = self.build_prompt_from_content(prompt_str, context_files)?;
@@ -103,18 +111,13 @@ impl ClaudeRunner {
         Ok(prompt)
     }
 
-    /// Spawn claude, pipe the prompt string via stdin, stream stdout, and save output.
+    /// Spawn claude, pipe the prompt string via stdin, stream stdout, and optionally save output.
     fn execute_claude(
         &self,
         prompt: &str,
-        output_file: &Path,
+        output_file: Option<&Path>,
         model: Option<&str>,
     ) -> Result<String> {
-        if let Some(parent) = output_file.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("디렉토리 생성 실패: {}", parent.display()))?;
-        }
-
         // On Windows, .cmd/.bat files cannot be spawned directly via CreateProcess.
         // They must be invoked through `cmd.exe /C`.
         let mut cmd = self.make_command();
@@ -168,12 +171,25 @@ impl ClaudeRunner {
             );
         }
 
+        // Check for token limit patterns and append a marker if found
+        for pat in TOKEN_LIMIT_PATTERNS {
+            if full_output.contains(pat) {
+                full_output.push_str(&format!("\n{}\n", TOKEN_LIMIT_MARKER));
+                break;
+            }
+        }
+
         if !full_output.is_empty() {
-            // output_file은 caller(roles.rs)가 project 내부 경로로 결정하므로 경계 검사 생략.
-            // ClaudeRunner에 project_root를 추가하면 write_file()로 교체 가능 (향후 리팩토링).
-            fs::write(output_file, &full_output).with_context(|| {
-                format!("Failed to write output to {}", output_file.display())
-            })?;
+            if let Some(output_file) = output_file {
+                // output_file은 caller(roles.rs)가 project 내부 경로로 결정하므로 경계 검사 생략.
+                if let Some(parent) = output_file.parent() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("디렉토리 생성 실패: {}", parent.display()))?;
+                }
+                fs::write(output_file, &full_output).with_context(|| {
+                    format!("Failed to write output to {}", output_file.display())
+                })?;
+            }
         }
 
         Ok(full_output)

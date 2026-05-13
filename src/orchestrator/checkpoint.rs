@@ -46,8 +46,7 @@ impl Checkpoint {
 }
 
 pub fn save_checkpoint(checkpoint: &Checkpoint, path: &Path) -> Result<()> {
-    let reports_dir = path.join(".porpoise").join("messages");
-    let checkpoint_path = reports_dir.join("checkpoint.json");
+    let checkpoint_path = path.join(".porpoise").join("checkpoint.json");
 
     let content = serde_json::to_string_pretty(checkpoint)
         .context("checkpoint JSON 직렬화 실패")?;
@@ -58,19 +57,30 @@ pub fn save_checkpoint(checkpoint: &Checkpoint, path: &Path) -> Result<()> {
 }
 
 pub fn load_checkpoint(path: &Path) -> Result<Checkpoint> {
-    let reports_dir = path.join(".porpoise").join("messages");
-
-    let json_path = reports_dir.join("checkpoint.json");
-    if json_path.exists() {
-        let content = fs::read_to_string(&json_path)
-            .with_context(|| format!("checkpoint.json 읽기 실패: {}", json_path.display()))?;
+    // Try new path first: .porpoise/checkpoint.json
+    let new_path = path.join(".porpoise").join("checkpoint.json");
+    if new_path.exists() {
+        let content = fs::read_to_string(&new_path)
+            .with_context(|| format!("checkpoint.json 읽기 실패: {}", new_path.display()))?;
         return serde_json::from_str(&content).context("checkpoint.json 파싱 실패");
     }
 
-    let md_path = reports_dir.join("checkpoint.md");
-    let content = fs::read_to_string(&md_path)
-        .with_context(|| format!("checkpoint 파일 읽기 실패: {}", md_path.display()))?;
-    parse_checkpoint(&content)
+    // Migration: try old messages/ paths
+    let old_json = path.join(".porpoise").join("messages").join("checkpoint.json");
+    if old_json.exists() {
+        let content = fs::read_to_string(&old_json)
+            .with_context(|| format!("checkpoint.json 읽기 실패: {}", old_json.display()))?;
+        return serde_json::from_str(&content).context("checkpoint.json 파싱 실패");
+    }
+
+    let old_md = path.join(".porpoise").join("messages").join("checkpoint.md");
+    if old_md.exists() {
+        let content = fs::read_to_string(&old_md)
+            .with_context(|| format!("checkpoint.md 읽기 실패: {}", old_md.display()))?;
+        return parse_checkpoint(&content);
+    }
+
+    anyhow::bail!("checkpoint 파일을 찾을 수 없습니다.")
 }
 
 pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
@@ -240,5 +250,72 @@ mod tests {
         assert_eq!(cp.cycle, 1);
         assert_eq!(cp.current_task_id, "");
         assert_eq!(cp.retry_count, 0);
+    }
+
+    #[test]
+    fn save_and_load_checkpoint_new_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let porpoise_dir = temp.path().join(".porpoise");
+        std::fs::create_dir_all(&porpoise_dir).unwrap();
+
+        let cp = Checkpoint::new(
+            2, "development", vec!["planning".to_string()], "testing",
+            vec![], "M1-T01", 1, vec![],
+        );
+
+        save_checkpoint(&cp, temp.path()).unwrap();
+
+        // new path should exist
+        assert!(porpoise_dir.join("checkpoint.json").exists());
+        // old messages/ path should NOT exist
+        assert!(!porpoise_dir.join("messages").join("checkpoint.json").exists());
+
+        let loaded = load_checkpoint(temp.path()).unwrap();
+        assert_eq!(loaded.cycle, 2);
+        assert_eq!(loaded.current_role, "development");
+        assert_eq!(loaded.current_task_id, "M1-T01");
+        assert_eq!(loaded.retry_count, 1);
+    }
+
+    #[test]
+    fn load_checkpoint_migration_from_old_json() {
+        let temp = tempfile::tempdir().unwrap();
+        let messages_dir = temp.path().join(".porpoise").join("messages");
+        std::fs::create_dir_all(&messages_dir).unwrap();
+
+        let cp = Checkpoint::new(
+            3, "testing", vec!["planning".to_string(), "development".to_string()],
+            "review", vec![], "M2-T02", 0, vec![],
+        );
+        let content = serde_json::to_string_pretty(&cp).unwrap();
+        std::fs::write(messages_dir.join("checkpoint.json"), &content).unwrap();
+
+        let loaded = load_checkpoint(temp.path()).unwrap();
+        assert_eq!(loaded.cycle, 3);
+        assert_eq!(loaded.current_role, "testing");
+    }
+
+    #[test]
+    fn load_checkpoint_migration_from_old_md() {
+        let temp = tempfile::tempdir().unwrap();
+        let messages_dir = temp.path().join(".porpoise").join("messages");
+        std::fs::create_dir_all(&messages_dir).unwrap();
+
+        std::fs::write(
+            messages_dir.join("checkpoint.md"),
+            "# Porpoise Checkpoint\n\n## Metadata\n- cycle: 5\n- current_role: review\n- next_role: planning\n- current_task_id: M3-T01\n- retry_count: 0\n\n## Completed Roles\n- planning\n- development\n- testing\n\n## Pending Tasks\n- (none)\n",
+        ).unwrap();
+
+        let loaded = load_checkpoint(temp.path()).unwrap();
+        assert_eq!(loaded.cycle, 5);
+        assert_eq!(loaded.current_role, "review");
+    }
+
+    #[test]
+    fn load_checkpoint_not_found() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join(".porpoise")).unwrap();
+        let result = load_checkpoint(temp.path());
+        assert!(result.is_err());
     }
 }

@@ -193,15 +193,12 @@ impl OrchestratorState {
 }
 
 pub fn load_state(path: &Path) -> Result<OrchestratorState> {
-    let reports_dir = path.join(".porpoise").join("messages");
+    // Try checkpoint at new path (.porpoise/checkpoint.json) and legacy paths
+    let has_checkpoint = path.join(".porpoise").join("checkpoint.json").exists()
+        || path.join(".porpoise").join("messages").join("checkpoint.json").exists()
+        || path.join(".porpoise").join("messages").join("checkpoint.md").exists();
 
-    if !reports_dir.exists() {
-        return Ok(build_state_with_tasks(OrchestratorState::new(path), path));
-    }
-
-    let checkpoint_json = reports_dir.join("checkpoint.json");
-    let checkpoint_md = reports_dir.join("checkpoint.md");
-    if checkpoint_json.exists() || checkpoint_md.exists() {
+    if has_checkpoint {
         if let Ok(checkpoint) = super::checkpoint::load_checkpoint(path) {
             let completed = checkpoint
                 .completed_roles
@@ -232,7 +229,7 @@ pub fn load_state(path: &Path) -> Result<OrchestratorState> {
     // Check both messages/ (Porpoise output) and reports/ (Claude's formatted reports).
     let mut report_files: Vec<String> = Vec::new();
     let fallback_dirs = [
-        reports_dir.clone(),
+        path.join(".porpoise").join("messages"),
         path.join(".porpoise").join("reports"),
     ];
     for dir in &fallback_dirs {

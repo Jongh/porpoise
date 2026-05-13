@@ -13,6 +13,7 @@ pub enum ExitCode {
     Next,
     Prev,
     Resp,
+    Limit,
 }
 
 impl Default for ExitCode {
@@ -27,6 +28,7 @@ impl std::fmt::Display for ExitCode {
             ExitCode::Next => write!(f, "NEXT"),
             ExitCode::Prev => write!(f, "PREV"),
             ExitCode::Resp => write!(f, "RESP"),
+            ExitCode::Limit => write!(f, "LIMIT"),
         }
     }
 }

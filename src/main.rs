@@ -128,7 +128,12 @@ fn run_approve(path: &Path, verdict: &str) -> Result<()> {
     let reports_dir = path.join(".porpoise").join("reports");
 
     if !messages_dir.exists() {
-        println!("{}", "messages/ 폴더가 없습니다. 먼저 porpoise를 실행하세요.".yellow());
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        if sessions_dir.exists() {
+            println!("{}", "이 기능은 레거시 프로젝트에서만 사용 가능합니다.".yellow());
+        } else {
+            println!("{}", "messages/ 폴더가 없습니다. 먼저 porpoise를 실행하세요.".yellow());
+        }
         return Ok(());
     }
 

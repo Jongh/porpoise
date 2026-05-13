@@ -47,15 +47,6 @@ impl ModelAdapter for ClaudeCodeAdapter {
         // SessionInput에서 컨텍스트 파일 없이 프롬프트 문자열 생성
         let context_prefix = build_context_from_input(input);
 
-        // messages/ 폴더에 원본 저장 (레거시 호환)
-        let messages_dir = self.project_path.join(".porpoise").join("messages");
-        std::fs::create_dir_all(&messages_dir).ok();
-        let output_filename = format!(
-            "{}-{}-C{}-R{}.md",
-            input.task_id, input.role, input.cycle, input.retry
-        );
-        let output_file = messages_dir.join(&output_filename);
-
         // 프롬프트 파일 읽기 후 앞에 컨텍스트 붙이기
         let prompt_content = if prompt_file.exists() {
             let role_prompt = std::fs::read_to_string(&prompt_file).unwrap_or_default();
@@ -70,9 +61,14 @@ impl ModelAdapter for ClaudeCodeAdapter {
             Some(config.model_id.as_str())
         };
 
-        let raw = runner.run_with_prompt_str(&prompt_content, &[], &output_file, model_opt)?;
+        let raw = runner.run_with_prompt_str(&prompt_content, &[], None, model_opt)?;
 
         *self.raw_text.lock().unwrap() = Some(raw.clone());
+
+        // Check for token limit before JSON parsing
+        if raw.contains("PORPOISE_TOKEN_LIMIT") {
+            return Ok(fallback_from_markdown(&raw, &input.role, &input.task_id, input.cycle));
+        }
 
         // JSON 파싱 시도
         if let Some(output) = try_parse_json_output(&raw, &input.role) {
@@ -187,11 +183,15 @@ pub fn build_context_from_input(input: &SessionInput) -> String {
 pub use crate::model::context::try_parse_json_output;
 
 pub fn fallback_from_markdown(raw: &str, role: &str, task_id: &str, cycle: u32) -> RoleOutputData {
-    let exit_code = match parse_exit_code(raw) {
-        Some(crate::orchestrator::report::ExitCode::Next) => ExitCode::Next,
-        Some(crate::orchestrator::report::ExitCode::Prev) => ExitCode::Prev,
-        Some(crate::orchestrator::report::ExitCode::Resp) => ExitCode::Resp,
-        None => ExitCode::Resp,
+    let exit_code = if raw.contains("PORPOISE_TOKEN_LIMIT") {
+        ExitCode::Limit
+    } else {
+        match parse_exit_code(raw) {
+            Some(crate::orchestrator::report::ExitCode::Next) => ExitCode::Next,
+            Some(crate::orchestrator::report::ExitCode::Prev) => ExitCode::Prev,
+            Some(crate::orchestrator::report::ExitCode::Resp) => ExitCode::Resp,
+            None => ExitCode::Resp,
+        }
     };
     let completed_tasks = parse_completed_tasks(raw);
     let prev_target = parse_prev_target(raw);

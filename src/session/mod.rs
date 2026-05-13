@@ -60,7 +60,22 @@ pub fn find_latest_session(path: &Path, task_id: &str, role: &str) -> Option<Pat
         })
         .collect();
     matching.sort();
-    matching.into_iter().last()
+    let latest = matching.into_iter().last()?;
+
+    // Skip RESP and LIMIT sessions — they must not be reused as cache.
+    // RESP: re-running should re-execute the role (user provided hints).
+    // LIMIT: token quota may have reset; role should retry, not replay the limit message.
+    if let Ok(content) = std::fs::read_to_string(&latest) {
+        if let Ok(env) = serde_json::from_str::<crate::session::envelope::SessionEnvelope>(&content) {
+            if let Some(ref output) = env.output {
+                if matches!(output.status(), ExitCode::Resp | ExitCode::Limit) {
+                    return None;
+                }
+            }
+        }
+    }
+
+    Some(latest)
 }
 
 pub fn count_existing_sessions(path: &Path, task_id: &str, role: &str, cycle: u32) -> u32 {
@@ -127,6 +142,9 @@ mod tests {
 
         let resp = ExitCode::Resp;
         assert_eq!(serde_json::to_string(&resp).unwrap(), "\"RESP\"");
+
+        let limit = ExitCode::Limit;
+        assert_eq!(serde_json::to_string(&limit).unwrap(), "\"LIMIT\"");
     }
 
     #[test]
@@ -195,5 +213,137 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".porpoise").join("sessions")).unwrap();
         assert!(is_new_format(tmp.path()));
+    }
+
+    #[test]
+    fn find_latest_session_skips_resp() {
+        use crate::session::envelope::SessionEnvelope;
+        use crate::session::planning::PlanningOutput;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // Write a RESP session
+        let envelope = SessionEnvelope {
+            schema_version: "1".to_string(),
+            task_id: "M1-T01".to_string(),
+            role: "planning".to_string(),
+            cycle: 1,
+            retry: 0,
+            timestamp: "2026-05-13T10:00:00Z".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            adapter: "claude_code".to_string(),
+            input: SessionInput::default(),
+            output: Some(RoleOutputData::Planning(PlanningOutput {
+                role: "planning".to_string(),
+                task_id: "M1-T01".to_string(),
+                cycle: 1,
+                status: ExitCode::Resp,
+                summary: "needs clarification".to_string(),
+                questions: vec![],
+                prev_reason: None,
+                implementation_plan: vec![],
+                dod_checklist: vec![],
+                risks: vec![],
+            })),
+            raw_text: None,
+        };
+        let name = session_filename("M1-T01", "planning", 1, 0);
+        let content = serde_json::to_string(&envelope).unwrap();
+        std::fs::write(sessions_dir.join(&name), &content).unwrap();
+
+        // RESP session should be skipped
+        let result = find_latest_session(path, "M1-T01", "planning");
+        assert!(result.is_none(), "RESP 세션은 캐시로 재사용되어서는 안 됩니다");
+    }
+
+    #[test]
+    fn find_latest_session_skips_limit() {
+        use crate::session::envelope::SessionEnvelope;
+        use crate::session::planning::PlanningOutput;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let envelope = SessionEnvelope {
+            schema_version: "1".to_string(),
+            task_id: "M1-T01".to_string(),
+            role: "planning".to_string(),
+            cycle: 1,
+            retry: 0,
+            timestamp: "2026-05-13T10:00:00Z".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            adapter: "claude_code".to_string(),
+            input: SessionInput::default(),
+            output: Some(RoleOutputData::Planning(PlanningOutput {
+                role: "planning".to_string(),
+                task_id: "M1-T01".to_string(),
+                cycle: 1,
+                status: ExitCode::Limit,
+                summary: "token limit hit".to_string(),
+                questions: vec![],
+                prev_reason: None,
+                implementation_plan: vec![],
+                dod_checklist: vec![],
+                risks: vec![],
+            })),
+            raw_text: None,
+        };
+        let name = session_filename("M1-T01", "planning", 1, 0);
+        std::fs::write(sessions_dir.join(&name), serde_json::to_string(&envelope).unwrap()).unwrap();
+
+        // LIMIT 세션은 캐시로 재사용되어서는 안 됨 — 한도 해제 후 재실행 가능해야 함
+        assert!(
+            find_latest_session(path, "M1-T01", "planning").is_none(),
+            "LIMIT 세션은 캐시로 재사용되어서는 안 됩니다"
+        );
+    }
+
+    #[test]
+    fn find_latest_session_returns_next_session() {
+        use crate::session::envelope::SessionEnvelope;
+        use crate::session::planning::PlanningOutput;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // Write a NEXT session
+        let envelope = SessionEnvelope {
+            schema_version: "1".to_string(),
+            task_id: "M1-T01".to_string(),
+            role: "planning".to_string(),
+            cycle: 1,
+            retry: 0,
+            timestamp: "2026-05-13T10:00:00Z".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            adapter: "claude_code".to_string(),
+            input: SessionInput::default(),
+            output: Some(RoleOutputData::Planning(PlanningOutput {
+                role: "planning".to_string(),
+                task_id: "M1-T01".to_string(),
+                cycle: 1,
+                status: ExitCode::Next,
+                summary: "plan complete".to_string(),
+                questions: vec![],
+                prev_reason: None,
+                implementation_plan: vec![],
+                dod_checklist: vec![],
+                risks: vec![],
+            })),
+            raw_text: None,
+        };
+        let name = session_filename("M1-T01", "planning", 1, 0);
+        let content = serde_json::to_string(&envelope).unwrap();
+        std::fs::write(sessions_dir.join(&name), &content).unwrap();
+
+        // NEXT session should be returned
+        let result = find_latest_session(path, "M1-T01", "planning");
+        assert!(result.is_some(), "NEXT 세션은 캐시로 반환되어야 합니다");
     }
 }
