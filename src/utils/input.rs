@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Write};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dialoguer::Confirm;
 
 pub fn confirm_or_default(prompt: &str, default: bool, auto_approve: bool) -> Result<bool> {
@@ -16,7 +16,9 @@ pub fn confirm_or_default(prompt: &str, default: bool, auto_approve: bool) -> Re
 
 pub fn collect_multiline_input(prompt: &str) -> Result<String> {
     if std::env::var_os("EDITOR").is_some() || std::env::var_os("VISUAL").is_some() {
-        let result = dialoguer::Editor::new().edit("")?;
+        let result = dialoguer::Editor::new()
+            .edit("")
+            .context("텍스트 에디터 실행 실패 — EDITOR/VISUAL 환경변수에 지정된 프로그램이 PATH에 없거나 실행할 수 없습니다.")?;
         return Ok(result.unwrap_or_default());
     }
 

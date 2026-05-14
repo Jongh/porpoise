@@ -22,7 +22,18 @@
       }
     },
     "overall_result": {"type": "string"},
-    "issues_found": {"type": "array", "items": {"type": "string"}}
+    "issues_found": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity":    {"type": "string"},
+          "location":    {"type": ["string", "null"]},
+          "description": {"type": "string"}
+        },
+        "required": ["severity", "description"]
+      }
+    }
   },
   "required": ["role", "task_id", "cycle", "status", "summary", "questions", "test_cases", "overall_result", "issues_found"]
 }

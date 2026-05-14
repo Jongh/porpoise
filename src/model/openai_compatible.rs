@@ -290,7 +290,9 @@ fn post_json(
         .send_json(body)
         .context(format!("POST {} 실패", url))?;
 
-    Ok(response.into_json()?)
+    response
+        .into_json()
+        .context(format!("POST {} 응답 JSON 파싱 실패", url))
 }
 
 

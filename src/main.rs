@@ -94,6 +94,11 @@ fn run() -> Result<()> {
         }
     }
 
+    // --new 초기화 시에는 workspace.toml이 아직 없으므로 의존성 검사 스킵
+    if !args.new && utils::deps::check_and_report(&current_dir) {
+        std::process::exit(1);
+    }
+
     let project_md = current_dir.join(".porpoise").join("project.md");
     let is_resume = project_md.exists() && !args.new;
 

@@ -98,7 +98,9 @@ impl ModelAdapter for AnthropicApiAdapter {
             .send_json(&request_body)
             .context("Anthropic API 호출 실패")?;
 
-        let response_json: serde_json::Value = response.into_json()?;
+        let response_json: serde_json::Value = response
+            .into_json()
+            .context("Anthropic API 응답 JSON 파싱 실패 — 응답 본문이 유효한 JSON이 아닙니다.")?;
         *self.raw_text.lock().unwrap() = Some(response_json.to_string());
 
         // tool_use 블록에서 input 추출

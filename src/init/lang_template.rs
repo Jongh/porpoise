@@ -8,6 +8,8 @@ pub struct LangTemplate {
     pub test_command: &'static str,
     pub lint_command: &'static str,
     pub default_allowed_command_prefixes: &'static [&'static str],
+    pub allowed_file_commands_windows: &'static [&'static str],
+    pub allowed_file_commands_unix: &'static [&'static str],
 }
 
 pub static RUST: LangTemplate = LangTemplate {
@@ -29,6 +31,8 @@ pub static RUST: LangTemplate = LangTemplate {
     test_command: "cargo test",
     lint_command: "cargo clippy -- -D warnings",
     default_allowed_command_prefixes: &["cargo", "rustfmt"],
+    allowed_file_commands_windows: &["powershell", "xcopy", "robocopy"],
+    allowed_file_commands_unix: &["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"],
 };
 
 pub static PYTHON: LangTemplate = LangTemplate {
@@ -49,8 +53,10 @@ pub static PYTHON: LangTemplate = LangTemplate {
     ],
     build_command: "pip install -e .",
     test_command: "pytest",
-    lint_command: "ruff check . && mypy .",
+    lint_command: "ruff check .",
     default_allowed_command_prefixes: &["pytest", "python", "mypy", "ruff", "pip"],
+    allowed_file_commands_windows: &["powershell", "xcopy", "robocopy"],
+    allowed_file_commands_unix: &["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"],
 };
 
 pub static TYPESCRIPT: LangTemplate = LangTemplate {
@@ -71,8 +77,10 @@ pub static TYPESCRIPT: LangTemplate = LangTemplate {
     ],
     build_command: "npm run build",
     test_command: "npm test",
-    lint_command: "npx eslint . && npx tsc --noEmit",
+    lint_command: "npx eslint .",
     default_allowed_command_prefixes: &["npm", "npx", "node"],
+    allowed_file_commands_windows: &["powershell", "xcopy", "robocopy"],
+    allowed_file_commands_unix: &["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"],
 };
 
 pub static GO: LangTemplate = LangTemplate {
@@ -94,6 +102,8 @@ pub static GO: LangTemplate = LangTemplate {
     test_command: "go test ./...",
     lint_command: "go vet ./...",
     default_allowed_command_prefixes: &["go", "golangci-lint"],
+    allowed_file_commands_windows: &["powershell", "xcopy", "robocopy"],
+    allowed_file_commands_unix: &["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"],
 };
 
 pub static JAVA: LangTemplate = LangTemplate {
@@ -116,6 +126,8 @@ pub static JAVA: LangTemplate = LangTemplate {
     test_command: "mvn test",
     lint_command: "mvn checkstyle:check spotbugs:check",
     default_allowed_command_prefixes: &["mvn", "gradle", "java"],
+    allowed_file_commands_windows: &["powershell", "xcopy", "robocopy"],
+    allowed_file_commands_unix: &["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"],
 };
 
 pub static SPRING_BOOT: LangTemplate = LangTemplate {
@@ -139,6 +151,8 @@ pub static SPRING_BOOT: LangTemplate = LangTemplate {
     test_command: "mvn test",
     lint_command: "mvn checkstyle:check",
     default_allowed_command_prefixes: &["mvn", "gradle", "java"],
+    allowed_file_commands_windows: &["powershell", "xcopy", "robocopy"],
+    allowed_file_commands_unix: &["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"],
 };
 
 pub static ALL_TEMPLATES: &[&LangTemplate] = &[

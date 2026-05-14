@@ -5,6 +5,28 @@ use crate::session::output::RoleOutputData;
 
 /// API 어댑터(anthropic_api, openai_compatible)가 공유하는 컨텍스트 빌더.
 /// Claude Code 어댑터는 === 스타일 헤더를 사용하므로 claude_code::build_context_from_input()을 별도로 유지한다.
+/// role별 API 출력 형식 힌트를 반환합니다.
+pub fn role_api_output_hint(role: &str) -> &'static str {
+    match role {
+        "planning" => "",
+        "development" => "",
+        "review" => "",
+        "milestone" => "",
+        "testing" => r#"
+
+---
+
+## API 출력 형식 요약 (submit_report 함수)
+
+submit_report 호출 시 모든 필드를 채우세요:
+- `role` = "testing", `task_id`, `cycle`, `status` ("NEXT"/"PREV"/"RESP")
+- `summary` = 테스트 결과 요약 (필수)
+- `test_cases` = 테스트 케이스 배열, 각 항목: `{"name": "케이스명", "result": "pass|fail", "command": "명령 또는 null", "details": "설명 또는 null"}`
+- `issues_found` = 발견 이슈 배열, 각 항목: `{"severity": "Critical|Major|Minor", "location": "파일명 또는 null", "description": "설명"}` — 문자열 아닌 객체로 반환"#,
+        _ => "",
+    }
+}
+
 pub fn build_context_text(input: &SessionInput) -> String {
     let mut parts = Vec::new();
 

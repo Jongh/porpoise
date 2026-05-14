@@ -77,7 +77,9 @@
     {"name": "테스트 케이스명", "result": "pass", "command": "cargo test foo", "details": null}
   ],
   "overall_result": "PASS",
-  "issues_found": [],
+  "issues_found": [
+    {"severity": "Critical", "location": "src/main.py", "description": "pytest 실행 환경 없음 — 패키지 의존성 미설치"}
+  ],
   "regression_check": {"total_tests": 10, "passed": 10, "failed": 0}
 }
 ```

@@ -51,6 +51,7 @@ pub struct WorkspaceTech {
     pub build_command: Option<String>,
     pub test_command: Option<String>,
     pub lint_command: Option<String>,
+    pub verify_commands: Option<Vec<crate::session::v0_7::VerifyCommand>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -225,6 +226,13 @@ impl WorkspaceConfig {
             Some(t) => t,
             None => return vec![],
         };
+        // verify_commands 배열이 있으면 우선 사용 (test_command/lint_command 무시)
+        if let Some(cmds) = &tech.verify_commands {
+            if !cmds.is_empty() {
+                return cmds.clone();
+            }
+        }
+        // 폴백: 기존 단일 명령 파싱
         let mut cmds = Vec::new();
         if let Some(test_cmd) = &tech.test_command {
             if let Some(cmd) = parse_command_string(test_cmd, "테스트 실행") {
@@ -334,6 +342,24 @@ reviewer_extra = ""
 # [security]
 # allowed_command_prefixes = ["cargo", "rustfmt"]
 # verify_timeout_secs = 60
+
+# === verify_commands 배열 (test_command/lint_command 대신 사용 시) ===
+# [tech]
+# verify_commands = [
+#   { command = "pytest", args = [], purpose = "단위 테스트", expected_exit_code = 0 },
+#   { command = "mypy",   args = ["."], purpose = "타입 검사", expected_exit_code = 0 },
+#   { command = "ruff",   args = ["check", "."], purpose = "린트", expected_exit_code = 0 },
+# ]
+
+# === OS별 파일 조작 명령 허용 (API 모드에서 파일 편집·이동·삭제 시) ===
+#
+# Windows (PowerShell 기반):
+# [security]
+# allowed_command_prefixes = ["powershell", "xcopy", "robocopy"]
+#
+# macOS / Linux:
+# [security]
+# allowed_command_prefixes = ["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"]
 "#
     }
 }
@@ -517,6 +543,7 @@ verify_timeout_secs = 30
                 build_command: None,
                 test_command: Some("cargo test".to_string()),
                 lint_command: Some("cargo clippy -- -D warnings".to_string()),
+                verify_commands: None,
             }),
             ..Default::default()
         };
@@ -542,6 +569,7 @@ verify_timeout_secs = 30
                 test_command: Some("cargo test".to_string()),
                 build_command: None,
                 lint_command: None,
+                verify_commands: None,
             }),
             ..Default::default()
         };
@@ -591,6 +619,7 @@ verify_timeout_secs = 30
                 build_command: None,
                 test_command: Some("cargo test && echo done".to_string()),
                 lint_command: Some("cargo clippy".to_string()),
+                verify_commands: None,
             }),
             ..Default::default()
         };
@@ -599,5 +628,52 @@ verify_timeout_secs = 30
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].command, "cargo");
         assert_eq!(cmds[0].args, vec!["clippy"]);
+    }
+
+    #[test]
+    fn verify_commands_array_takes_priority() {
+        use crate::session::v0_7::VerifyCommand;
+        let cfg = WorkspaceConfig {
+            tech: Some(WorkspaceTech {
+                test_command: Some("cargo test".to_string()),
+                lint_command: Some("cargo clippy".to_string()),
+                verify_commands: Some(vec![
+                    VerifyCommand { command: "pytest".to_string(), args: vec![], purpose: "테스트".to_string(), expected_exit_code: 0 },
+                ]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cmds = cfg.default_verify_commands();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command, "pytest");
+    }
+
+    #[test]
+    fn empty_verify_commands_falls_back_to_single_commands() {
+        let cfg = WorkspaceConfig {
+            tech: Some(WorkspaceTech {
+                test_command: Some("cargo test".to_string()),
+                verify_commands: Some(vec![]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cmds = cfg.default_verify_commands();
+        assert_eq!(cmds[0].command, "cargo");
+    }
+
+    #[test]
+    fn verify_commands_array_parses_from_toml() {
+        let toml_str = r#"
+[tech]
+verify_commands = [
+  { command = "pytest", args = [], purpose = "테스트", expected_exit_code = 0 },
+]
+"#;
+        let cfg: WorkspaceConfig = toml::from_str(toml_str).unwrap();
+        let cmds = cfg.default_verify_commands();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command, "pytest");
     }
 }
