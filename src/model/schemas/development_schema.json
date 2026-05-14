@@ -49,5 +49,5 @@
       }
     }
   },
-  "required": ["role", "task_id", "cycle", "status", "summary", "questions", "changes", "test_instructions", "known_issues"]
+  "required": ["role", "task_id", "cycle", "status", "summary", "questions", "changes", "test_instructions", "known_issues", "file_operations"]
 }

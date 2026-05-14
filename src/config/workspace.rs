@@ -235,14 +235,10 @@ impl WorkspaceConfig {
         // 폴백: 기존 단일 명령 파싱
         let mut cmds = Vec::new();
         if let Some(test_cmd) = &tech.test_command {
-            if let Some(cmd) = parse_command_string(test_cmd, "테스트 실행") {
-                cmds.push(cmd);
-            }
+            cmds.extend(parse_command_string_multi(test_cmd, "테스트 실행"));
         }
         if let Some(lint_cmd) = &tech.lint_command {
-            if let Some(cmd) = parse_command_string(lint_cmd, "린트 검사") {
-                cmds.push(cmd);
-            }
+            cmds.extend(parse_command_string_multi(lint_cmd, "린트 검사"));
         }
         cmds
     }
@@ -364,20 +360,29 @@ reviewer_extra = ""
     }
 }
 
-fn parse_command_string(s: &str, purpose: &str) -> Option<VerifyCommand> {
-    const SHELL_METACHARS: &[char] = &['&', '|', ';', '`', '$'];
-    if s.chars().any(|c| SHELL_METACHARS.contains(&c)) {
-        eprintln!(
-            "경고: parse_command_string: '{}' 에 shell 메타문자가 포함되어 있어 건너뜁니다. \
-             workspace.toml에서 verify_commands의 command와 args를 분리하여 지정하세요.",
-            s
-        );
-        return None;
+/// && 기준 자동 분리: "ruff check . && mypy ." → 2개의 VerifyCommand.
+/// | ; ` $ 등 나머지 메타문자는 개별 경고 후 스킵한다.
+fn parse_command_string_multi(s: &str, purpose: &str) -> Vec<VerifyCommand> {
+    const REMAINING_METACHARS: &[char] = &['|', ';', '`', '$'];
+    let parts: Vec<&str> = s.split("&&").map(str::trim).filter(|p| !p.is_empty()).collect();
+    if parts.len() > 1 {
+        eprintln!("  정보: '{}' 를 {} 개의 명령으로 분리합니다.", s, parts.len());
     }
-    let mut parts = s.split_whitespace();
-    let command = parts.next()?.to_string();
-    let args: Vec<String> = parts.map(str::to_string).collect();
-    Some(VerifyCommand { command, args, purpose: purpose.to_string(), expected_exit_code: 0 })
+    parts.iter().enumerate().filter_map(|(i, part)| {
+        if part.chars().any(|c| REMAINING_METACHARS.contains(&c)) {
+            eprintln!(
+                "경고: parse_command_string: '{}' 에 지원되지 않는 shell 메타문자가 포함되어 있어 건너뜁니다. \
+                 workspace.toml에서 verify_commands의 command와 args를 분리하여 지정하세요.",
+                part
+            );
+            return None;
+        }
+        let mut tokens = part.split_whitespace();
+        let command = tokens.next()?.to_string();
+        let args: Vec<String> = tokens.map(str::to_string).collect();
+        let purpose_i = if i == 0 { purpose.to_string() } else { format!("{} ({})", purpose, i + 1) };
+        Some(VerifyCommand { command, args, purpose: purpose_i, expected_exit_code: 0 })
+    }).collect()
 }
 
 fn resolve_path(override_path: &str, project_path: &Path) -> std::path::PathBuf {
@@ -587,32 +592,35 @@ verify_timeout_secs = 30
 
     #[test]
     fn parse_command_string_accepts_simple() {
-        let cmd = parse_command_string("cargo test", "테스트").unwrap();
-        assert_eq!(cmd.command, "cargo");
-        assert_eq!(cmd.args, vec!["test"]);
-        assert_eq!(cmd.purpose, "테스트");
+        let cmds = parse_command_string_multi("cargo test", "테스트");
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command, "cargo");
+        assert_eq!(cmds[0].args, vec!["test"]);
+        assert_eq!(cmds[0].purpose, "테스트");
 
-        let cmd2 = parse_command_string("ruff check .", "린트").unwrap();
-        assert_eq!(cmd2.command, "ruff");
-        assert_eq!(cmd2.args, vec!["check", "."]);
+        let cmds2 = parse_command_string_multi("ruff check .", "린트");
+        assert_eq!(cmds2.len(), 1);
+        assert_eq!(cmds2[0].command, "ruff");
+        assert_eq!(cmds2[0].args, vec!["check", "."]);
     }
 
     #[test]
-    fn parse_command_string_rejects_compound() {
-        // && 포함
-        assert!(parse_command_string("ruff check . && mypy .", "린트").is_none());
-        // || 포함
-        assert!(parse_command_string("cargo test || true", "테스트").is_none());
-        // ; 포함
-        assert!(parse_command_string("echo a; echo b", "출력").is_none());
-        // | 포함
-        assert!(parse_command_string("cat file | grep x", "검색").is_none());
-        // $ 포함
-        assert!(parse_command_string("echo $HOME", "출력").is_none());
+    fn parse_command_string_rejects_remaining_metachars() {
+        // && 포함 → 분리 성공 (multi)
+        let cmds = parse_command_string_multi("ruff check . && mypy .", "린트");
+        assert_eq!(cmds.len(), 2);
+        // || 포함 → | 메타문자로 거부
+        assert!(parse_command_string_multi("cargo test || true", "테스트").is_empty());
+        // ; 포함 → 거부
+        assert!(parse_command_string_multi("echo a; echo b", "출력").is_empty());
+        // | 포함 → 거부
+        assert!(parse_command_string_multi("cat file | grep x", "검색").is_empty());
+        // $ 포함 → 거부
+        assert!(parse_command_string_multi("echo $HOME", "출력").is_empty());
     }
 
     #[test]
-    fn parse_command_string_compound_skipped_in_default_verify() {
+    fn parse_command_string_compound_split_in_default_verify() {
         let cfg = WorkspaceConfig {
             tech: Some(WorkspaceTech {
                 stack: None,
@@ -623,11 +631,42 @@ verify_timeout_secs = 30
             }),
             ..Default::default()
         };
-        // 복합 명령은 건너뜀 — lint만 남아야 함
+        // && 복합 명령은 분리 — test 2개 + lint 1개 = 3개
         let cmds = cfg.default_verify_commands();
-        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds.len(), 3);
         assert_eq!(cmds[0].command, "cargo");
-        assert_eq!(cmds[0].args, vec!["clippy"]);
+        assert_eq!(cmds[0].args, vec!["test"]);
+        assert_eq!(cmds[1].command, "echo");
+        assert_eq!(cmds[1].args, vec!["done"]);
+        assert_eq!(cmds[2].command, "cargo");
+        assert_eq!(cmds[2].args, vec!["clippy"]);
+    }
+
+    #[test]
+    fn parse_command_string_multi_splits_and_and() {
+        // && 분리 — 2개 생성
+        let cmds = parse_command_string_multi("ruff check . && mypy .", "린트");
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0].command, "ruff");
+        assert_eq!(cmds[0].args, vec!["check", "."]);
+        assert_eq!(cmds[0].purpose, "린트");
+        assert_eq!(cmds[1].command, "mypy");
+        assert_eq!(cmds[1].args, vec!["."]);
+        assert_eq!(cmds[1].purpose, "린트 (2)");
+
+        // 단순 명령 — 1개
+        let cmds2 = parse_command_string_multi("cargo test", "테스트");
+        assert_eq!(cmds2.len(), 1);
+        assert_eq!(cmds2[0].command, "cargo");
+
+        // | 포함 — 경고 후 빈 목록
+        let cmds3 = parse_command_string_multi("cat file | grep x", "검색");
+        assert!(cmds3.is_empty());
+
+        // && 분리 후 | 포함 부분만 스킵
+        let cmds4 = parse_command_string_multi("ruff check . && cat f | grep x", "혼용");
+        assert_eq!(cmds4.len(), 1);
+        assert_eq!(cmds4[0].command, "ruff");
     }
 
     #[test]

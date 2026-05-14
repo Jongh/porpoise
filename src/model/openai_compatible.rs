@@ -155,25 +155,25 @@ impl ModelAdapter for OpenAiCompatibleAdapter {
 
         // auto: function_calling → json_mode → text_extraction
         let result = if mode == "auto" || mode == "function_calling" {
-            let r = try_function_calling(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, &tool_schema, input);
+            let r = try_function_calling(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, &tool_schema, input, config.verbose);
             if mode == "function_calling" { return r; }
             match r {
                 Ok(o) => return Ok(o),
                 Err(_) => {},
             }
             // json_mode fallback
-            let r2 = try_json_mode(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, is_ollama_endpoint(&url));
+            let r2 = try_json_mode(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, is_ollama_endpoint(&url), config.verbose);
             match r2 {
                 Ok(o) => return Ok(o),
                 Err(_) => {},
             }
             // text_extraction fallback
-            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut *self.raw_text.lock().unwrap())
+            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut *self.raw_text.lock().unwrap(), config.verbose)
         } else if mode == "json_mode" {
-            try_json_mode(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, is_ollama_endpoint(&url))
+            try_json_mode(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, is_ollama_endpoint(&url), config.verbose)
         } else {
             // text_extraction
-            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut *self.raw_text.lock().unwrap())
+            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut *self.raw_text.lock().unwrap(), config.verbose)
         };
 
         result
@@ -195,6 +195,7 @@ fn try_function_calling(
     context_text: &str,
     tool_schema: &serde_json::Value,
     input: &SessionInput,
+    verbose: bool,
 ) -> Result<RoleOutputData> {
     let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
     let body = serde_json::json!({
@@ -216,8 +217,10 @@ fn try_function_calling(
     let arguments = response_json["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
         .as_str()
         .context("function_calling: tool_calls[0].function.arguments 없음")?;
-    println!("\n{}", "[AI 응답 (function_calling)]".dimmed());
-    println!("{}", arguments.dimmed());
+    if verbose {
+        println!("\n{}", "[AI 응답 (function_calling)]".dimmed());
+        println!("{}", arguments.dimmed());
+    }
     let v: serde_json::Value = serde_json::from_str(arguments)?;
     parse_role_output_from_value(&v, &input.role)
 }
@@ -229,6 +232,7 @@ fn try_json_mode(
     context_text: &str,
     input: &SessionInput,
     is_ollama: bool,
+    verbose: bool,
 ) -> Result<RoleOutputData> {
     let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
     let mut body = serde_json::json!({
@@ -249,8 +253,10 @@ fn try_json_mode(
     let content = response_json["choices"][0]["message"]["content"]
         .as_str()
         .context("json_mode: choices[0].message.content 없음")?;
-    println!("\n{}", "[AI 응답 (json_mode)]".dimmed());
-    println!("{}", content.dimmed());
+    if verbose {
+        println!("\n{}", "[AI 응답 (json_mode)]".dimmed());
+        println!("{}", content.dimmed());
+    }
     let v: serde_json::Value = serde_json::from_str(content)
         .context("json_mode: content가 유효한 JSON이 아님")?;
     parse_role_output_from_value(&v, &input.role)
@@ -263,6 +269,7 @@ fn try_text_extraction(
     context_text: &str,
     input: &SessionInput,
     raw_text_out: &mut Option<String>,
+    verbose: bool,
 ) -> Result<RoleOutputData> {
     let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
     let mut messages = vec![serde_json::json!({"role": "user", "content": context_text})];
@@ -280,8 +287,10 @@ fn try_text_extraction(
         .as_str()
         .context("text_extraction: choices[0].message.content 없음")?;
     *raw_text_out = Some(content.to_string());
-    println!("\n{}", "[AI 응답 (text_extraction)]".dimmed());
-    println!("{}", content.dimmed());
+    if verbose {
+        println!("\n{}", "[AI 응답 (text_extraction)]".dimmed());
+        println!("{}", content.dimmed());
+    }
 
     try_parse_json_output(content, &input.role)
         .ok_or_else(|| anyhow::anyhow!("text_extraction: JSON 파싱 실패"))

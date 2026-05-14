@@ -658,7 +658,34 @@ fn filter_gitignored_files(files: Vec<String>) -> Vec<String> {
     files.into_iter().filter(|f| !ignored.contains(&f.replace('\\', "/"))).collect()
 }
 
+fn ensure_porpoise_gitignored(project_root: &std::path::Path) {
+    let gitignore_path = project_root.join(".gitignore");
+    let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let already_present = content.lines().any(|l| {
+        let l = l.trim();
+        l == ".porpoise" || l == ".porpoise/"
+    });
+    if already_present {
+        return;
+    }
+    let entry = if content.ends_with('\n') || content.is_empty() {
+        "\n# Porpoise runtime data\n.porpoise/\n"
+    } else {
+        "\n\n# Porpoise runtime data\n.porpoise/\n"
+    };
+    if let Err(e) = std::fs::write(&gitignore_path, format!("{}{}", content, entry)) {
+        eprintln!("  ⚠  .gitignore 업데이트 실패: {}", e);
+    } else {
+        println!("  {} .gitignore에 .porpoise/ 추가됨 (세션 데이터 커밋 방지)", "ℹ".cyan());
+    }
+}
+
 fn auto_commit(tasks: &[(String, String)]) -> Result<()> {
+    // .gitignore에 .porpoise/ 항목 보장
+    if let Ok(cwd) = std::env::current_dir() {
+        ensure_porpoise_gitignored(&cwd);
+    }
+
     if tasks.is_empty() {
         return Ok(());
     }
@@ -680,7 +707,7 @@ fn auto_commit(tasks: &[(String, String)]) -> Result<()> {
         .collect::<Vec<_>>()
         .join("\n");
     let message = format!("{}\n\n{}", subject, body);
-    let target_paths = [".porpoise/", "Cargo.toml", "Cargo.lock", "src/", "README.md", "wix/"];
+    let target_paths = ["Cargo.toml", "Cargo.lock", "src/", "README.md", "wix/"];
 
     let files = collect_stageable_files(&target_paths)?;
     if files.is_empty() {
@@ -1079,37 +1106,55 @@ fn run_new_format(
 
             let result = execute_role_new(
                 &*adapter, &current_role, input, path, workspace,
-                state.cycle, retry, false, effective_model, logger,
+                state.cycle, retry, false, args.verbose, effective_model, logger,
             );
             spinner.finish_and_clear();
 
             match result {
-                Ok(o) => {
+                Ok(mut o) => {
                     logger.role_end(&current_role.to_string(), state.cycle, true);
 
                     // 파일 미디에이션 후처리: Developer 역할 완료 시 파일 적용 + Verify
                     if adapter.requires_file_mediation() && current_role == Role::Developer {
-                        if let Some(ops) = o.file_operations() {
-                            match crate::workspace::apply::apply_file_operations(path, ops) {
-                                Ok(summary) => println!(
-                                    "  {} 파일 적용: 작성={} 삭제={} 이동={}",
-                                    "✓".green(), summary.files_written, summary.files_deleted, summary.files_renamed
-                                ),
-                                Err(e) => logger.warn("orchestrator", &format!("파일 적용 실패: {}", e)),
+                        // file_operations 검증: changes 있는데 file_operations 없으면 PREV 강제
+                        let has_changes = if let crate::session::RoleOutputData::Development(ref dev_o) = o {
+                            !dev_o.changes.is_empty()
+                        } else { false };
+                        let has_ops = o.file_operations().map_or(false, |ops| !ops.is_empty());
+                        if has_changes && !has_ops {
+                            logger.warn("orchestrator",
+                                "API 모드 Development: file_operations 없음 — 실제 파일 내용을 file_operations에 포함해야 합니다.");
+                            if let crate::session::RoleOutputData::Development(ref mut dev_o) = o {
+                                dev_o.status = session::ExitCode::Prev;
+                                dev_o.prev_reason = Some(
+                                    "file_operations 배열이 비어 있거나 누락되었습니다. \
+                                     API 모드에서는 모든 파일 내용을 file_operations[].content에 포함해야 합니다. \
+                                     changes[]는 설명 요약이며 실제 파일을 생성하지 않습니다.".to_string()
+                                );
                             }
-                        }
-                        let verify_cmds = o.verify_commands().cloned()
-                            .unwrap_or_else(|| workspace.default_verify_commands());
-                        if !verify_cmds.is_empty() {
-                            let results = crate::workspace::executor::run_verify_commands(
-                                path,
-                                &verify_cmds,
-                                &workspace.allowed_command_prefixes(),
-                                workspace.verify_timeout_secs(),
-                            );
-                            let passed = results.iter().filter(|r| r.exit_code == 0).count();
-                            println!("  {} 검증: {}/{} 통과", "✓".green(), passed, results.len());
-                            state.pending_execution_results = results;
+                        } else {
+                            if let Some(ops) = o.file_operations() {
+                                match crate::workspace::apply::apply_file_operations(path, ops) {
+                                    Ok(summary) => println!(
+                                        "  {} 파일 적용: 작성={} 삭제={} 이동={}",
+                                        "✓".green(), summary.files_written, summary.files_deleted, summary.files_renamed
+                                    ),
+                                    Err(e) => logger.warn("orchestrator", &format!("파일 적용 실패: {}", e)),
+                                }
+                            }
+                            let verify_cmds = o.verify_commands().cloned()
+                                .unwrap_or_else(|| workspace.default_verify_commands());
+                            if !verify_cmds.is_empty() {
+                                let results = crate::workspace::executor::run_verify_commands(
+                                    path,
+                                    &verify_cmds,
+                                    &workspace.allowed_command_prefixes(),
+                                    workspace.verify_timeout_secs(),
+                                );
+                                let passed = results.iter().filter(|r| r.exit_code == 0).count();
+                                println!("  {} 검증: {}/{} 통과", "✓".green(), passed, results.len());
+                                state.pending_execution_results = results;
+                            }
                         }
                     }
 
@@ -1476,6 +1521,7 @@ fn execute_role_new(
     cycle: u32,
     retry: u32,
     dry_run: bool,
+    verbose: bool,
     effective_model: Option<&str>,
     logger: &Logger,
 ) -> Result<crate::session::RoleOutputData> {
@@ -1509,6 +1555,7 @@ fn execute_role_new(
     input.retry = retry;
 
     let mut config = make_model_config(workspace, current_role);
+    config.verbose = verbose;
     // args.model 오버라이드
     if let Some(m) = effective_model {
         if !m.is_empty() {

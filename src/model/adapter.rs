@@ -19,6 +19,7 @@ pub struct ModelConfig {
     pub model_id: String,
     pub adapter: AdapterType,
     pub timeout_secs: u32,
+    pub verbose: bool,
 }
 
 impl Default for ModelConfig {
@@ -27,6 +28,7 @@ impl Default for ModelConfig {
             model_id: String::new(),
             adapter: AdapterType::ClaudeCode,
             timeout_secs: 300,
+            verbose: false,
         }
     }
 }

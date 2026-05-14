@@ -172,11 +172,22 @@ submit_report 호출 시 모든 필드를 채우세요:
 
 ---
 
-## API 출력 형식 요약 (submit_report 함수)
+## API 모드 Development 출력 형식 (submit_report 함수 — 필수)
+
+**중요**: 이 세션은 API 모드입니다. 파일을 직접 편집할 수 없습니다.
+모든 파일 변경을 `file_operations` 배열에 담아야 시스템이 실제로 파일을 기록합니다.
+`file_operations` 없이 NEXT를 반환하면 실제 구현이 없는 것으로 간주되어 재작업 요청됩니다.
 
 submit_report 호출 시 모든 필드를 채우세요:
 - `role` = "development", `task_id`, `cycle`, `status` ("NEXT"/"PREV"/"RESP")
-- `summary` = 구현 완료 요약 (필수), `files_changed` = 변경 파일 목록"#,
+- `summary` = 구현 완료 요약 (필수)
+- `file_operations` = 파일 작업 배열 (**API 모드에서 필수**, 빈 배열 금지)
+  각 항목: { "op": "write"|"delete"|"rename", "path": "경로", "content": "전체 파일 내용" }
+  - "write"  : 파일 생성 또는 덮어쓰기 — content에 완성된 전체 코드를 포함할 것
+  - "delete" : 파일 삭제 — content 불필요
+  - "rename" : 파일 이동 — new_path 필드 추가
+- `changes` = 변경 요약 목록 (설명문, 코드 미포함 — 기존과 동일)
+- `changes[].file` = 파일 경로, `changes[].change_type` = "created"/"modified"/"deleted", `changes[].description` = 변경 설명"#,
 
         "testing" => r#"
 

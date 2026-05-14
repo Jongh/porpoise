@@ -55,5 +55,6 @@ pub fn make_model_config(workspace: &WorkspaceConfig, role: &Role) -> ModelConfi
         model_id,
         adapter: adapter_type,
         timeout_secs: 300,
+        verbose: false,
     }
 }

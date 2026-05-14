@@ -115,13 +115,15 @@ impl ModelAdapter for AnthropicApiAdapter {
             .as_array()
             .context("응답에 content 배열 없음")?;
 
-        // AI 응답 콘솔 출력
-        for block in content {
-            if block["type"] == "text" {
-                if let Some(text) = block["text"].as_str() {
-                    if !text.trim().is_empty() {
-                        println!("\n{}", "[AI 텍스트 응답]".dimmed());
-                        println!("{}", text.dimmed());
+        // AI 응답 콘솔 출력 (--verbose 시에만)
+        if config.verbose {
+            for block in content {
+                if block["type"] == "text" {
+                    if let Some(text) = block["text"].as_str() {
+                        if !text.trim().is_empty() {
+                            println!("\n{}", "[AI 텍스트 응답]".dimmed());
+                            println!("{}", text.dimmed());
+                        }
                     }
                 }
             }
@@ -130,8 +132,10 @@ impl ModelAdapter for AnthropicApiAdapter {
         for block in content {
             if block["type"] == "tool_use" && block["name"] == "submit_report" {
                 let pretty = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
-                println!("\n{}", "[AI submit_report]".dimmed());
-                println!("{}", pretty.dimmed());
+                if config.verbose {
+                    println!("\n{}", "[AI submit_report]".dimmed());
+                    println!("{}", pretty.dimmed());
+                }
                 let tool_input = &block["input"];
                 return parse_role_output_from_value(tool_input, &input.role);
             }

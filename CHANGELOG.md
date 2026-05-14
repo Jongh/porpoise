@@ -4,6 +4,19 @@
 
 ---
 
+### [v0.12.0]
+- **`issues_found` 역직렬화 버그 수정**: API 모드 testing 역할에서 `issues_found` 필드가 `Vec<String>` → `Vec<IssueFound>` 구조체 배열로 변경, 방어적 deserializer 추가 — 문자열·객체 양쪽 형식 처리 가능
+- **`print_error()` 에러 유형별 메시지**: `resolve_hint()` 함수 추가 — 프로그램 미설치·권한 오류·네트워크 오류·API 키 누락 등 6가지 유형별 해결 안내 출력
+- **`.context()` 4곳 보완**: 에디터 실행 실패(`input.rs`), 마일스톤 입력 실패(`milestone_session.rs` 2곳), API 응답 JSON 파싱 실패(`anthropic_api.rs`, `openai_compatible.rs`) — 에러 원인 전파 개선
+- **lint 명령 단순화**: Python `"ruff check . && mypy ."` → `"ruff check ."`, TypeScript `"npx eslint . && npx tsc --noEmit"` → `"npx eslint ."` — `&&` 메타문자로 인한 `parse_command_string` 건너뜀 버그 수정
+- **시작 시 의존성 검사 (`deps.rs` 신설)**: 실행 시 `workspace.toml` 기반 필수 명령어 설치 여부 확인, 미설치 항목은 OS별 설치 방법 안내 후 종료 (`--new`·`clean`·`approve` 시 스킵)
+- **`verify_commands` 배열 필드 추가**: `workspace.toml [tech]`에 `verify_commands` 배열 지원 — 복수 검증 명령을 `&&` 없이 개별 지정, 기존 `test_command`·`lint_command` 폴백 유지
+- **`workspace.toml` 기본 템플릿 OS별 명령 예시**: `default_toml()`에 `verify_commands` 배열 예시 및 Windows/macOS·Linux OS별 파일 조작 명령 허용 주석 추가
+- **언어 템플릿 OS별 파일 명령 자동 삽입**: `LangTemplate`에 `allowed_file_commands_windows/unix` 필드 추가, `porpoise --new` 시 현재 OS에 맞는 파일 명령(`powershell`/`cp mv rm` 등)이 `allowed_command_prefixes`에 자동 포함
+- **API 어댑터 AI 응답 콘솔 출력**: `anthropic_api`·`openai_compatible` 어댑터에서 AI 텍스트 응답 및 submit_report 내용을 콘솔에 출력 (디버깅 가시성 향상)
+- **API 모드 JSON 출력 형식 안내 강화**: `api_json_format_hint()` 신설 — 역할별 submit_report 필드 안내를 시스템 프롬프트에 자동 주입
+- **테스트 추가**: 6개 신규 테스트 (총 189개)
+
 ### [v0.11.1]
 - **API 역직렬화 방어 처리 전체 적용**: `PlanningOutput`·`DevelopmentOutput`·`TestingOutput`·`ReviewOutput`·`MilestoneOutput`의 모든 비-`Option` 필드에 `#[serde(default)]` 추가 — API 어댑터 응답에서 필드 누락 시 `missing field` 크래시 방지
 - **`status` 기본값 수정**: `ExitCode::default()`(`Resp`)가 아닌 `ExitCode::Next`로 기본값 지정 — `status` 필드 누락 시 잘못된 라우팅 방지

@@ -136,6 +136,14 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.13.0]
+- **API 모드 Development `file_operations` 필수화**: 프롬프트 힌트 + `development_schema.json required` + 오케스트레이터 3중 강제 — `changes[]` 있는데 `file_operations` 없으면 즉시 PREV 전환 및 안내 메시지 출력 (파일 미생성 → 무한 사이클 버그 수정)
+- **AI 응답 원문 출력 `--verbose` 전용 제한**: `[AI 텍스트 응답]`, `[AI submit_report]`, `[AI 응답 (json_mode)]` 등 5개 출력 블록이 `--verbose` 플래그 시에만 표시 — `ModelConfig.verbose` 필드 추가, `execute_role_new()` → 어댑터 전달 경로 완성
+- **`&&` 복합 명령 자동 분리 (`parse_command_string_multi`)**: `"ruff check . && mypy ."` 같은 복합 명령을 `&&` 기준으로 자동 분리하여 각각의 `VerifyCommand`로 실행 — `|`, `;`, `` ` ``, `$` 포함 명령은 기존과 동일하게 경고 후 건너뜀
+- **커밋 전 `.gitignore` 자동 검증**: `auto_commit()` 진입 시 `.porpoise/` 항목을 `.gitignore`에 자동 추가 (파일 없으면 생성) — 세션·로그 파일 대용량 커밋 방지
+- **`auto_commit()` target_paths에서 `.porpoise/` 제거**: porpoise 런타임 데이터(sessions, reports, hints)가 자동 커밋 대상에서 영구 제외
+- **테스트 추가**: 1개 신규 테스트 (총 190개)
+
 ### [v0.12.0]
 - **`issues_found` 역직렬화 버그 수정**: API 모드 testing 역할에서 `issues_found` 필드가 `Vec<String>` → `Vec<IssueFound>` 구조체 배열로 변경, 방어적 deserializer 추가 — 문자열·객체 양쪽 형식 처리 가능
 - **`print_error()` 에러 유형별 메시지**: `resolve_hint()` 함수 추가 — 프로그램 미설치·권한 오류·네트워크 오류·API 키 누락 등 6가지 유형별 해결 안내 출력
