@@ -4,6 +4,12 @@
 
 ---
 
+### [v0.11.1]
+- **API 역직렬화 방어 처리 전체 적용**: `PlanningOutput`·`DevelopmentOutput`·`TestingOutput`·`ReviewOutput`·`MilestoneOutput`의 모든 비-`Option` 필드에 `#[serde(default)]` 추가 — API 어댑터 응답에서 필드 누락 시 `missing field` 크래시 방지
+- **`status` 기본값 수정**: `ExitCode::default()`(`Resp`)가 아닌 `ExitCode::Next`로 기본값 지정 — `status` 필드 누락 시 잘못된 라우팅 방지
+- **`review_status` 기본값 추가**: 누락 시 `"CHANGES_REQUESTED"`로 보수적 처리
+- **`default_exit_code_next` 공용 함수화**: `session/output.rs`로 이동하여 모든 구조체에서 공유
+
 ### [v0.11.0]
 - **API 마일스톤 역직렬화 수정**: `MilestoneOutput.role`·`milestone_id`에 `#[serde(default)]` 추가 — `anthropic_api`·`openai_compatible` 어댑터에서 마일스톤 생성 시 `missing field` 오류로 중단되던 버그 수정
 - **마일스톤 생성 완료 후 파일 출력**: `claude_code`·API 어댑터 양 경로 모두 마일스톤 생성 완료 시 생성된 `M{n}.md` 파일 전체 내용을 콘솔에 출력

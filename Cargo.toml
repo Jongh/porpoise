@@ -1,6 +1,6 @@
 [package]
 name = "porpoise"
-version = "0.11.1"
+version = "0.12.0"
 edition = "2021"
 description = "Software development orchestration tool powered by Claude Code"
 authors = ["김종현"]
