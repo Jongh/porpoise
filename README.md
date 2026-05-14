@@ -6,6 +6,8 @@ Software development orchestration tool powered by Claude Code.
 
 Porpoise automates the full software development workflow by orchestrating **Planning → Development → Testing → Review** session cycles using Claude Code. It generates structured reports between sessions to maintain context continuity and minimizes user interruptions.
 
+> **주의**: API 모드(`anthropic_api`, `openai_compatible` 어댑터)는 현재 실사용이 어려운 수준의 오류가 다수 존재합니다. 안정적인 사용을 위해서는 **Claude Code 어댑터** 사용을 권장합니다. API 모드 개선은 향후 버전에서 진행될 예정입니다.
+
 ## Installation
 
 ### Windows
