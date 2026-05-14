@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use colored::Colorize;
 use std::sync::Mutex;
 
 use crate::model::adapter::{ModelAdapter, ModelConfig};
-use crate::model::context::{build_context_text, parse_role_output_from_value};
+use crate::model::context::{api_json_format_hint, build_context_text, parse_role_output_from_value};
 use crate::session::input::SessionInput;
 use crate::session::output::RoleOutputData;
 
@@ -32,10 +33,16 @@ fn get_role_system_prompt(role: &str) -> &'static str {
 }
 
 fn resolve_role_system_prompt(role: &str, role_extra: &str) -> String {
-    get_role_system_prompt(role)
+    let base = get_role_system_prompt(role)
         .replace("{{role_extra}}", role_extra)
         .trim()
-        .to_string()
+        .to_string();
+    let hint = api_json_format_hint(role);
+    if hint.is_empty() {
+        base
+    } else {
+        format!("{}{}", base, hint)
+    }
 }
 
 pub struct AnthropicApiAdapter {
@@ -106,8 +113,23 @@ impl ModelAdapter for AnthropicApiAdapter {
             .as_array()
             .context("응답에 content 배열 없음")?;
 
+        // AI 응답 콘솔 출력
+        for block in content {
+            if block["type"] == "text" {
+                if let Some(text) = block["text"].as_str() {
+                    if !text.trim().is_empty() {
+                        println!("\n{}", "[AI 텍스트 응답]".dimmed());
+                        println!("{}", text.dimmed());
+                    }
+                }
+            }
+        }
+
         for block in content {
             if block["type"] == "tool_use" && block["name"] == "submit_report" {
+                let pretty = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
+                println!("\n{}", "[AI submit_report]".dimmed());
+                println!("{}", pretty.dimmed());
                 let tool_input = &block["input"];
                 return parse_role_output_from_value(tool_input, &input.role);
             }

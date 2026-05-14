@@ -110,6 +110,77 @@ pub fn parse_role_output_from_value(v: &serde_json::Value, role: &str) -> Result
     }
 }
 
+/// API 어댑터 시스템 프롬프트 하단에 추가할 JSON 출력 형식 안내.
+/// 마일스톤은 tmpl에 JSON 섹션이 없어 필수적이며, 나머지 역할은 강화용이다.
+pub fn api_json_format_hint(role: &str) -> &'static str {
+    match role {
+        "milestone" => r#"
+
+---
+
+## API 모드 출력 형식 (submit_report 함수 — 필수)
+
+**주의**: 이 세션은 API 모드입니다. 마일스톤 파일을 직접 생성하지 마세요.
+대신 submit_report 함수를 호출하여 아래 필드를 **모두** 채워 제출하세요 (시스템이 파일을 자동 생성합니다):
+
+- `role` = "milestone" (고정값)
+- `milestone_id` = 마일스톤 ID (예: "M1") — **필수**
+- `status` = "NEXT" (생성 완료) | "RESP" (추가 정보 필요)
+- `title` = 마일스톤 제목 — **필수, 빈 값 금지**
+- `version` = 버전 문자열 (예: "v0.1.0"), 없으면 빈 문자열 ""
+- `goal` = 마일스톤 전체 목표 서술 — **필수**
+- `summary` = 마일스톤 생성 요약 한 문단
+- `background` = 배경 설명 (없으면 null)
+- `constraints` = 제약사항 목록 (없으면 [])
+- `tasks` = 작업 항목 배열 — **필수**, 형식: `[{"id": "M1-T01", "title": "작업 제목"}, ...]`
+- `questions` = RESP 시 확인 질문 목록 (없으면 [])"#,
+
+        "planning" => r#"
+
+---
+
+## API 출력 형식 요약 (submit_report 함수)
+
+submit_report 호출 시 모든 필드를 채우세요:
+- `role` = "planning", `task_id`, `cycle`, `status` ("NEXT"/"PREV"/"RESP")
+- `summary` = 작업 요약 (필수), `implementation_plan` = 구현 단계 배열
+- `dod_checklist` = 완료 기준 배열, `risks` = 리스크 목록"#,
+
+        "development" => r#"
+
+---
+
+## API 출력 형식 요약 (submit_report 함수)
+
+submit_report 호출 시 모든 필드를 채우세요:
+- `role` = "development", `task_id`, `cycle`, `status` ("NEXT"/"PREV"/"RESP")
+- `summary` = 구현 완료 요약 (필수), `files_changed` = 변경 파일 목록"#,
+
+        "testing" => r#"
+
+---
+
+## API 출력 형식 요약 (submit_report 함수)
+
+submit_report 호출 시 모든 필드를 채우세요:
+- `role` = "testing", `task_id`, `cycle`, `status` ("NEXT"/"PREV"/"RESP")
+- `summary` = 테스트 결과 요약 (필수), `test_cases` = 테스트 케이스 배열"#,
+
+        "review" => r#"
+
+---
+
+## API 출력 형식 요약 (submit_report 함수)
+
+submit_report 호출 시 모든 필드를 채우세요:
+- `role` = "review", `task_id`, `cycle`, `status` ("NEXT"/"PREV"/"RESP")
+- `review_status` = "APPROVED" | "CHANGES_REQUESTED"
+- `summary` = 리뷰 요약 (필수), `findings` = 발견 사항 배열, `milestone_complete` = true/false"#,
+
+        _ => "",
+    }
+}
+
 /// JSON 파싱 시도 (전체 JSON → ```json 블록 → 첫 번째 { ... } 추출 순서로 시도).
 pub fn try_parse_json_output(raw: &str, role: &str) -> Option<RoleOutputData> {
     // 1) 전체가 JSON인지 시도

@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, bail};
+use colored::Colorize;
 use std::sync::Mutex;
 
 use crate::model::adapter::{ModelAdapter, ModelConfig};
-use crate::model::context::{build_context_text, parse_role_output_from_value, try_parse_json_output};
+use crate::model::context::{api_json_format_hint, build_context_text, parse_role_output_from_value, try_parse_json_output};
 use crate::session::input::SessionInput;
 use crate::session::output::RoleOutputData;
 
@@ -32,10 +33,16 @@ fn get_role_system_prompt(role: &str) -> &'static str {
 }
 
 fn resolve_role_system_prompt(role: &str, role_extra: &str) -> String {
-    get_role_system_prompt(role)
+    let base = get_role_system_prompt(role)
         .replace("{{role_extra}}", role_extra)
         .trim()
-        .to_string()
+        .to_string();
+    let hint = api_json_format_hint(role);
+    if hint.is_empty() {
+        base
+    } else {
+        format!("{}{}", base, hint)
+    }
 }
 
 pub struct OpenAiCompatibleAdapter {
@@ -209,6 +216,8 @@ fn try_function_calling(
     let arguments = response_json["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
         .as_str()
         .context("function_calling: tool_calls[0].function.arguments 없음")?;
+    println!("\n{}", "[AI 응답 (function_calling)]".dimmed());
+    println!("{}", arguments.dimmed());
     let v: serde_json::Value = serde_json::from_str(arguments)?;
     parse_role_output_from_value(&v, &input.role)
 }
@@ -240,6 +249,8 @@ fn try_json_mode(
     let content = response_json["choices"][0]["message"]["content"]
         .as_str()
         .context("json_mode: choices[0].message.content 없음")?;
+    println!("\n{}", "[AI 응답 (json_mode)]".dimmed());
+    println!("{}", content.dimmed());
     let v: serde_json::Value = serde_json::from_str(content)
         .context("json_mode: content가 유효한 JSON이 아님")?;
     parse_role_output_from_value(&v, &input.role)
@@ -269,6 +280,8 @@ fn try_text_extraction(
         .as_str()
         .context("text_extraction: choices[0].message.content 없음")?;
     *raw_text_out = Some(content.to_string());
+    println!("\n{}", "[AI 응답 (text_extraction)]".dimmed());
+    println!("{}", content.dimmed());
 
     try_parse_json_output(content, &input.role)
         .ok_or_else(|| anyhow::anyhow!("text_extraction: JSON 파싱 실패"))
