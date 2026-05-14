@@ -20,8 +20,8 @@ pub struct TestingOutput {
     pub test_cases: Vec<TestCase>,
     #[serde(default)]
     pub overall_result: String,
-    #[serde(default)]
-    pub issues_found: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_issues_found")]
+    pub issues_found: Vec<IssueFound>,
     pub regression_check: Option<RegressionCheck>,
 }
 
@@ -43,4 +43,31 @@ pub struct RegressionCheck {
     pub passed: u32,
     #[serde(default)]
     pub failed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IssueFound {
+    #[serde(default)]
+    pub severity: String,
+    pub location: Option<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+fn deserialize_issues_found<'de, D>(deserializer: D) -> Result<Vec<IssueFound>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .map(|v| match v {
+            serde_json::Value::String(s) => IssueFound {
+                severity: "Unknown".to_string(),
+                location: None,
+                description: s,
+            },
+            obj => serde_json::from_value::<IssueFound>(obj).unwrap_or_default(),
+        })
+        .collect())
 }

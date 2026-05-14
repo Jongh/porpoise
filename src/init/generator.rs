@@ -171,12 +171,22 @@ fn workspace_toml_from_template(
         .iter()
         .map(|c| format!("    \"{}\",\n", c))
         .collect();
-    let prefixes: String = t
+    let mut all_prefixes: Vec<String> = t
         .default_allowed_command_prefixes
         .iter()
         .map(|p| format!("\"{}\"", p))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect();
+
+    let file_cmds = if cfg!(target_os = "windows") {
+        t.allowed_file_commands_windows
+    } else {
+        t.allowed_file_commands_unix
+    };
+    for cmd in file_cmds {
+        all_prefixes.push(format!("\"{}\"", cmd));
+    }
+
+    let prefixes = all_prefixes.join(", ");
 
     let model_section = model_toml_section(model_template);
 

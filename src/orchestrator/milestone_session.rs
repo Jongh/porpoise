@@ -72,7 +72,8 @@ fn run_milestone_via_claude_runner(
         println!("  - 작업 1 설명");
         println!("  - 작업 2 설명");
 
-        let user_input = collect_multiline_input("마일스톤 정보")?;
+        let user_input = collect_multiline_input("마일스톤 정보")
+            .context("마일스톤 정보 입력 실패")?;
         if user_input.trim().is_empty() {
             println!("{}", "입력이 없습니다. 취소됨.".yellow());
             return Ok(());
@@ -214,7 +215,8 @@ fn run_milestone_via_api(
         println!("  - 작업 1 설명");
         println!("  - 작업 2 설명");
 
-        let user_input = collect_multiline_input("마일스톤 정보")?;
+        let user_input = collect_multiline_input("마일스톤 정보")
+            .context("마일스톤 정보 입력 실패")?;
         if user_input.trim().is_empty() {
             println!("{}", "입력이 없습니다. 취소됨.".yellow());
             return Ok(());
