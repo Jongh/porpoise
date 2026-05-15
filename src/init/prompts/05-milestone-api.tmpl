@@ -30,9 +30,9 @@ Porpoise가 이 필드를 기반으로 `.porpoise/milestones/M{{next_milestone_i
 
 ---
 
-## submit_report 필드 명세 (필수)
+## submit_report 필드 명세 — JSON 출력 형식 (필수)
 
-`submit_report` 도구를 호출하여 결과를 제출합니다. 별도 텍스트 출력 없이 도구 호출만 수행하세요.
+`submit_report` 도구를 호출하여 결과를 제출합니다. 도구 호출을 지원하는 환경에서는 별도 텍스트 없이 도구 호출만 수행하세요. 도구 호출이 불가능한 경우(json_mode)에는 아래 명세와 일치하는 JSON 객체를 텍스트로 직접 출력하세요.
 
 | 필드 | 타입 | 필수 | 설명 |
 |------|------|------|------|

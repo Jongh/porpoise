@@ -33,6 +33,14 @@
         },
         "required": ["severity", "description"]
       }
+    },
+    "regression_check": {
+      "type": ["object", "null"],
+      "properties": {
+        "total_tests": {"type": "integer"},
+        "passed": {"type": "integer"},
+        "failed": {"type": "integer"}
+      }
     }
   },
   "required": ["role", "task_id", "cycle", "status", "summary", "questions", "test_cases", "overall_result", "issues_found"]

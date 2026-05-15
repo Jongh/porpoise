@@ -99,12 +99,19 @@ impl ModelAdapter for AnthropicApiAdapter {
             request_body["system"] = serde_json::Value::String(system_prompt);
         }
 
-        let response = ureq::post("https://api.anthropic.com/v1/messages")
+        let response = match ureq::post("https://api.anthropic.com/v1/messages")
             .set("x-api-key", &api_key)
             .set("anthropic-version", "2023-06-01")
             .set("content-type", "application/json")
             .send_json(&request_body)
-            .context("Anthropic API 호출 실패")?;
+        {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, resp)) => {
+                let body_text = resp.into_string().unwrap_or_default();
+                anyhow::bail!("Anthropic API HTTP {}: {}", code, body_text);
+            }
+            Err(e) => return Err(anyhow::Error::new(e).context("Anthropic API 호출 실패")),
+        };
 
         let response_json: serde_json::Value = response
             .into_json()

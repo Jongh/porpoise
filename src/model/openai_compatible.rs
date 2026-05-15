@@ -311,9 +311,14 @@ fn post_json(
         request = request.set("Authorization", &format!("Bearer {}", key));
     }
 
-    let response = request
-        .send_json(body)
-        .context(format!("POST {} 실패", url))?;
+    let response = match request.send_json(body) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, resp)) => {
+            let body_text = resp.into_string().unwrap_or_default();
+            anyhow::bail!("POST {} HTTP {}: {}", url, code, body_text);
+        }
+        Err(e) => return Err(anyhow::Error::new(e).context(format!("POST {} 실패", url))),
+    };
 
     response
         .into_json()

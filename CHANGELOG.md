@@ -4,6 +4,12 @@
 
 ---
 
+### [v0.14.2]
+- **API 프롬프트 json_mode 폴백 지시 추가**: API 전용 템플릿 5종(`01~05-*-api.tmpl`)의 `submit_report 필드 명세` 섹션 헤더를 "JSON 출력 형식"으로 변경하고 json_mode 폴백 지시 추가 — 도구 호출 불가 환경에서 JSON 객체를 텍스트로 직접 출력하도록 안내, `EOF while parsing` 에러 방지
+- **IMP-02 오탐 수정**: API 전용 프롬프트 템플릿 섹션 헤더에 "JSON 출력 형식" 문자열 포함 — API 프롬프트 최신 상태에서도 IMP-02 경고가 발생하던 오탐 수정
+- **`testing_schema.json` `regression_check` 추가**: Rust 구조체의 `regression_check: Option<RegressionCheck>` 필드를 JSON 스키마 `properties`에 추가 — 스키마-구조체 정렬
+- **HTTP 에러 응답 바디 포함**: `openai_compatible.rs` `post_json()` 및 `anthropic_api.rs` inline ureq 호출에서 HTTP 에러 발생 시 상태 코드와 응답 본문을 에러 메시지에 포함 — API 에러 원인 파악 개선
+
 ### [v0.14.1]
 - **초기화 시 어댑터 모드 기반 프롬프트 분기 버그 수정**: `porpoise --new`에서 API 어댑터(`anthropic_api`, `openai_compatible`)를 선택해도 CC 전용 프롬프트가 생성되던 버그 수정 — `generator.rs`에 `use_api_templates` 분기 추가, API 어댑터 선택 시 `*-api.tmpl` 5종을 `.porpoise/prompts/`에 배포
 - **테스트 추가**: 4개 신규 테스트 (총 194개)
