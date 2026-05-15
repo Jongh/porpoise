@@ -14,12 +14,12 @@ const TESTING_SCHEMA: &str = include_str!("schemas/testing_schema.json");
 const REVIEW_SCHEMA: &str = include_str!("schemas/review_schema.json");
 const MILESTONE_SCHEMA: &str = include_str!("schemas/milestone_schema.json");
 
-// 역할 프롬프트 템플릿 임베딩
-const PLANNING_PROMPT: &str = include_str!("../init/prompts/01-planning.tmpl");
-const DEVELOPMENT_PROMPT: &str = include_str!("../init/prompts/02-development.tmpl");
-const TESTING_PROMPT: &str = include_str!("../init/prompts/03-testing.tmpl");
-const REVIEW_PROMPT: &str = include_str!("../init/prompts/04-review.tmpl");
-const MILESTONE_PROMPT: &str = include_str!("../init/prompts/05-milestone.tmpl");
+// 단계 프롬프트 템플릿 임베딩
+const PLANNING_PROMPT: &str = include_str!("../init/prompts/01-planning-api.tmpl");
+const DEVELOPMENT_PROMPT: &str = include_str!("../init/prompts/02-development-api.tmpl");
+const TESTING_PROMPT: &str = include_str!("../init/prompts/03-testing-api.tmpl");
+const REVIEW_PROMPT: &str = include_str!("../init/prompts/04-review-api.tmpl");
+const MILESTONE_PROMPT: &str = include_str!("../init/prompts/05-milestone-api.tmpl");
 
 fn get_role_system_prompt(role: &str) -> &'static str {
     match role {
@@ -82,13 +82,14 @@ impl ModelAdapter for AnthropicApiAdapter {
         let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
         let context_text = build_context_text(input);
 
+        let max_tokens: u32 = if input.role == "development" { 16384 } else { 4096 };
         let mut request_body = serde_json::json!({
             "model": config.model_id,
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": context_text}],
             "tools": [{
                 "name": "submit_report",
-                "description": "역할 완료 결과를 구조화된 JSON으로 제출합니다",
+                "description": "단계 완료 결과를 구조화된 JSON으로 제출합니다",
                 "input_schema": tool_schema
             }],
             "tool_choice": {"type": "tool", "name": "submit_report"}

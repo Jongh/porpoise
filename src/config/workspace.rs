@@ -314,14 +314,14 @@ items = [
 custom_rules = []
 
 [roles]
-# 각 역할 프롬프트에 추가될 지시사항 (비어 있으면 생략됩니다)
+# 각 단계 프롬프트에 추가될 지시사항 (비어 있으면 생략됩니다)
 pm_extra = ""
 developer_extra = ""
 tester_extra = ""
 reviewer_extra = ""
 
 [prompt_overrides]
-# 역할 프롬프트를 완전히 교체할 파일 경로 (주석 처리하면 기본 템플릿 사용)
+# 단계 프롬프트를 완전히 교체할 파일 경로 (주석 처리하면 기본 템플릿 사용)
 # pm = ".porpoise/custom-prompts/01-planning.md"
 # developer = ".porpoise/custom-prompts/02-development.md"
 # tester = ".porpoise/custom-prompts/03-testing.md"

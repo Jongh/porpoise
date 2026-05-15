@@ -258,7 +258,7 @@ fn run_milestone_via_api(
                 if m.title.is_empty() {
                     anyhow::bail!(
                         "API 어댑터가 마일스톤 제목을 반환하지 않았습니다.\n\
-                         milestone 역할 프롬프트(05-milestone.md)와 스키마를 확인하세요."
+                         milestone 단계 프롬프트(05-milestone.md)와 스키마를 확인하세요."
                     );
                 }
                 let milestone_id = m.milestone_id.trim_start_matches('M').parse::<u32>().unwrap_or(next_id);

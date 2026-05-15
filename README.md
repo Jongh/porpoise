@@ -6,7 +6,7 @@ Software development orchestration tool powered by Claude Code.
 
 Porpoise automates the full software development workflow by orchestrating **Planning → Development → Testing → Review** session cycles using Claude Code. It generates structured reports between sessions to maintain context continuity and minimizes user interruptions.
 
-> **주의**: API 모드(`anthropic_api`, `openai_compatible` 어댑터)는 현재 실사용이 어려운 수준의 오류가 다수 존재합니다. 안정적인 사용을 위해서는 **Claude Code 어댑터** 사용을 권장합니다. API 모드 개선은 향후 버전에서 진행될 예정입니다.
+> **참고**: API 모드(`anthropic_api`, `openai_compatible` 어댑터)는 v0.14.0에서 전용 프롬프트 분리, Development `max_tokens` 증가, 스키마 개선 등이 적용되었습니다. 안정적인 사용을 위해서는 **Claude Code 어댑터** 사용을 우선 권장합니다.
 
 ## Installation
 
@@ -137,6 +137,13 @@ prev_target: development
 Allowed values for `prev_target`: `development`, `testing`. Omit to restart from Planning (default).
 
 ## CHANGELOG
+
+### [v0.14.0]
+- **CC / API 전용 프롬프트 분리**: `01-planning.tmpl` 등 기존 CC 전용 템플릿과 별도로 `01-planning-api.tmpl` 등 API 전용 템플릿 5종 신설 — CC 어댑터와 API 어댑터가 각각 최적화된 지시사항·출력 형식을 사용
+- **Development `max_tokens` 증가**: API 어댑터에서 Development 단계 `max_tokens`를 4096 → 16384으로 증가 — 파일 작성 중 토큰 한도 도달로 인한 응답 잘림 방지
+- **`api_json_format_hint()` 인라인 주입 제거**: 런타임 시스템 프롬프트 주입 방식을 폐기하고 힌트를 API 전용 템플릿 내부로 이전 — 중복 주입 문제 해소
+- **`development_schema.json` null 타입 제거**: `file_operations` 배열에서 null 허용 타입을 제거하여 API 모드에서 항상 배열 형식으로 응답하도록 스키마 강제
+- **단계 명칭 통일**: 프롬프트 템플릿 10종 및 소스코드 전체에서 '역할' → '단계', 'PM·Developer·Tester·Reviewer' → 'Planning·Development·Testing·Review' 명칭 통일 (소스 25개 위치)
 
 ### [v0.13.0]
 - **API 모드 Development `file_operations` 필수화**: 프롬프트 힌트 + `development_schema.json required` + 오케스트레이터 3중 강제 — `changes[]` 있는데 `file_operations` 없으면 즉시 PREV 전환 및 안내 메시지 출력 (파일 미생성 → 무한 사이클 버그 수정)

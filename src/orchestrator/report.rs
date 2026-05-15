@@ -35,9 +35,9 @@ pub struct Report {
     pub milestone_complete: bool,
     pub questions: Vec<String>,
     pub exit_code: Option<ExitCode>,
-    /// PREV 시 복귀 대상 역할 (PORPOISE_META prev_target 필드)
+    /// PREV 시 복귀 대상 단계 (PORPOISE_META prev_target 필드)
     pub prev_target: Option<String>,
-    /// Reviewer가 동시 완료를 확인한 task ID 목록 (PORPOISE_META completed_tasks 필드)
+    /// Review 단계에서 동시 완료를 확인한 task ID 목록 (PORPOISE_META completed_tasks 필드)
     pub completed_tasks: Vec<String>,
 }
 

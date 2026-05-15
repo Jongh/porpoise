@@ -14,12 +14,12 @@ const TESTING_SCHEMA: &str = include_str!("schemas/testing_schema.json");
 const REVIEW_SCHEMA: &str = include_str!("schemas/review_schema.json");
 const MILESTONE_SCHEMA: &str = include_str!("schemas/milestone_schema.json");
 
-// 역할 프롬프트 템플릿 임베딩
-const PLANNING_PROMPT: &str = include_str!("../init/prompts/01-planning.tmpl");
-const DEVELOPMENT_PROMPT: &str = include_str!("../init/prompts/02-development.tmpl");
-const TESTING_PROMPT: &str = include_str!("../init/prompts/03-testing.tmpl");
-const REVIEW_PROMPT: &str = include_str!("../init/prompts/04-review.tmpl");
-const MILESTONE_PROMPT: &str = include_str!("../init/prompts/05-milestone.tmpl");
+// 단계 프롬프트 템플릿 임베딩
+const PLANNING_PROMPT: &str = include_str!("../init/prompts/01-planning-api.tmpl");
+const DEVELOPMENT_PROMPT: &str = include_str!("../init/prompts/02-development-api.tmpl");
+const TESTING_PROMPT: &str = include_str!("../init/prompts/03-testing-api.tmpl");
+const REVIEW_PROMPT: &str = include_str!("../init/prompts/04-review-api.tmpl");
+const MILESTONE_PROMPT: &str = include_str!("../init/prompts/05-milestone-api.tmpl");
 
 fn get_role_system_prompt(role: &str) -> &'static str {
     match role {
@@ -198,16 +198,17 @@ fn try_function_calling(
     verbose: bool,
 ) -> Result<RoleOutputData> {
     let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
+    let max_tokens: u32 = if input.role == "development" { 16384 } else { 4096 };
     let body = serde_json::json!({
         "model": model_id,
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
         "messages": [
-            {"role": "system", "content": if system_prompt.is_empty() { "역할에 맞는 결과를 submit_report 함수로 반드시 제출하세요.".to_string() } else { system_prompt }},
+            {"role": "system", "content": if system_prompt.is_empty() { "단계에 맞는 결과를 submit_report 함수로 반드시 제출하세요.".to_string() } else { system_prompt }},
             {"role": "user", "content": context_text}
         ],
         "tools": [{"type": "function", "function": {
             "name": "submit_report",
-            "description": "역할 완료 결과를 구조화된 JSON으로 제출합니다",
+            "description": "단계 완료 결과를 구조화된 JSON으로 제출합니다",
             "parameters": tool_schema
         }}],
         "tool_choice": {"type": "function", "function": {"name": "submit_report"}}
@@ -235,9 +236,10 @@ fn try_json_mode(
     verbose: bool,
 ) -> Result<RoleOutputData> {
     let system_prompt = resolve_role_system_prompt(&input.role, &input.role_extra);
+    let max_tokens: u32 = if input.role == "development" { 16384 } else { 4096 };
     let mut body = serde_json::json!({
         "model": model_id,
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": if system_prompt.is_empty() { "JSON 형식으로만 응답하세요.".to_string() } else { system_prompt }},
             {"role": "user", "content": context_text}
@@ -276,9 +278,10 @@ fn try_text_extraction(
     if !system_prompt.is_empty() {
         messages.insert(0, serde_json::json!({"role": "system", "content": system_prompt}));
     }
+    let max_tokens: u32 = if input.role == "development" { 16384 } else { 4096 };
     let body = serde_json::json!({
         "model": model_id,
-        "max_tokens": 4096,
+        "max_tokens": max_tokens,
         "messages": messages
     });
 

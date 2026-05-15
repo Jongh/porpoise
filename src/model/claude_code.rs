@@ -40,7 +40,7 @@ impl ModelAdapter for ClaudeCodeAdapter {
             ),
         };
 
-        // 역할 프롬프트 파일 경로
+        // 단계 프롬프트 파일 경로
         let prompt_filename = role_to_prompt_file(&input.role);
         let prompt_file = self.project_path.join(".porpoise").join("prompts").join(prompt_filename);
 
@@ -140,7 +140,7 @@ pub fn build_context_from_input(input: &SessionInput) -> String {
         parts.push(format!("=== 기술 스택 ===\n{}", tech));
     }
 
-    // 이전 역할 보고서들 (마크다운 렌더링)
+    // 이전 단계 보고서들 (마크다운 렌더링)
     if let Some(ref planning) = input.previous_reports.planning {
         let md = renderer::render_planning(planning, input);
         parts.push(format!("=== 이전 planning 보고서 ===\n{}", md));

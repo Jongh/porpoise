@@ -209,7 +209,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
 
         // ── 라우팅 결정 ──────────────────────────────────────────────────────
         // reports/ 파일이 있으면 종료 코드로 라우팅 (실행 없음)
-        // 없으면 RESP: messages/ 도 없으면 역할 실행 후 RESP
+        // 없으면 RESP: messages/ 도 없으면 단계 실행 후 RESP
         let (exit_code, rpt_content) = if let Some(ref rf) = rpt_file {
             let content = std::fs::read_to_string(rf).unwrap_or_default();
             // [1] 종료 코드 없음 → NEXT 폴백 금지, 명시적 중단
@@ -237,11 +237,11 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             }
         } else {
             // RESP 상황 -------------------------------------------------------
-            // messages/ 가 없으면 역할을 먼저 실행한다
+            // messages/ 가 없으면 단계를 먼저 실행한다
             if msg_file.is_none() {
                 if args.dry_run {
                     // dry-run: 실행 없이 NEXT로 처리
-                    println!("{}", "  [dry-run] 역할 실행 후 RESP — NEXT로 처리".dimmed());
+                    println!("{}", "  [dry-run] 단계 실행 후 RESP — NEXT로 처리".dimmed());
                     state.completed_roles.push(current_role.clone());
                     state.current_role = current_role.next();
                     continue;
@@ -386,7 +386,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                             logger.warn("reviewer", &format!("Task mark failed: {}", e));
                         }
                     } else {
-                        println!("{}", "  [dry-run] Reviewer NEXT — 자동 커밋 스킵".dimmed());
+                        println!("{}", "  [dry-run] Review NEXT — 자동 커밋 스킵".dimmed());
                     }
 
                     if !args.dry_run && all_tasks_done(path) {
@@ -455,7 +455,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             }
 
             ExitCode::Prev => {
-                // [2] prev_target 메타데이터가 있으면 해당 역할부터 재시작 (사이클 유지)
+                // [2] prev_target 메타데이터가 있으면 해당 단계부터 재시작 (사이클 유지)
                 let target_role = parse_prev_target(&rpt_content)
                     .and_then(|t| Role::from_str(&t));
 
@@ -467,7 +467,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
                         println!(
                             "{}",
                             format!(
-                                "  ← PREV → {} 역할부터 재시작 (사이클 {} 유지)",
+                                "  ← PREV → {} 단계부터 재시작 (사이클 {} 유지)",
                                 role.display_name(),
                                 state.cycle
                             )
@@ -1065,9 +1065,9 @@ fn run_new_format(
         let output_data = if let Some(o) = cached_output {
             o
         } else {
-            // 현재 사이클의 세션 없음 → 역할 실행
+            // 현재 사이클의 세션 없음 → 단계 실행
             if args.dry_run {
-                println!("{}", "  [dry-run] 역할 실행 후 NEXT로 처리".dimmed());
+                println!("{}", "  [dry-run] 단계 실행 후 NEXT로 처리".dimmed());
                 state.completed_roles.push(current_role.clone());
                 state.current_role = current_role.next();
                 continue;
@@ -1089,7 +1089,7 @@ fn run_new_format(
             // SessionInput 구성
             let mut input = build_session_input(&state, path, workspace)?;
 
-            // 이전 Developer 역할의 실행 결과 주입
+            // 이전 Development 단계의 실행 결과 주입
             if !state.pending_execution_results.is_empty() {
                 input.execution_results = std::mem::take(&mut state.pending_execution_results);
             }
@@ -1114,7 +1114,7 @@ fn run_new_format(
                 Ok(mut o) => {
                     logger.role_end(&current_role.to_string(), state.cycle, true);
 
-                    // 파일 미디에이션 후처리: Developer 역할 완료 시 파일 적용 + Verify
+                    // 파일 미디에이션 후처리: Development 단계 완료 시 파일 적용 + Verify
                     if adapter.requires_file_mediation() && current_role == Role::Developer {
                         // file_operations 검증: changes 있는데 file_operations 없으면 PREV 강제
                         let has_changes = if let crate::session::RoleOutputData::Development(ref dev_o) = o {
@@ -1172,7 +1172,7 @@ fn run_new_format(
             }
         };
 
-        // 역할 리포트 파일 출력 (fresh 실행·캐시 재사용 공통)
+        // 단계 리포트 파일 출력 (fresh 실행·캐시 재사용 공통)
         {
             let reports_dir = path.join(".porpoise").join("reports");
             if let Some(report_path) = find_latest_report(&reports_dir, &current_role.to_string(), &state.current_task_id) {
@@ -1228,7 +1228,7 @@ fn run_new_format(
                         let _ = mark_tasks_complete(path, &commit_ids, logger);
 
                         if output_data.milestone_complete() && !all_tasks_done(path) {
-                            println!("{}", "⚠  Reviewer가 milestone_complete=true를 반환했지만 project.md에 미완료 작업이 있습니다. project.md를 확인하세요.".yellow());
+                            println!("{}", "⚠  Review 단계에서 milestone_complete=true를 반환했지만 project.md에 미완료 작업이 있습니다. project.md를 확인하세요.".yellow());
                             logger.warn("reviewer", "milestone_complete=true 반환, all_tasks_done=false — project.md 불일치");
                         }
                     }
@@ -1429,7 +1429,7 @@ fn build_session_input(
         }
     };
 
-    // 이전 역할 세션 로드
+    // 이전 단계 세션 로드
     let load_output = |role_str: &str| -> Option<crate::session::RoleOutputData> {
         let sf = crate::session::find_latest_session(path, &state.current_task_id, role_str)?;
         let content = std::fs::read_to_string(&sf).ok()?;

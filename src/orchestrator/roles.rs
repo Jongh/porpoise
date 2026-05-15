@@ -158,7 +158,7 @@ pub fn build_context(role: &Role, cycle: u32, path: &Path, task_id: &str) -> Rol
         }
     }
 
-    // For PM: include PREV reason files from reports/ (max 5).
+    // For Planning: include PREV reason files from reports/ (max 5).
     // reports/ holds Claude's formatted reports which contain the PREV reason and instructions.
     if matches!(role, Role::PM) && reports_dir.exists() {
         for f in find_prev_additional_files(&reports_dir, task_id).into_iter().take(5) {

@@ -23,7 +23,7 @@
     "test_instructions": {"type": "string"},
     "known_issues": {"type": "array", "items": {"type": "string"}},
     "file_operations": {
-      "type": ["array", "null"],
+      "type": "array",
       "items": {
         "type": "object",
         "properties": {
