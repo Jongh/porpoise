@@ -138,6 +138,10 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.14.1]
+- **초기화 시 어댑터 모드 기반 프롬프트 분기 버그 수정**: `porpoise --new`에서 API 어댑터(`anthropic_api`, `openai_compatible`)를 선택해도 CC 전용 프롬프트가 생성되던 버그 수정 — `generator.rs`에 `use_api_templates` 분기 추가, API 어댑터 선택 시 `*-api.tmpl` 5종을 `.porpoise/prompts/`에 배포
+- **테스트 추가**: 4개 신규 테스트 (총 194개)
+
 ### [v0.14.0]
 - **CC / API 전용 프롬프트 분리**: `01-planning.tmpl` 등 기존 CC 전용 템플릿과 별도로 `01-planning-api.tmpl` 등 API 전용 템플릿 5종 신설 — CC 어댑터와 API 어댑터가 각각 최적화된 지시사항·출력 형식을 사용
 - **Development `max_tokens` 증가**: API 어댑터에서 Development 단계 `max_tokens`를 4096 → 16384으로 증가 — 파일 작성 중 토큰 한도 도달로 인한 응답 잘림 방지

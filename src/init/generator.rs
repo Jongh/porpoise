@@ -19,6 +19,12 @@ const REVIEWER_TEMPLATE: &str = include_str!("prompts/04-review.tmpl");
 // {{next_milestone_id}} in this template is a runtime variable — not substituted at init time.
 const MILESTONE_TEMPLATE: &str = include_str!("prompts/05-milestone.tmpl");
 
+const PM_API_TEMPLATE: &str = include_str!("prompts/01-planning-api.tmpl");
+const DEVELOPER_API_TEMPLATE: &str = include_str!("prompts/02-development-api.tmpl");
+const TESTER_API_TEMPLATE: &str = include_str!("prompts/03-testing-api.tmpl");
+const REVIEWER_API_TEMPLATE: &str = include_str!("prompts/04-review-api.tmpl");
+const MILESTONE_API_TEMPLATE: &str = include_str!("prompts/05-milestone-api.tmpl");
+
 const MODEL_EXAMPLE_COMMENT: &str = r#"
 # === 모델 설정 (아래 주석 해제하여 사용) ===
 # [model]
@@ -124,13 +130,27 @@ pub fn generate_docs(
     write_file(&orche_path, &orche_content, path)?;
     println!("  {} {}", "Created:".green(), orche_path.display());
 
+    // API 어댑터 선택 시 API 전용 템플릿 사용 (claude_code 또는 미선택 시 CC 템플릿)
+    let use_api_templates = model_template
+        .map(|m| m.template.adapter != "claude_code")
+        .unwrap_or(false);
+
     // Role prompts — workspace overrides and extras applied
-    let role_prompts: &[(&str, &str, &str)] = &[
-        ("01-planning.md", PM_TEMPLATE, "pm"),
-        ("02-development.md", DEVELOPER_TEMPLATE, "developer"),
-        ("03-testing.md", TESTER_TEMPLATE, "tester"),
-        ("04-review.md", REVIEWER_TEMPLATE, "reviewer"),
-    ];
+    let role_prompts: &[(&str, &str, &str)] = if use_api_templates {
+        &[
+            ("01-planning.md", PM_API_TEMPLATE, "pm"),
+            ("02-development.md", DEVELOPER_API_TEMPLATE, "developer"),
+            ("03-testing.md", TESTER_API_TEMPLATE, "tester"),
+            ("04-review.md", REVIEWER_API_TEMPLATE, "reviewer"),
+        ]
+    } else {
+        &[
+            ("01-planning.md", PM_TEMPLATE, "pm"),
+            ("02-development.md", DEVELOPER_TEMPLATE, "developer"),
+            ("03-testing.md", TESTER_TEMPLATE, "tester"),
+            ("04-review.md", REVIEWER_TEMPLATE, "reviewer"),
+        ]
+    };
 
     for (filename, template, role_key) in role_prompts {
         let content = match workspace.prompt_override_content(role_key, path) {
@@ -150,8 +170,9 @@ pub fn generate_docs(
 
     // 05-milestone.md — {{next_milestone_id}} is a runtime variable substituted by milestone_session.
     // Write the template as-is so the placeholder survives until runtime.
+    let milestone_template = if use_api_templates { MILESTONE_API_TEMPLATE } else { MILESTONE_TEMPLATE };
     let milestone_path = prompts_dir.join("05-milestone.md");
-    write_file(&milestone_path, MILESTONE_TEMPLATE, path)?;
+    write_file(&milestone_path, milestone_template, path)?;
     println!("  {} {}", "Created:".green(), milestone_path.display());
 
     Ok(())
@@ -690,5 +711,92 @@ mod tests {
 
         let cfg: WorkspaceConfig = toml::from_str(&ws_content).unwrap();
         assert_eq!(cfg.openai_api_base_url(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn api_adapter_uses_api_templates() {
+        use crate::init::model_template::{ResolvedModel, ANTHROPIC_CLAUDE_SONNET};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &ANTHROPIC_CLAUDE_SONNET,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        for filename in &["01-planning.md", "02-development.md", "03-testing.md", "04-review.md", "05-milestone.md"] {
+            let content = std::fs::read_to_string(
+                path.join(".porpoise").join("prompts").join(filename)
+            ).unwrap();
+            assert!(
+                content.contains("submit_report"),
+                "{} should use API template (contain 'submit_report')", filename
+            );
+        }
+    }
+
+    #[test]
+    fn openai_adapter_uses_api_templates() {
+        use crate::init::model_template::{ResolvedModel, OPENAI_CODEX};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &OPENAI_CODEX,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        let planning = std::fs::read_to_string(
+            path.join(".porpoise").join("prompts").join("01-planning.md")
+        ).unwrap();
+        assert!(planning.contains("submit_report"), "01-planning.md should use API template");
+    }
+
+    #[test]
+    fn claude_code_adapter_uses_cc_templates() {
+        use crate::init::model_template::{ResolvedModel, CLAUDE_CODE_DEFAULT};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &CLAUDE_CODE_DEFAULT,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        let planning = std::fs::read_to_string(
+            path.join(".porpoise").join("prompts").join("01-planning.md")
+        ).unwrap();
+        assert!(!planning.contains("submit_report"), "01-planning.md should use CC template (not API)");
+        assert!(planning.contains("NEXT"), "01-planning.md should contain NEXT exit code (CC template)");
+    }
+
+    #[test]
+    fn no_model_template_uses_cc_templates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+
+        generate_docs(&ctx, path, &workspace, None, None).unwrap();
+
+        let planning = std::fs::read_to_string(
+            path.join(".porpoise").join("prompts").join("01-planning.md")
+        ).unwrap();
+        assert!(!planning.contains("submit_report"), "미선택 시 CC 템플릿을 사용해야 함");
     }
 }
