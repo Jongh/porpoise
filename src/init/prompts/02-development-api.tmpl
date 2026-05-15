@@ -48,14 +48,35 @@
 - "기존 코드와 동일한 부분 생략" 처리
 - 설명 텍스트나 주석으로 대체
 
-### 올바른 예
+### 올바른 예 — 단일 파일
 
 ```json
-{
-  "op": "write",
-  "path": "src/utils/parser.rs",
-  "content": "use std::collections::HashMap;\n\npub fn parse_token(s: &str) -> Option<Token> {\n    // 전체 구현 내용\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_parse_token() {\n        assert!(parse_token(\"valid\").is_some());\n    }\n}\n"
-}
+[
+  {
+    "op": "write",
+    "path": "src/utils/parser.rs",
+    "content": "use std::collections::HashMap;\n\npub fn parse_token(s: &str) -> Option<Token> {\n    // 전체 구현 내용\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn test_parse_token() {\n        assert!(parse_token(\"valid\").is_some());\n    }\n}\n"
+  }
+]
+```
+
+### 올바른 예 — 여러 파일 (반드시 별도 배열 항목으로 분리)
+
+파일이 2개 이상인 경우 각 파일을 **배열의 별도 항목**으로 작성해야 합니다.
+
+```json
+[
+  {
+    "op": "write",
+    "path": "src/main.rs",
+    "content": "fn main() {\n    // 전체 내용\n}\n"
+  },
+  {
+    "op": "write",
+    "path": "src/utils.rs",
+    "content": "pub fn helper() {}\n"
+  }
+]
 ```
 
 ### 잘못된 예 (절대 금지)
@@ -67,6 +88,19 @@
   "content": "// parse_token 함수에 HashMap 처리 추가"
 }
 ```
+
+중복 키 병합 — **절대 금지**:
+
+```json
+[
+  {
+    "op": "write", "path": "src/main.rs", "content": "...",
+    "op": "write", "path": "src/utils.rs", "content": "..."
+  }
+]
+```
+
+위와 같이 하나의 객체에 `op`, `path` 키를 중복 작성하면 마지막 키만 남고 앞의 파일이 유실됩니다.
 
 ### op 종류
 

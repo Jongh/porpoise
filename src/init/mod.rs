@@ -5,7 +5,7 @@ pub mod model_template;
 pub mod template;
 pub mod tree;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::Confirm;
 use std::path::Path;
@@ -204,4 +204,209 @@ fn get_model_overrides(
 fn is_interactive() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal()
+}
+
+pub fn run_update_prompt(path: &Path) -> Result<()> {
+    println!("{}", "\n=== 프롬프트 재생성 ===".cyan().bold());
+
+    let workspace = WorkspaceConfig::load(path)?;
+    generator::generate_prompts_only(path, &workspace)?;
+
+    println!("{}", "\n프롬프트 재생성 완료.".green().bold());
+    Ok(())
+}
+
+pub fn run_update_config(path: &Path) -> Result<()> {
+    println!("{}", "\n=== 설정 업데이트 ===".cyan().bold());
+
+    let ws_path = path.join(".porpoise").join("workspace.toml");
+    if !ws_path.exists() {
+        anyhow::bail!(
+            "workspace.toml을 찾을 수 없습니다. 먼저 porpoise를 실행하여 프로젝트를 초기화하세요."
+        );
+    }
+
+    let mut content = std::fs::read_to_string(&ws_path)?;
+
+    if let Some(lang) = select_lang_for_update() {
+        content = update_language_in_toml(&content, lang);
+        println!("  {} 언어: {}", "✓".green(), lang);
+    }
+
+    if let Some(resolved) = select_model_for_update() {
+        let new_section = generator::model_toml_section(Some(&resolved));
+        content = replace_model_section_in_toml(&content, &new_section);
+        println!("  {} 모델: {}", "✓".green(), resolved.template.display_name);
+    }
+
+    std::fs::write(&ws_path, &content)
+        .with_context(|| format!("workspace.toml 쓰기 실패: {}", ws_path.display()))?;
+    println!("{}", "\n설정 업데이트 완료.".green().bold());
+
+    Ok(())
+}
+
+fn select_lang_for_update() -> Option<&'static str> {
+    if !is_interactive() {
+        return None;
+    }
+    let items = ["한국어 (ko)", "English (en)"];
+    match dialoguer::Select::new()
+        .with_prompt("언어를 선택하세요")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+    {
+        Ok(Some(0)) => Some("ko"),
+        Ok(Some(1)) => Some("en"),
+        _ => None,
+    }
+}
+
+fn select_model_for_update() -> Option<ResolvedModel> {
+    if !is_interactive() {
+        return None;
+    }
+    let items: Vec<&str> = model_template::ALL_TEMPLATES
+        .iter()
+        .map(|t| t.display_name)
+        .chain(std::iter::once("변경 안 함"))
+        .collect();
+
+    let idx = match dialoguer::Select::new()
+        .with_prompt("모델 템플릿을 선택하세요")
+        .items(&items)
+        .default(0)
+        .interact_opt()
+    {
+        Ok(Some(i)) if i < model_template::ALL_TEMPLATES.len() => i,
+        _ => return None,
+    };
+
+    let template = model_template::ALL_TEMPLATES[idx];
+    let (model_id, api_key_env, api_base_url) = get_model_overrides(template);
+
+    Some(ResolvedModel { template, model_id, api_key_env, api_base_url })
+}
+
+fn update_language_in_toml(content: &str, new_lang: &str) -> String {
+    let mut result: Vec<String> = Vec::new();
+    let mut in_general = false;
+    let mut replaced = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_general = trimmed == "[general]";
+        }
+        if in_general && !replaced && trimmed.starts_with("language") && trimmed.contains('=') {
+            result.push(format!("language = \"{}\"", new_lang));
+            replaced = true;
+        } else {
+            result.push(line.to_string());
+        }
+    }
+
+    if !replaced {
+        let mut prefix = format!("[general]\nlanguage = \"{}\"\n\n", new_lang);
+        prefix.push_str(&result.join("\n"));
+        if content.ends_with('\n') && !prefix.ends_with('\n') {
+            prefix.push('\n');
+        }
+        return prefix;
+    }
+
+    let joined = result.join("\n");
+    if content.ends_with('\n') { format!("{}\n", joined) } else { joined }
+}
+
+fn replace_model_section_in_toml(content: &str, new_section: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut model_start: Option<usize> = None;
+    let mut model_end = lines.len();
+
+    for (i, &line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "[model]" {
+            let start = if i > 0 && lines[i - 1].trim().starts_with('#') {
+                i - 1
+            } else {
+                i
+            };
+            model_start = Some(start);
+        } else if model_start.is_some() && trimmed.starts_with('[') && !trimmed.is_empty() {
+            model_end = i;
+            break;
+        }
+    }
+
+    let before: Vec<&str> = match model_start {
+        Some(start) => lines[..start].to_vec(),
+        None => lines.clone(),
+    };
+    let after: Vec<&str> = if model_start.is_some() && model_end < lines.len() {
+        lines[model_end..].to_vec()
+    } else {
+        vec![]
+    };
+
+    let mut result = before.join("\n");
+    if !new_section.is_empty() {
+        if !result.ends_with('\n') && !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(new_section.trim_end_matches('\n'));
+        result.push('\n');
+    }
+    if !after.is_empty() {
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&after.join("\n"));
+    }
+    if content.ends_with('\n') && !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn update_language_replaces_existing() {
+        let toml = "[general]\nlanguage = \"ko\"\n";
+        let result = update_language_in_toml(toml, "en");
+        assert!(result.contains("language = \"en\""));
+        assert!(!result.contains("language = \"ko\""));
+    }
+
+    #[test]
+    fn update_language_prepends_when_absent() {
+        let toml = "[dod]\nitems = []\n";
+        let result = update_language_in_toml(toml, "en");
+        assert!(result.contains("[general]"));
+        assert!(result.contains("language = \"en\""));
+    }
+
+    #[test]
+    fn replace_model_section_removes_old_and_appends_new() {
+        let toml = "[general]\nlanguage = \"ko\"\n\n# === 모델 설정 ===\n[model]\nadapter = \"claude_code\"\n";
+        let new_section = "\n# === 모델 설정 — Anthropic ===\n[model]\nadapter = \"anthropic_api\"\n";
+        let result = replace_model_section_in_toml(toml, new_section);
+        assert!(!result.contains("claude_code"));
+        assert!(result.contains("anthropic_api"));
+        assert!(result.contains("[general]"));
+    }
+
+    #[test]
+    fn replace_model_section_appends_when_absent() {
+        let toml = "[general]\nlanguage = \"ko\"\n";
+        let new_section = "\n[model]\nadapter = \"anthropic_api\"\n";
+        let result = replace_model_section_in_toml(toml, new_section);
+        assert!(result.contains("[model]"));
+        assert!(result.contains("anthropic_api"));
+        assert!(result.contains("[general]"));
+    }
 }

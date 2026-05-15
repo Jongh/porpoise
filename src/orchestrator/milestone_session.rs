@@ -261,22 +261,21 @@ fn run_milestone_via_api(
                          milestone 단계 프롬프트(05-milestone.md)와 스키마를 확인하세요."
                     );
                 }
-                let milestone_id = m.milestone_id.trim_start_matches('M').parse::<u32>().unwrap_or(next_id);
-                write_milestone_file(path, &m, milestone_id)
+                write_milestone_file(path, &m, next_id)
                     .context("M{n}.md 파일 생성 실패")?;
                 let milestone = milestone_output_to_milestone(&m, next_id);
                 append_milestone_to_project_md(path, &milestone)?;
                 logger.info(
                     "milestone_session",
-                    &format!("마일스톤 생성 완료 (API): M{} — {}", milestone_id, m.title),
+                    &format!("마일스톤 생성 완료 (API): M{} — {}", next_id, m.title),
                 );
                 println!(
                     "  {} M{}: {}",
                     "✓ 마일스톤 생성 완료".green(),
-                    milestone_id,
+                    next_id,
                     m.title
                 );
-                let milestone_file = path.join(".porpoise").join("milestones").join(format!("M{}.md", milestone_id));
+                let milestone_file = path.join(".porpoise").join("milestones").join(format!("M{}.md", next_id));
                 if let Ok(content) = std::fs::read_to_string(&milestone_file) {
                     println!();
                     for line in content.lines() {
@@ -346,13 +345,23 @@ fn write_milestone_file(
 
     content.push_str("\n## 작업 목록\n");
     for task in &output.tasks {
-        content.push_str(&format!("- [ ] {}: {}\n", task.id, task.title));
+        let task_id = normalize_task_id(&task.id, id);
+        content.push_str(&format!("- [ ] {}: {}\n", task_id, task.title));
     }
 
     let file_path = milestones_dir.join(format!("M{}.md", id));
     std::fs::write(&file_path, &content)
         .with_context(|| format!("M{}.md 파일 쓰기 실패: {}", id, file_path.display()))?;
     Ok(())
+}
+
+fn normalize_task_id(task_id: &str, correct_id: u32) -> String {
+    if let Some(rest) = task_id.strip_prefix('M') {
+        if let Some(dash_pos) = rest.find('-') {
+            return format!("M{}{}", correct_id, &rest[dash_pos..]);
+        }
+    }
+    task_id.to_string()
 }
 
 fn milestone_output_to_milestone(
@@ -362,20 +371,19 @@ fn milestone_output_to_milestone(
     use crate::orchestrator::state::Task;
     use std::collections::HashMap;
 
-    let id = output.milestone_id.trim_start_matches('M').parse::<u32>().unwrap_or(next_id);
     let version = if output.version.is_empty() {
         None
     } else {
         Some(output.version.clone())
     };
     let tasks: Vec<Task> = output.tasks.iter().map(|t| Task {
-        id: t.id.clone(),
+        id: normalize_task_id(&t.id, next_id),
         title: t.title.clone(),
         completed: false,
     }).collect();
 
     Milestone {
-        id,
+        id: next_id,
         title: output.title.clone(),
         version,
         tasks,

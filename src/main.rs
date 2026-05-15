@@ -17,6 +17,14 @@ use std::path::Path;
 use config::Config;
 
 #[derive(Subcommand, Debug)]
+pub enum UpdateCommands {
+    /// Regenerate .porpoise/prompts/ files based on current adapter type
+    Prompt,
+    /// Re-select language and model in workspace.toml
+    Config,
+}
+
+#[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Archive old messages to .porpoise/messages/archive/
     Clean {
@@ -32,6 +40,11 @@ pub enum Commands {
         /// Verdict: NEXT or PREV (default: NEXT)
         #[arg(default_value = "NEXT")]
         verdict: String,
+    },
+    /// Update prompts or config without full re-initialization
+    Update {
+        #[command(subcommand)]
+        subcommand: UpdateCommands,
     },
 }
 
@@ -91,6 +104,10 @@ fn run() -> Result<()> {
             Commands::Approve { verdict } => {
                 return run_approve(&current_dir, verdict);
             }
+            Commands::Update { subcommand } => match subcommand {
+                UpdateCommands::Prompt => return init::run_update_prompt(&current_dir),
+                UpdateCommands::Config => return init::run_update_config(&current_dir),
+            },
         }
     }
 

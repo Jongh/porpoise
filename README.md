@@ -138,6 +138,14 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.15.0]
+- **`porpoise update prompt` 서브커맨드 신설**: `--new` 없이 `.porpoise/prompts/` 6종만 재생성 — `workspace.toml` 어댑터 타입(`claude_code` / `anthropic_api` / `openai_compatible`) 기반으로 CC·API 템플릿 분기 유지, 프로젝트 데이터(milestones, sessions) 무변경
+- **`porpoise update config` 서브커맨드 신설**: 언어 및 모델 재선택 대화상자 — `workspace.toml [general].language`와 `[model]` 섹션만 갱신, 기존 `[dod]`·`[conventions]`·`[tech]` 설정 유지
+- **최초 마일스톤 M2 오탐 수정**: `05-milestone-api.tmpl` 예시 값(`"M2"`, `M2-T01`)을 `"M1"`, `M1-T01`으로 변경 + `milestone_session.rs`에서 모델 반환 `milestone_id` 무시 및 `next_id` 강제 적용 — json_mode에서 항상 M2가 생성되던 버그 수정
+- **task ID 자동 정규화**: `normalize_task_id()` 추가 — 모델이 잘못된 마일스톤 번호를 포함한 task ID(`M2-T01`)를 반환해도 실제 `next_id` 기준으로 재정규화(`M1-T01`) 후 파일에 기록
+- **`file_operations` 중복 키 버그 방지**: `02-development-api.tmpl` 다중 파일 "올바른 예"(배열 별도 항목) 및 중복 키 "절대 금지" 예시 추가 — 하나의 JSON 객체에 `op`·`path` 키를 중복 작성하면 앞 파일이 유실됨을 명시
+- **테스트 추가**: 4개 신규 테스트 (총 198개)
+
 ### [v0.14.2]
 - **API 프롬프트 json_mode 폴백 지시 추가**: API 전용 템플릿 5종(`01~05-*-api.tmpl`)의 `submit_report 필드 명세` 섹션 헤더를 "JSON 출력 형식"으로 변경하고 json_mode 폴백 지시 추가 — 도구 호출 불가 환경에서 JSON 객체를 텍스트로 직접 출력하도록 안내, `EOF while parsing` 에러 방지
 - **IMP-02 오탐 수정**: API 전용 프롬프트 템플릿 섹션 헤더에 "JSON 출력 형식" 문자열 포함 — API 프롬프트 최신 상태에서도 IMP-02 경고가 발생하던 오탐 수정

@@ -178,6 +178,67 @@ pub fn generate_docs(
     Ok(())
 }
 
+/// Regenerate only `.porpoise/prompts/` files without touching workspace.toml or other files.
+pub fn generate_prompts_only(path: &Path, workspace: &WorkspaceConfig) -> Result<()> {
+    use crate::model::adapter::AdapterType;
+
+    let project_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string();
+
+    let prompts_dir = path.join(".porpoise").join("prompts");
+    std::fs::create_dir_all(&prompts_dir)
+        .with_context(|| format!("prompts/ 디렉토리 생성 실패: {}", prompts_dir.display()))?;
+
+    let use_api_templates = !matches!(workspace.model_adapter_type(), AdapterType::ClaudeCode);
+
+    let orche_content = apply_template(ORCHE_TEMPLATE, &[("project_name", &project_name)]);
+    let orche_path = prompts_dir.join("00-orche.md");
+    write_file(&orche_path, &orche_content, path)?;
+    println!("  {} {}", "Updated:".green(), orche_path.display());
+
+    let role_prompts: &[(&str, &str, &str)] = if use_api_templates {
+        &[
+            ("01-planning.md", PM_API_TEMPLATE, "pm"),
+            ("02-development.md", DEVELOPER_API_TEMPLATE, "developer"),
+            ("03-testing.md", TESTER_API_TEMPLATE, "tester"),
+            ("04-review.md", REVIEWER_API_TEMPLATE, "reviewer"),
+        ]
+    } else {
+        &[
+            ("01-planning.md", PM_TEMPLATE, "pm"),
+            ("02-development.md", DEVELOPER_TEMPLATE, "developer"),
+            ("03-testing.md", TESTER_TEMPLATE, "tester"),
+            ("04-review.md", REVIEWER_TEMPLATE, "reviewer"),
+        ]
+    };
+
+    for (filename, template, role_key) in role_prompts {
+        let content = match workspace.prompt_override_content(role_key, path) {
+            Some(override_content) => {
+                println!("  {} {} (오버라이드)", "→".yellow(), filename);
+                override_content
+            }
+            None => {
+                let extra = workspace.role_extra_formatted(role_key);
+                apply_template(template, &[("role_extra", &extra)])
+            }
+        };
+        let prompt_path = prompts_dir.join(filename);
+        write_file(&prompt_path, &content, path)?;
+        println!("  {} {}", "Updated:".green(), prompt_path.display());
+    }
+
+    let milestone_template = if use_api_templates { MILESTONE_API_TEMPLATE } else { MILESTONE_TEMPLATE };
+    let milestone_path = prompts_dir.join("05-milestone.md");
+    write_file(&milestone_path, milestone_template, path)?;
+    println!("  {} {}", "Updated:".green(), milestone_path.display());
+
+    Ok(())
+}
+
 fn workspace_toml_from_template(
     t: &LangTemplate,
     model_template: Option<&crate::init::model_template::ResolvedModel>,
@@ -266,7 +327,7 @@ fn workspace_toml_default(model_template: Option<&crate::init::model_template::R
     content
 }
 
-fn model_toml_section(resolved: Option<&crate::init::model_template::ResolvedModel>) -> String {
+pub fn model_toml_section(resolved: Option<&crate::init::model_template::ResolvedModel>) -> String {
     let Some(r) = resolved else {
         return String::new();
     };
