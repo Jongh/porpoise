@@ -48,6 +48,26 @@ pub static OPENAI_CODEX: ModelTemplate = ModelTemplate {
     snapshot_token_budget: Some(80_000),
 };
 
+pub static GROQ: ModelTemplate = ModelTemplate {
+    display_name: "Groq / Llama 3.3 70B (무료 티어)",
+    adapter: "openai_compatible",
+    model_id: Some("llama-3.3-70b-versatile"),
+    api_base_url: Some("https://api.groq.com/openai/v1"),
+    api_key_env: Some("GROQ_API_KEY"),
+    structured_output_mode: Some("json_mode"),
+    snapshot_token_budget: Some(80_000),
+};
+
+pub static GEMINI: ModelTemplate = ModelTemplate {
+    display_name: "Google Gemini API / Gemini 2.0 Flash (무료 티어)",
+    adapter: "openai_compatible",
+    model_id: Some("gemini-2.0-flash"),
+    api_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai"),
+    api_key_env: Some("GEMINI_API_KEY"),
+    structured_output_mode: Some("json_mode"),
+    snapshot_token_budget: Some(80_000),
+};
+
 pub static OLLAMA_LOCAL: ModelTemplate = ModelTemplate {
     display_name: "OpenAI-compatible / Ollama 로컬 모델",
     adapter: "openai_compatible",
@@ -61,6 +81,8 @@ pub static OLLAMA_LOCAL: ModelTemplate = ModelTemplate {
 pub static ALL_TEMPLATES: &[&ModelTemplate] = &[
     &CLAUDE_CODE_DEFAULT,
     &ANTHROPIC_CLAUDE_SONNET,
+    &GROQ,
+    &GEMINI,
     &OPENAI_CODEX,
     &OLLAMA_LOCAL,
 ];
@@ -79,6 +101,37 @@ mod tests {
 
     #[test]
     fn includes_required_choice_count_before_custom() {
-        assert_eq!(ALL_TEMPLATES.len(), 4);
+        assert_eq!(ALL_TEMPLATES.len(), 6);
+    }
+
+    #[test]
+    fn groq_template_fields() {
+        assert_eq!(GROQ.adapter, "openai_compatible");
+        assert_eq!(GROQ.model_id, Some("llama-3.3-70b-versatile"));
+        assert_eq!(GROQ.api_base_url, Some("https://api.groq.com/openai/v1"));
+        assert_eq!(GROQ.api_key_env, Some("GROQ_API_KEY"));
+        assert_eq!(GROQ.structured_output_mode, Some("json_mode"));
+        assert!(GROQ.snapshot_token_budget.is_some());
+    }
+
+    #[test]
+    fn gemini_template_fields() {
+        assert_eq!(GEMINI.adapter, "openai_compatible");
+        assert_eq!(GEMINI.model_id, Some("gemini-2.0-flash"));
+        assert_eq!(
+            GEMINI.api_base_url,
+            Some("https://generativelanguage.googleapis.com/v1beta/openai")
+        );
+        assert_eq!(GEMINI.api_key_env, Some("GEMINI_API_KEY"));
+        assert_eq!(GEMINI.structured_output_mode, Some("json_mode"));
+        assert!(GEMINI.snapshot_token_budget.is_some());
+    }
+
+    #[test]
+    fn groq_gemini_appear_in_all_templates() {
+        let has_groq = ALL_TEMPLATES.iter().any(|t| t.display_name.contains("Groq"));
+        let has_gemini = ALL_TEMPLATES.iter().any(|t| t.display_name.contains("Gemini"));
+        assert!(has_groq, "ALL_TEMPLATES에 Groq 템플릿이 없음");
+        assert!(has_gemini, "ALL_TEMPLATES에 Gemini 템플릿이 없음");
     }
 }

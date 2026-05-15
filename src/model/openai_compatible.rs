@@ -76,7 +76,9 @@ impl OpenAiCompatibleAdapter {
 
     fn chat_completions_url(&self) -> String {
         let base = self.api_base_url.trim_end_matches('/');
-        if base.ends_with("/v1") {
+        // "/v1"로 끝나거나 "/openai"로 끝나면 바로 /chat/completions 붙임
+        // (예: Gemini는 ...v1beta/openai 로 끝남 — /v1 추가 불필요)
+        if base.ends_with("/v1") || base.ends_with("/openai") {
             format!("{}/chat/completions", base)
         } else {
             format!("{}/v1/chat/completions", base)
@@ -375,6 +377,19 @@ mod tests {
             "https://api.openai.com".to_string(), None, "auto".to_string(),
         );
         assert!(a.chat_completions_url().ends_with("/chat/completions"));
+    }
+
+    #[test]
+    fn chat_completions_url_gemini_openai_suffix() {
+        let a = OpenAiCompatibleAdapter::new(
+            "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+            None,
+            "json_mode".to_string(),
+        );
+        assert_eq!(
+            a.chat_completions_url(),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
     }
 
     #[test]

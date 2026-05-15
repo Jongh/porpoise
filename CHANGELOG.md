@@ -4,6 +4,10 @@
 
 ---
 
+### [v0.15.1]
+- **Gemini `chat_completions_url` 버그 수정**: `openai_compatible` 어댑터의 URL 생성 로직이 `/v1`로 끝나지 않는 엔드포인트(`...v1beta/openai`)에 잘못된 `/v1/chat/completions`를 붙이던 버그 수정 — Gemini API 엔드포인트가 항상 404를 반환하던 문제 해소, 조건에 `ends_with("/openai")` 분기 추가
+- **테스트 추가**: 1개 신규 테스트 `chat_completions_url_gemini_openai_suffix` (총 206개)
+
 ### [v0.15.0]
 - **`porpoise update prompt` 서브커맨드 신설**: `--new` 없이 `.porpoise/prompts/` 6종만 재생성 — `workspace.toml` 어댑터 타입(`claude_code` / `anthropic_api` / `openai_compatible`) 기반으로 CC·API 템플릿 분기 유지, 프로젝트 데이터(milestones, sessions) 무변경
 - **`porpoise update config` 서브커맨드 신설**: 언어 및 모델 재선택 대화상자 — `workspace.toml [general].language`와 `[model]` 섹션만 갱신, 기존 `[dod]`·`[conventions]`·`[tech]` 설정 유지

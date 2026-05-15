@@ -860,4 +860,126 @@ mod tests {
         ).unwrap();
         assert!(!planning.contains("submit_report"), "미선택 시 CC 템플릿을 사용해야 함");
     }
+
+    #[test]
+    fn groq_template_writes_correct_workspace_toml() {
+        use crate::init::model_template::{ResolvedModel, GROQ};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &GROQ,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        let ws_content =
+            std::fs::read_to_string(path.join(".porpoise").join("workspace.toml")).unwrap();
+        assert!(ws_content.contains("adapter = \"openai_compatible\""));
+        assert!(ws_content.contains("model_id = \"llama-3.3-70b-versatile\""));
+        assert!(ws_content.contains("api_base_url = \"https://api.groq.com/openai/v1\""));
+        assert!(ws_content.contains("api_key_env = \"GROQ_API_KEY\""));
+        assert!(ws_content.contains("structured_output_mode = \"json_mode\""));
+
+        let cfg: WorkspaceConfig = toml::from_str(&ws_content).unwrap();
+        assert_eq!(
+            cfg.model_adapter_type(),
+            crate::model::adapter::AdapterType::OpenAiCompatible
+        );
+    }
+
+    #[test]
+    fn groq_template_uses_api_prompts() {
+        use crate::init::model_template::{ResolvedModel, GROQ};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &GROQ,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        for filename in &["01-planning.md", "02-development.md", "05-milestone.md"] {
+            let content = std::fs::read_to_string(
+                path.join(".porpoise").join("prompts").join(filename),
+            )
+            .unwrap();
+            assert!(
+                content.contains("submit_report"),
+                "{} should use API template for Groq",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn gemini_template_writes_correct_workspace_toml() {
+        use crate::init::model_template::{ResolvedModel, GEMINI};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &GEMINI,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        let ws_content =
+            std::fs::read_to_string(path.join(".porpoise").join("workspace.toml")).unwrap();
+        assert!(ws_content.contains("adapter = \"openai_compatible\""));
+        assert!(ws_content.contains("model_id = \"gemini-2.0-flash\""));
+        assert!(ws_content.contains(
+            "api_base_url = \"https://generativelanguage.googleapis.com/v1beta/openai\""
+        ));
+        assert!(ws_content.contains("api_key_env = \"GEMINI_API_KEY\""));
+        assert!(ws_content.contains("structured_output_mode = \"json_mode\""));
+
+        let cfg: WorkspaceConfig = toml::from_str(&ws_content).unwrap();
+        assert_eq!(
+            cfg.model_adapter_type(),
+            crate::model::adapter::AdapterType::OpenAiCompatible
+        );
+    }
+
+    #[test]
+    fn gemini_template_uses_api_prompts() {
+        use crate::init::model_template::{ResolvedModel, GEMINI};
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let ctx = make_ctx();
+        let workspace = WorkspaceConfig::default();
+        let resolved = ResolvedModel {
+            template: &GEMINI,
+            model_id: None,
+            api_key_env: None,
+            api_base_url: None,
+        };
+
+        generate_docs(&ctx, path, &workspace, None, Some(&resolved)).unwrap();
+
+        for filename in &["01-planning.md", "02-development.md", "05-milestone.md"] {
+            let content = std::fs::read_to_string(
+                path.join(".porpoise").join("prompts").join(filename),
+            )
+            .unwrap();
+            assert!(
+                content.contains("submit_report"),
+                "{} should use API template for Gemini",
+                filename
+            );
+        }
+    }
 }

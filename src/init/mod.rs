@@ -165,7 +165,9 @@ fn select_model_template(yes: bool, path: &Path) -> Option<ResolvedModel> {
 fn get_model_overrides(
     template: &'static model_template::ModelTemplate,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    use model_template::{CLAUDE_CODE_DEFAULT, ANTHROPIC_CLAUDE_SONNET, OPENAI_CODEX, OLLAMA_LOCAL};
+    use model_template::{
+        ANTHROPIC_CLAUDE_SONNET, CLAUDE_CODE_DEFAULT, GEMINI, GROQ, OLLAMA_LOCAL, OPENAI_CODEX,
+    };
 
     if std::ptr::eq(template, &CLAUDE_CODE_DEFAULT) {
         return (None, None, None);
@@ -182,6 +184,18 @@ fn get_model_overrides(
     if std::ptr::eq(template, &ANTHROPIC_CLAUDE_SONNET) {
         let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("claude-sonnet-4-6"));
         let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("ANTHROPIC_API_KEY"));
+        return (Some(model_id), Some(api_key_env), None);
+    }
+
+    if std::ptr::eq(template, &GROQ) {
+        let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("llama-3.3-70b-versatile"));
+        let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("GROQ_API_KEY"));
+        return (Some(model_id), Some(api_key_env), None);
+    }
+
+    if std::ptr::eq(template, &GEMINI) {
+        let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("gemini-2.0-flash"));
+        let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("GEMINI_API_KEY"));
         return (Some(model_id), Some(api_key_env), None);
     }
 
