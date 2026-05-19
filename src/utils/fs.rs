@@ -95,7 +95,6 @@ pub fn write_file(path: &Path, content: &str, project_root: &Path) -> Result<()>
 }
 
 /// 파일을 삭제합니다. 프로젝트 루트 외부 경로는 거부합니다. 멱등성 보장 (미존재 시 Ok).
-#[allow(dead_code)]
 pub fn delete_file(path: &Path, project_root: &Path) -> Result<()> {
     if !is_within_project(path, project_root) {
         bail!("파일 삭제 거부: 프로젝트 루트 외부 경로 — {}", path.display());
@@ -107,22 +106,8 @@ pub fn delete_file(path: &Path, project_root: &Path) -> Result<()> {
     }
 }
 
-/// 디렉토리를 재귀 삭제합니다. 프로젝트 루트 외부 경로는 거부합니다. 멱등성 보장 (미존재 시 Ok).
-#[allow(dead_code)]
-pub fn delete_dir(path: &Path, project_root: &Path) -> Result<()> {
-    if !is_within_project(path, project_root) {
-        bail!("디렉토리 삭제 거부: 프로젝트 루트 외부 경로 — {}", path.display());
-    }
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("디렉토리 삭제 실패: {}", path.display())),
-    }
-}
-
 /// 파일을 이동합니다. src·dst 양쪽 모두 프로젝트 루트 하위여야 합니다.
 /// dst의 부모 디렉토리가 없으면 자동 생성합니다.
-#[allow(dead_code)]
 pub fn move_file(src: &Path, dst: &Path, project_root: &Path) -> Result<()> {
     if !is_within_project(src, project_root) {
         bail!("파일 이동 거부: 원본이 프로젝트 루트 외부 — {}", src.display());

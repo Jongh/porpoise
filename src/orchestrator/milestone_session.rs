@@ -387,9 +387,7 @@ fn milestone_output_to_milestone(
         title: output.title.clone(),
         version,
         tasks,
-        metadata: HashMap::new(),
         raw_sections: HashMap::new(),
-        file_path: std::path::PathBuf::new(),
     }
 }
 
@@ -435,9 +433,7 @@ mod tests {
             title: title.to_string(),
             version: version.map(str::to_string),
             tasks,
-            metadata: HashMap::new(),
             raw_sections: HashMap::new(),
-            file_path: std::path::PathBuf::new(),
         }
     }
 

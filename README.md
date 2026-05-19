@@ -138,6 +138,15 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.15.2]
+- **`orchestrator` 모듈 분리**: `mod.rs` (1634줄) → `legacy.rs`(레거시 MD 기반 라우팅)·`new_format.rs`(JSON 세션 라우팅)로 분리 — 공통 헬퍼 12개는 `mod.rs`에 `pub(super)` 헬퍼로 유지, 단일 파일 복잡도 해소
+- **`Milestone` 구조체 dead code 제거**: `metadata: HashMap<String, String>` 필드·`parse_metadata()` 함수·`file_path: PathBuf` 필드 제거 — `parse_milestone_content()` 시그니처에서 `path: &Path` 인자 제거
+- **`load_milestone()` 함수 제거**: `milestone/parser.rs`에서 미사용 공개 함수 완전 삭제
+- **`TaskId::as_str()` 제거**: `orchestrator/state.rs`에서 `#[allow(dead_code)]` 미사용 메서드 삭제
+- **`delete_dir()` 제거**: `utils/fs.rs`에서 미사용 함수 및 관련 테스트 삭제
+- **`#[allow(dead_code)]` 애노테이션 정리**: 실제 사용 중인 함수(`delete_file`, `move_file`)와 필드(`raw_sections`)에 붙어 있던 불필요 애노테이션 제거
+- **테스트**: 미사용 코드 제거로 총 204개 (v0.15.1 대비 2개 감소)
+
 ### [v0.15.1]
 - **Gemini `chat_completions_url` 버그 수정**: `openai_compatible` 어댑터의 URL 생성 로직이 `/v1`로 끝나지 않는 엔드포인트(`...v1beta/openai`)에 잘못된 `/v1/chat/completions`를 붙이던 버그 수정 — Gemini API 엔드포인트가 항상 404를 반환하던 문제 해소, 조건에 `ends_with("/openai")` 분기 추가
 - **테스트 추가**: 1개 신규 테스트 `chat_completions_url_gemini_openai_suffix` (총 206개)

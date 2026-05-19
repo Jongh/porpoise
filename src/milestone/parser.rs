@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::orchestrator::state::Task;
 
@@ -10,27 +10,13 @@ pub struct Milestone {
     pub title: String,
     pub version: Option<String>,
     pub tasks: Vec<Task>,
-    #[allow(dead_code)]
-    pub metadata: HashMap<String, String>,
-    #[allow(dead_code)]
     pub raw_sections: HashMap<String, String>,
-    #[allow(dead_code)]
-    pub file_path: PathBuf,
 }
 
 pub fn parse_milestone_file(path: &Path) -> Result<Milestone> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read milestone file: {}", path.display()))?;
-    parse_milestone_content(&content, path)
-}
-
-#[allow(dead_code)]
-pub fn load_milestone(milestones_dir: &Path, milestone_id: u32) -> Result<Option<Milestone>> {
-    let file_path = milestones_dir.join(format!("M{}.md", milestone_id));
-    if !file_path.exists() {
-        return Ok(None);
-    }
-    parse_milestone_file(&file_path).map(Some)
+    parse_milestone_content(&content)
 }
 
 pub fn load_all_milestones(milestones_dir: &Path) -> Result<Vec<Milestone>> {
@@ -58,7 +44,7 @@ pub fn load_all_milestones(milestones_dir: &Path) -> Result<Vec<Milestone>> {
     Ok(milestones)
 }
 
-fn parse_milestone_content(content: &str, path: &Path) -> Result<Milestone> {
+fn parse_milestone_content(content: &str) -> Result<Milestone> {
     let mut lines = content.lines();
 
     let title_line = lines.next().unwrap_or("").trim();
@@ -90,19 +76,14 @@ fn parse_milestone_content(content: &str, path: &Path) -> Result<Milestone> {
         .map(|c| parse_tasks(&c))
         .unwrap_or_default();
 
-    let metadata = sections
-        .remove("메타데이터")
-        .map(|c| parse_metadata(&c))
-        .unwrap_or_default();
+    sections.remove("메타데이터");
 
     Ok(Milestone {
         id,
         title,
         version,
         tasks,
-        metadata,
         raw_sections: sections,
-        file_path: path.to_path_buf(),
     })
 }
 
@@ -148,19 +129,6 @@ fn parse_tasks(content: &str) -> Vec<Task> {
     tasks
 }
 
-fn parse_metadata(content: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in content.lines() {
-        if let Some(rest) = line.trim().strip_prefix("- ") {
-            if let Some(colon_pos) = rest.find(": ") {
-                let key = rest[..colon_pos].trim().to_string();
-                let value = rest[colon_pos + 2..].trim().to_string();
-                map.insert(key, value);
-            }
-        }
-    }
-    map
-}
 
 #[cfg(test)]
 mod tests {
@@ -234,15 +202,6 @@ milestone.md를 자동 생성할 수 있는 흐름을 구현한다.
     }
 
     #[test]
-    fn test_parse_metadata() {
-        let content = "- created: 2026-04-23\n- status: in-progress\n- version: v0.1.3";
-        let meta = parse_metadata(content);
-        assert_eq!(meta.get("created"), Some(&"2026-04-23".to_string()));
-        assert_eq!(meta.get("status"), Some(&"in-progress".to_string()));
-        assert_eq!(meta.get("version"), Some(&"v0.1.3".to_string()));
-    }
-
-    #[test]
     fn test_full_parse_from_string() {
         let tmp = std::env::temp_dir().join("porpoise_test_M1.md");
         std::fs::write(&tmp, SAMPLE).unwrap();
@@ -254,7 +213,6 @@ milestone.md를 자동 생성할 수 있는 흐름을 구현한다.
         assert_eq!(m.tasks.len(), 3);
         assert!(!m.tasks[0].completed);
         assert!(m.tasks[1].completed);
-        assert_eq!(m.metadata.get("status"), Some(&"in-progress".to_string()));
         assert!(m.raw_sections.contains_key("목표"));
         assert!(m.raw_sections.contains_key("배경"));
         assert!(m.raw_sections.contains_key("제약사항"));
@@ -262,17 +220,6 @@ milestone.md를 자동 생성할 수 있는 흐름을 구현한다.
         assert!(!m.raw_sections.contains_key("메타데이터"));
 
         std::fs::remove_file(&tmp).ok();
-    }
-
-    #[test]
-    fn test_load_milestone_not_found() {
-        let tmp_dir = std::env::temp_dir().join("porpoise_test_ms_empty");
-        std::fs::create_dir_all(&tmp_dir).unwrap();
-
-        let result = load_milestone(&tmp_dir, 99).unwrap();
-        assert!(result.is_none());
-
-        std::fs::remove_dir_all(&tmp_dir).ok();
     }
 
     #[test]
