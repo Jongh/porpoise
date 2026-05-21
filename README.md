@@ -1,18 +1,24 @@
 # Porpoise
 
-Software development orchestration tool powered by Claude Code.
+AI 기반 소프트웨어 개발 오케스트레이션 도구 — Claude Code 또는 OpenAI 호환 API로 **Planning → Development → Testing → Review** 사이클을 자동화합니다.
 
 ## Overview
 
-Porpoise automates the full software development workflow by orchestrating **Planning → Development → Testing → Review** session cycles using Claude Code. It generates structured reports between sessions to maintain context continuity and minimizes user interruptions.
+Porpoise는 마일스톤 단위로 개발 워크플로를 오케스트레이션합니다. 각 단계(Planning · Development · Testing · Review)마다 AI가 구조화된 JSON 세션 리포트를 생성하고, 다음 단계는 이를 컨텍스트로 이어받아 실행됩니다. 사용자 개입을 최소화하면서 반복 사이클을 자동으로 완주합니다.
 
-> **참고**: API 모드(`anthropic_api`, `openai_compatible` 어댑터)는 v0.14.0에서 전용 프롬프트 분리, Development `max_tokens` 증가, 스키마 개선 등이 적용되었습니다. 안정적인 사용을 위해서는 **Claude Code 어댑터** 사용을 우선 권장합니다.
+**지원 어댑터**
+
+| 어댑터 | 설명 | 대표 모델 |
+|--------|------|-----------|
+| `claude_code` | Claude Code CLI 직접 실행 (권장) | Claude Sonnet 4.x |
+| `anthropic_api` | Anthropic Messages API 직접 호출 | claude-sonnet-4-6 |
+| `openai_compatible` | OpenAI 호환 API | Groq · Gemini · OpenAI · Ollama |
 
 ## Installation
 
 ### Windows
 
-Download `porpoise-*.msi` from [Releases](https://github.com/Jongh/porpoise/releases) and run the installer. `porpoise` will be added to your PATH automatically.
+[Releases](https://github.com/Jongh/porpoise/releases)에서 `porpoise-*.msi`를 다운로드 후 실행하면 PATH가 자동으로 등록됩니다.
 
 ### Ubuntu/Debian
 
@@ -39,93 +45,138 @@ sudo mv porpoise /usr/local/bin/
 cargo build --release
 ```
 
+## Quick Start
+
+```bash
+# 새 프로젝트 초기화 (어댑터·모델 선택 포함)
+porpoise --new
+
+# 기존 프로젝트 재개
+porpoise
+
+# 환경 설정 진단 (API 키·CLI·sessions/ 등 한 번에 확인)
+porpoise doctor
+```
+
 ## Usage
 
 ```bash
-# Auto-detect mode: resume existing project or initialize new one
+# 자동 감지: 기존 프로젝트 재개 또는 신규 초기화
 porpoise
 
-# Force new initialization
+# 새 프로젝트 강제 초기화
 porpoise --new
 
-# Start from a specific session
+# 특정 단계부터 시작
 porpoise --from development   # planning | development | testing | review
 
-# Dry run (show plan without executing)
+# 드라이런 (실행 계획만 출력)
 porpoise --dry-run
 
-# Verbose output
+# 상세 출력 (AI 원문·리포트 포함)
 porpoise --verbose
 
-# Create a manual verdict for the current role (when Claude did not save to reports/)
+# 환경 진단 (workspace.toml·어댑터·API 키·CLI 설치 등)
+porpoise doctor
+
+# 수동 판정 파일 생성 (레거시 프로젝트용)
 porpoise approve NEXT
 porpoise approve PREV
 
-# Archive old messages
+# 프롬프트 파일만 재생성 (어댑터 변경 후)
+porpoise update prompt
+
+# 모델·언어 설정 재선택
+porpoise update config
+
+# 레거시 프로젝트를 JSON 세션 포맷으로 전환
+porpoise migrate
+
+# 오래된 메시지 파일 아카이브 (레거시)
 porpoise clean [--days N] [--dry-run]
 ```
 
 ## How it works
 
-1. **Initialization** (`porpoise --new`): Scans project directory, generates `CLAUDE.md` and `.porpoise/` structure, and creates `.porpoise/sessions/` so new projects run in JSON session mode.
-2. **Milestone session**: User describes the next milestone; Claude creates `.porpoise/milestones/M{n}.md` with task list.
-3. **Planning session**: Claude/adapter writes structured Planning output to `.porpoise/sessions/`.
-4. **Development session**: Claude/adapter implements code and writes structured Development output to `.porpoise/sessions/`.
-5. **Testing session**: Claude/adapter tests and writes structured Testing output to `.porpoise/sessions/`.
-6. **Review session**: Code review → NEXT / PREV / RESP; structured Review output is saved to `.porpoise/sessions/`.
-7. **Routing**: For new projects, Porpoise routes from JSON session status. The legacy `reports/`/`messages/` router remains only for older projects that do not have `.porpoise/sessions/`.
+1. **초기화** (`porpoise --new`): 프로젝트 디렉토리를 스캔하고 `CLAUDE.md`와 `.porpoise/` 구조를 생성합니다. 어댑터·모델·언어를 대화식으로 선택하고, API 어댑터 선택 시 환경변수 설정 안내를 출력합니다.
+2. **마일스톤 세션**: 사용자가 목표를 설명하면 AI가 `.porpoise/milestones/M{n}.md` 태스크 목록을 작성합니다.
+3. **Planning 세션**: AI가 구현 계획·DoD·리스크를 구조화 JSON으로 `.porpoise/sessions/`에 저장합니다.
+4. **Development 세션**: AI가 코드를 구현하고 파일 변경 내역을 세션에 기록합니다.
+5. **Testing 세션**: AI가 테스트를 실행하고 결과를 세션에 기록합니다.
+6. **Review 세션**: AI가 코드 리뷰 후 NEXT / PREV / RESP를 반환합니다. NEXT 시 자동 커밋, PREV 시 지정 단계부터 재시작합니다.
+7. **라우팅**: `.porpoise/sessions/`가 존재하면 JSON 세션 모드로 동작합니다. `sessions/`가 없는 레거시 프로젝트는 `reports/`+`messages/` 기반 모드를 유지합니다 (`porpoise migrate`로 전환 가능).
 
-Checkpoints enable resuming after interruption. Use `porpoise approve NEXT|PREV` to create a manual verdict when Claude did not save a report.
+중단 후 재실행 시 체크포인트에서 자동 재개됩니다.
+
+## Configuration (`workspace.toml`)
+
+초기화 시 `.porpoise/workspace.toml`이 생성됩니다. 주요 설정:
+
+```toml
+[general]
+language = "ko"                # 응답 언어
+
+[model]
+adapter = "claude_code"        # claude_code | anthropic_api | openai_compatible
+model_id = "claude-sonnet-4-6" # API 어댑터 사용 시
+api_key_env = "ANTHROPIC_API_KEY"  # 환경변수 이름 (키 값이 아님)
+api_base_url = "https://api.openai.com/v1"  # openai_compatible 전용
+
+[tech]
+test_command = "cargo test"
+verify_commands = [
+    { command = "cargo", args = ["clippy"] }
+]
+
+[sessions]
+# keep_completed_milestone_sessions = false  # true: 완료 세션 파일 보존
+# max_session_age_days = 30                  # 0 = 무제한
+```
 
 ## File structure (generated)
 
 ```
 {project}/
-├── CLAUDE.md                      # Pointer to .porpoise/project.md
+├── CLAUDE.md                      # .porpoise/project.md 포인터
 └── .porpoise/
-    ├── project.md                 # Full project context (file tree, conventions, folder ownership)
+    ├── project.md                 # 프로젝트 컨텍스트 (파일 트리·컨벤션·폴더 소유권)
+    ├── workspace.toml             # 어댑터·모델·DoD·컨벤션·기술 스택 설정
+    ├── checkpoint.json            # 현재 태스크·사이클 상태 (오케스트레이터 기록)
     ├── prompts/
-    │   ├── 00-orche.md              # Master orchestrator prompt
-    │   ├── 01-planning.md           # Planning session prompt
-    │   ├── 02-development.md        # Development session prompt
-    │   ├── 03-testing.md            # Testing session prompt
-    │   ├── 04-review.md             # Review session prompt
-    │   └── 05-milestone.md          # Milestone creation session prompt
-    ├── milestones/                # Milestone definition files (written by Claude)
-    │   └── M{n}.md
-    ├── sessions/                  # JSON session mode outputs (new projects)
-    │   ├── {task-id}-planning-C{n}-R{n}.json
-    │   ├── {task-id}-development-C{n}-R{n}.json
-    │   ├── {task-id}-testing-C{n}-R{n}.json
-    │   └── {task-id}-review-C{n}-R{n}.json
-    ├── reports/                   # Legacy formatted role reports
-    ├── messages/                  # Legacy captured output and checkpoint data
-    │   └── checkpoint.json
-    └── hints/                     # User additional instructions (written by Porpoise on RESP)
+    │   ├── 00-orche.md
+    │   ├── 01-planning.md
+    │   ├── 02-development.md
+    │   ├── 03-testing.md
+    │   ├── 04-review.md
+    │   └── 05-milestone.md
+    ├── milestones/
+    │   └── M{n}.md                # AI가 작성하는 마일스톤 정의
+    ├── sessions/                  # JSON 세션 파일 (신규 포맷)
+    │   └── {task-id}-{role}-C{n}-R{n}.json
+    ├── reports/                   # 레거시 마크다운 리포트
+    ├── messages/                  # 레거시 원문 출력 및 체크포인트
+    └── hints/                     # RESP 시 사용자 추가 지시사항
         └── {task-id}-{role}-C{n}-R{n}-hints.md
 ```
 
 ### Folder ownership
 
-| Folder | Writer | Purpose |
-|--------|--------|---------|
-| `sessions/` | Porpoise/model adapter | JSON session envelopes used by new projects |
-| `reports/` | Claude (exclusive) | Legacy formatted role reports with NEXT/PREV exit code |
-| `messages/` | Porpoise (exclusive) | Legacy raw Claude output (questions, summaries, token warnings) |
-| `hints/` | Porpoise (RESP flow) | User-provided additional instructions |
+| 폴더 | 작성자 | 목적 |
+|------|--------|------|
+| `sessions/` | Porpoise/어댑터 | JSON 세션 엔벨로프 (신규 프로젝트) |
+| `reports/` | Claude (레거시) | 역할별 NEXT/PREV 판정 포함 마크다운 리포트 |
+| `messages/` | Porpoise (레거시) | 원문 Claude 출력 캡처 |
+| `hints/` | Porpoise (RESP 흐름) | 사용자 추가 지시사항 |
 
 ## Exit codes (role protocol)
 
-Each role appends one of these codes as the **last line** of its `reports/` file:
-
-| Code | Meaning | Orchestrator action |
-|------|---------|---------------------|
-| `NEXT` | Role complete, proceed | Advance to next role (Reviewer NEXT → auto-commit) |
-| `PREV` | Previous role needs rework | Restart from target role (`prev_target` in META block) or Planning |
+| 코드 | 의미 | 오케스트레이터 동작 |
+|------|------|---------------------|
+| `NEXT` | 단계 완료, 진행 | 다음 단계로 이동 (Reviewer NEXT → 자동 커밋) |
+| `PREV` | 이전 단계 재작업 필요 | `prev_target` 단계부터 재시작 |
+| `RESP` | 사용자 답변 요청 | 질문을 hints 파일에 저장 후 재실행 |
 
 ### PREV target routing
-
-Reviewers can specify which role to restart from using the `PORPOISE_META` block:
 
 ```markdown
 <!-- PORPOISE_META
@@ -134,156 +185,32 @@ prev_target: development
 -->
 ```
 
-Allowed values for `prev_target`: `development`, `testing`. Omit to restart from Planning (default).
+`prev_target` 허용 값: `development`, `testing`. 생략 시 Planning부터 재시작.
 
 ## CHANGELOG
 
 ### [v0.18.0]
 - **`AnthropicApiAdapter` `api_key_env` 준수**: `workspace.toml`의 `api_key_env` 설정이 `anthropic_api` 어댑터에서 무시되던 버그 수정 — 어댑터 생성 시 설정된 환경변수 이름을 실제로 사용, `ANTHROPIC_API_KEY` 하드코딩 제거
-- **`is_likely_api_key()` 정밀도 개선**: 소문자 포함 문자열 전체를 "API 키"로 오진단하던 로직 제거 — `AIzaSy`, `sk-`, `gsk_`, `xai-`, `claude-` 접두사 기반으로 감지 범위 축소, 소문자 env var 이름에 잘못된 경고 미출력
-- **`porpoise doctor` 서브커맨드 신설**: 설정 진단 명령 추가 — `workspace.toml` 파싱·어댑터 타입·Claude CLI 설치·API 키 env var·Ollama 서버 연결·`sessions/` 디렉토리·최근 마일스톤 파일 7개 항목 순서대로 점검, 실패 항목에 OS별 해결 안내 출력
-- **`cleanup_sessions` 나이 기반 삭제 테스트 보강**: `keep_completed=false + max_age_days=0` 단독 케이스, `max_age_days=1` 조건에서 최근 파일 보존 케이스 추가 — 기존 테스트가 항상 `keep_completed=true`와 조합하던 편향 해소
-- **테스트**: 215개 (207 → 215, +8개)
+- **`is_likely_api_key()` 정밀도 개선**: 소문자 포함 문자열 전체를 "API 키"로 오진단하던 로직 제거 — `AIzaSy`, `sk-`, `gsk_`, `xai-`, `claude-` 접두사 기반으로 감지 범위 축소
+- **`porpoise doctor` 서브커맨드 신설**: 설정 진단 명령 추가 — workspace.toml·어댑터·Claude CLI·API 키·Ollama·sessions/·마일스톤 7개 항목 점검, 실패 항목에 OS별 해결 안내
+- **테스트**: 215개
 
 ### [v0.17.0]
-- **API 키 환경변수명 입력 검증**: `porpoise --new` / `porpoise update config`에서 `api_key_env` 입력 시 대문자·숫자·밑줄 형식 검증(`validate_env_var_name`) + 실제 API 키 값 패턴 감지(`is_likely_api_key`, 3-retry 경고) — 실수로 키 값을 환경변수명 필드에 입력하는 오류 방지
-- **초기화 후 OS별 환경변수 설정 안내**: `print_api_key_env_guide()` 추가 — 초기화 완료 및 `update config` 완료 후 PowerShell·Unix 양식의 환경변수 설정 명령 자동 출력
-- **어댑터 생성 전 API 키 env var 사전 검증**: `factory.rs` `make_adapter()`에서 `anthropic_api` / `openai_compatible` 어댑터 생성 전 env var 존재 여부 확인 — 설정되지 않은 경우 즉각적인 명확한 에러 메시지 출력 (기존: 실행 중 HTTP 에러)
-- **Gemini 기본 모델 변경**: `gemini-2.0-flash` → `gemini-2.5-flash` — `init` 시 기본 선택 모델 업데이트
-- **Dead code 경고 16개 → 0개**: 미사용 함수·메서드·필드 제거 및 `#[allow(dead_code)]` 정리 — `Report::stub()`, `report_filename()`, `count_existing_reports()`, `Role::prev()`, `Role::prompt_file()`, `run_with_prompt()` 삭제
-- **`cleanup_sessions` 유닛 테스트 3개 추가**: 완료 태스크 세션 삭제 / `keep_completed=true` 보존 / `max_age=0` 비삭제 시나리오 커버
-- **`workspace.toml` `[sessions]` 주석 예시 추가**: `default_toml()` 끝에 세션 정책 설정 예시를 주석으로 포함
-- **테스트**: 207개 (204 → 207)
+- **API 키 환경변수명 입력 검증**: `api_key_env` 입력 시 형식 검증 + 실제 키 값 패턴 감지(3-retry 경고) — 키 값을 환경변수명 필드에 입력하는 오류 방지
+- **초기화 후 OS별 환경변수 설정 안내**: `print_api_key_env_guide()` — 초기화·`update config` 완료 후 PowerShell·Unix 설정 명령 자동 출력
+- **어댑터 생성 전 API 키 사전 검증**: `factory.rs`에서 어댑터 생성 전 env var 존재 확인 — 즉각적인 명확한 에러 출력
+- **Gemini 기본 모델**: `gemini-2.0-flash` → `gemini-2.5-flash`
+- **Dead code 경고 0개**: 미사용 함수·메서드·필드 제거
+- **테스트**: 207개
 
 ### [v0.16.0]
-- **`porpoise migrate` 서브커맨드 신설**: 레거시 프로젝트(`.porpoise/messages/`, `.porpoise/reports/`)를 JSON 세션 포맷으로 전환 — `sessions/` 디렉토리 생성 후 다음 실행부터 신규 포맷으로 동작, 기존 레거시 파일 보존
-- **`legacy.rs` 삭제 및 진입점 통합**: MD 기반 레거시 오케스트레이터 코드 경로 완전 제거 — `orchestrator::run()` 진입점을 `mod.rs`로 통합, 레거시/신규 분기 로직 단순화
-- **Session JSON 자동 정리 (`cleanup_sessions`)**: `workspace.toml [sessions]` 정책에 따라 완료된 마일스톤 세션 파일 및 오래된 세션 파일 자동 삭제 — `keep_completed_milestone_sessions`(기본: false)·`max_session_age_days`(기본: 30) 설정 추가
-- **Snapshot git diff 라인 제한**: `GIT_DIFF_MAX_LINES = 200` — 기존 byte 기반 (`16KB`) 제한을 라인 기반으로 변경, 컨텍스트 예측 가능성 개선
-- **테스트**: 204개 유지
+- **`porpoise migrate` 서브커맨드 신설**: 레거시 프로젝트를 JSON 세션 포맷으로 전환
+- **`legacy.rs` 삭제**: MD 기반 레거시 오케스트레이터 코드 경로 완전 제거
+- **`cleanup_sessions`**: `workspace.toml [sessions]` 정책 기반 세션 파일 자동 정리
+- **Snapshot git diff 라인 제한**: `GIT_DIFF_MAX_LINES = 200`
+- **테스트**: 204개
 
-### [v0.15.2]
-- **`orchestrator` 모듈 분리**: `mod.rs` (1634줄) → `legacy.rs`(레거시 MD 기반 라우팅)·`new_format.rs`(JSON 세션 라우팅)로 분리 — 공통 헬퍼 12개는 `mod.rs`에 `pub(super)` 헬퍼로 유지, 단일 파일 복잡도 해소
-- **`Milestone` 구조체 dead code 제거**: `metadata: HashMap<String, String>` 필드·`parse_metadata()` 함수·`file_path: PathBuf` 필드 제거 — `parse_milestone_content()` 시그니처에서 `path: &Path` 인자 제거
-- **`load_milestone()` 함수 제거**: `milestone/parser.rs`에서 미사용 공개 함수 완전 삭제
-- **`TaskId::as_str()` 제거**: `orchestrator/state.rs`에서 `#[allow(dead_code)]` 미사용 메서드 삭제
-- **`delete_dir()` 제거**: `utils/fs.rs`에서 미사용 함수 및 관련 테스트 삭제
-- **`#[allow(dead_code)]` 애노테이션 정리**: 실제 사용 중인 함수(`delete_file`, `move_file`)와 필드(`raw_sections`)에 붙어 있던 불필요 애노테이션 제거
-- **테스트**: 미사용 코드 제거로 총 204개 (v0.15.1 대비 2개 감소)
-
-### [v0.15.1]
-- **Gemini `chat_completions_url` 버그 수정**: `openai_compatible` 어댑터의 URL 생성 로직이 `/v1`로 끝나지 않는 엔드포인트(`...v1beta/openai`)에 잘못된 `/v1/chat/completions`를 붙이던 버그 수정 — Gemini API 엔드포인트가 항상 404를 반환하던 문제 해소, 조건에 `ends_with("/openai")` 분기 추가
-- **테스트 추가**: 1개 신규 테스트 `chat_completions_url_gemini_openai_suffix` (총 206개)
-
-### [v0.15.0]
-- **`porpoise update prompt` 서브커맨드 신설**: `--new` 없이 `.porpoise/prompts/` 6종만 재생성 — `workspace.toml` 어댑터 타입(`claude_code` / `anthropic_api` / `openai_compatible`) 기반으로 CC·API 템플릿 분기 유지, 프로젝트 데이터(milestones, sessions) 무변경
-- **`porpoise update config` 서브커맨드 신설**: 언어 및 모델 재선택 대화상자 — `workspace.toml [general].language`와 `[model]` 섹션만 갱신, 기존 `[dod]`·`[conventions]`·`[tech]` 설정 유지
-- **최초 마일스톤 M2 오탐 수정**: `05-milestone-api.tmpl` 예시 값(`"M2"`, `M2-T01`)을 `"M1"`, `M1-T01`으로 변경 + `milestone_session.rs`에서 모델 반환 `milestone_id` 무시 및 `next_id` 강제 적용 — json_mode에서 항상 M2가 생성되던 버그 수정
-- **task ID 자동 정규화**: `normalize_task_id()` 추가 — 모델이 잘못된 마일스톤 번호를 포함한 task ID(`M2-T01`)를 반환해도 실제 `next_id` 기준으로 재정규화(`M1-T01`) 후 파일에 기록
-- **`file_operations` 중복 키 버그 방지**: `02-development-api.tmpl` 다중 파일 "올바른 예"(배열 별도 항목) 및 중복 키 "절대 금지" 예시 추가 — 하나의 JSON 객체에 `op`·`path` 키를 중복 작성하면 앞 파일이 유실됨을 명시
-- **테스트 추가**: 4개 신규 테스트 (총 198개)
-
-### [v0.14.2]
-- **API 프롬프트 json_mode 폴백 지시 추가**: API 전용 템플릿 5종(`01~05-*-api.tmpl`)의 `submit_report 필드 명세` 섹션 헤더를 "JSON 출력 형식"으로 변경하고 json_mode 폴백 지시 추가 — 도구 호출 불가 환경에서 JSON 객체를 텍스트로 직접 출력하도록 안내, `EOF while parsing` 에러 방지
-- **IMP-02 오탐 수정**: API 전용 프롬프트 템플릿 섹션 헤더에 "JSON 출력 형식" 문자열 포함 — API 프롬프트 최신 상태에서도 IMP-02 경고가 발생하던 오탐 수정
-- **`testing_schema.json` `regression_check` 추가**: Rust 구조체의 `regression_check: Option<RegressionCheck>` 필드를 JSON 스키마 `properties`에 추가 — 스키마-구조체 정렬
-- **HTTP 에러 응답 바디 포함**: `openai_compatible.rs` `post_json()` 및 `anthropic_api.rs` inline ureq 호출에서 HTTP 에러 발생 시 상태 코드와 응답 본문을 에러 메시지에 포함 — API 에러 원인 파악 개선
-
-### [v0.14.1]
-- **초기화 시 어댑터 모드 기반 프롬프트 분기 버그 수정**: `porpoise --new`에서 API 어댑터(`anthropic_api`, `openai_compatible`)를 선택해도 CC 전용 프롬프트가 생성되던 버그 수정 — `generator.rs`에 `use_api_templates` 분기 추가, API 어댑터 선택 시 `*-api.tmpl` 5종을 `.porpoise/prompts/`에 배포
-- **테스트 추가**: 4개 신규 테스트 (총 194개)
-
-### [v0.14.0]
-- **CC / API 전용 프롬프트 분리**: `01-planning.tmpl` 등 기존 CC 전용 템플릿과 별도로 `01-planning-api.tmpl` 등 API 전용 템플릿 5종 신설 — CC 어댑터와 API 어댑터가 각각 최적화된 지시사항·출력 형식을 사용
-- **Development `max_tokens` 증가**: API 어댑터에서 Development 단계 `max_tokens`를 4096 → 16384으로 증가 — 파일 작성 중 토큰 한도 도달로 인한 응답 잘림 방지
-- **`api_json_format_hint()` 인라인 주입 제거**: 런타임 시스템 프롬프트 주입 방식을 폐기하고 힌트를 API 전용 템플릿 내부로 이전 — 중복 주입 문제 해소
-- **`development_schema.json` null 타입 제거**: `file_operations` 배열에서 null 허용 타입을 제거하여 API 모드에서 항상 배열 형식으로 응답하도록 스키마 강제
-- **단계 명칭 통일**: 프롬프트 템플릿 10종 및 소스코드 전체에서 '역할' → '단계', 'PM·Developer·Tester·Reviewer' → 'Planning·Development·Testing·Review' 명칭 통일 (소스 25개 위치)
-
-### [v0.13.0]
-- **API 모드 Development `file_operations` 필수화**: 프롬프트 힌트 + `development_schema.json required` + 오케스트레이터 3중 강제 — `changes[]` 있는데 `file_operations` 없으면 즉시 PREV 전환 및 안내 메시지 출력 (파일 미생성 → 무한 사이클 버그 수정)
-- **AI 응답 원문 출력 `--verbose` 전용 제한**: `[AI 텍스트 응답]`, `[AI submit_report]`, `[AI 응답 (json_mode)]` 등 5개 출력 블록이 `--verbose` 플래그 시에만 표시 — `ModelConfig.verbose` 필드 추가, `execute_role_new()` → 어댑터 전달 경로 완성
-- **`&&` 복합 명령 자동 분리 (`parse_command_string_multi`)**: `"ruff check . && mypy ."` 같은 복합 명령을 `&&` 기준으로 자동 분리하여 각각의 `VerifyCommand`로 실행 — `|`, `;`, `` ` ``, `$` 포함 명령은 기존과 동일하게 경고 후 건너뜀
-- **커밋 전 `.gitignore` 자동 검증**: `auto_commit()` 진입 시 `.porpoise/` 항목을 `.gitignore`에 자동 추가 (파일 없으면 생성) — 세션·로그 파일 대용량 커밋 방지
-- **`auto_commit()` target_paths에서 `.porpoise/` 제거**: porpoise 런타임 데이터(sessions, reports, hints)가 자동 커밋 대상에서 영구 제외
-- **테스트 추가**: 1개 신규 테스트 (총 190개)
-
-### [v0.12.0]
-- **`issues_found` 역직렬화 버그 수정**: API 모드 testing 역할에서 `issues_found` 필드가 `Vec<String>` → `Vec<IssueFound>` 구조체 배열로 변경, 방어적 deserializer 추가 — 문자열·객체 양쪽 형식 처리 가능
-- **`print_error()` 에러 유형별 메시지**: `resolve_hint()` 함수 추가 — 프로그램 미설치·권한 오류·네트워크 오류·API 키 누락 등 6가지 유형별 해결 안내 출력
-- **`.context()` 4곳 보완**: 에디터 실행 실패(`input.rs`), 마일스톤 입력 실패(`milestone_session.rs` 2곳), API 응답 JSON 파싱 실패(`anthropic_api.rs`, `openai_compatible.rs`) — 에러 원인 전파 개선
-- **lint 명령 단순화**: Python `"ruff check . && mypy ."` → `"ruff check ."`, TypeScript `"npx eslint . && npx tsc --noEmit"` → `"npx eslint ."` — `&&` 메타문자로 인한 `parse_command_string` 건너뜀 버그 수정
-- **시작 시 의존성 검사 (`deps.rs` 신설)**: 실행 시 `workspace.toml` 기반 필수 명령어 설치 여부 확인, 미설치 항목은 OS별 설치 방법 안내 후 종료 (`--new`·`clean`·`approve` 시 스킵)
-- **`verify_commands` 배열 필드 추가**: `workspace.toml [tech]`에 `verify_commands` 배열 지원 — 복수 검증 명령을 `&&` 없이 개별 지정, 기존 `test_command`·`lint_command` 폴백 유지
-- **`workspace.toml` 기본 템플릿 OS별 명령 예시**: `default_toml()`에 `verify_commands` 배열 예시 및 Windows/macOS·Linux OS별 파일 조작 명령 허용 주석 추가
-- **언어 템플릿 OS별 파일 명령 자동 삽입**: `LangTemplate`에 `allowed_file_commands_windows/unix` 필드 추가, `porpoise --new` 시 현재 OS에 맞는 파일 명령(`powershell`/`cp mv rm` 등)이 `allowed_command_prefixes`에 자동 포함
-- **API 어댑터 AI 응답 콘솔 출력**: `anthropic_api`·`openai_compatible` 어댑터에서 AI 텍스트 응답 및 submit_report 내용을 콘솔에 출력 (디버깅 가시성 향상)
-- **API 모드 JSON 출력 형식 안내 강화**: `api_json_format_hint()` 신설 — 역할별 submit_report 필드 안내를 시스템 프롬프트에 자동 주입
-- **테스트 추가**: 6개 신규 테스트 (총 189개)
-
-### [v0.11.1]
-- **API 역직렬화 방어 처리 전체 적용**: `PlanningOutput`·`DevelopmentOutput`·`TestingOutput`·`ReviewOutput`·`MilestoneOutput`의 모든 비-`Option` 필드에 `#[serde(default)]` 추가 — API 어댑터 응답에서 필드 누락 시 `missing field` 크래시 방지
-- **`status` 기본값 수정**: `ExitCode::default()`(`Resp`)가 아닌 `ExitCode::Next`로 기본값 지정 — `status` 필드 누락 시 잘못된 라우팅 방지
-- **`review_status` 기본값 추가**: 누락 시 `"CHANGES_REQUESTED"`로 보수적 처리
-- **`default_exit_code_next` 공용 함수화**: `session/output.rs`로 이동하여 모든 구조체에서 공유
-
-### [v0.11.0]
-- **API 마일스톤 역직렬화 수정**: `MilestoneOutput.role`에 `#[serde(default)]` 추가 — `anthropic_api`·`openai_compatible` 어댑터에서 마일스톤 생성 시 `missing field 'role'` 오류로 중단되던 버그 수정, 빈 문자열 역직렬화 시 `"milestone"`으로 자동 보정
-- **마일스톤 생성 완료 후 파일 출력**: `claude_code`·API 어댑터 양 경로 모두 마일스톤 생성 완료 시 생성된 `M{n}.md` 파일 전체 내용을 콘솔에 출력
-- **역할 완료 후 리포트 파일 출력**: 역할 완료(fresh 실행·캐시 재사용 공통) 시 `output_data.summary()` 요약 대신 `.porpoise/reports/`에 저장된 실제 마크다운 리포트 파일 전체 내용을 출력
-- **태스크 전환 시 cycle 리셋**: Reviewer NEXT로 다음 태스크 또는 새 마일스톤으로 전환될 때 `state.cycle`이 1로 리셋되지 않던 버그 수정 — 신규 포맷·레거시 경로 4개소 모두 적용
-
-### [v0.10.0]
-- **`messages/` 폴더 제거**: ClaudeCode 어댑터·마일스톤 세션에서 `messages/` 중복 저장 코드 제거 — 신규 프로젝트에서 폴더 미생성
-- **`checkpoint.json` 경로 이동**: `messages/checkpoint.json` → `.porpoise/checkpoint.json` 직접 저장, 구 경로 자동 마이그레이션
-- **프롬프트 `reports/` 저장 지시 제거**: `00-orche.tmpl`에서 Claude에게 `reports/` 폴더에 직접 저장하라는 지시 삭제 — JSON session mode 기반으로 정리
-- **토큰 제한(LIMIT) 감지**: `You've hit your limit` 패턴 감지 시 `ExitCode::Limit` 처리 → "토큰 한도 도달" 메시지 출력 후 세션 종료
-- **LIMIT 세션 캐시 무효화**: 토큰 한도 세션이 캐시되어 재실행 시 LIMIT 메시지만 재표시되던 버그 수정 — 재실행 시 역할 새로 실행
-- **RESP/LIMIT 세션 재사용 방지**: `find_latest_session`에서 RESP·LIMIT 세션 skip — 해당 세션 이후 재구동 시 항상 역할 재실행
-- **역할 완료 후 보고서 요약 출력**: fresh 실행과 캐시 세션 재개 모두에서 역할 완료 시 요약 최대 15줄 콘솔 출력
-- **`porpoise approve` 신규 포맷 안내**: sessions/ 폴더가 있는 신규 프로젝트에서 approve 명령 실행 시 레거시 전용 안내 출력
-- **테스트 추가**: 7개 신규 테스트 (총 180개)
-
-### [v0.9.0]
-- **API 어댑터 마일스톤 생성**: `run_milestone_via_api` 경로 신설 + `write_milestone_file()` — `anthropic_api`·`openai_compatible` 어댑터도 `claude_code`와 동일하게 `.porpoise/milestones/M{n}.md` 생성 및 `project.md` 갱신
-- **PREV→non-PM 세션 캐시 무효화**: `invalidate_sessions_from_role()` — PREV로 특정 역할부터 재시작 시 해당 역할 이후 캐시된 세션 파일 자동 무효화(`.json.prev-invalidated` 확장자 변경)
-- **`milestone_complete` 불일치 경고**: Reviewer가 `milestone_complete=true`를 반환했지만 `project.md`에 미완료 작업이 남아 있을 때 경고 출력
-- **`--yes` 자동 마일스톤 생성**: 모든 작업 완료 후 `--yes` 플래그이면 프롬프트 없이 자동으로 새 마일스톤 생성 세션 진입 (신규 포맷 및 레거시 경로 모두 적용)
-- **새 마일스톤 후 루프 재진입**: 마일스톤 생성 완료 후 `break` 대신 state 업데이트 + `continue`로 즉시 PM 역할 재시작
-- **초기화 완료 메시지 수정**: `porpoise --new` 완료 후 "Run porpoise again" 대신 "마일스톤 생성 세션을 시작합니다..." 출력
-- **테스트 추가**: 6개 신규 테스트 (총 173개)
-
-### [v0.8.0]
-- **`model/context.rs` 공유 모듈 신설**: `build_context_text`, `parse_role_output_from_value`, `try_parse_json_output` 를 `anthropic_api` / `openai_compatible` 어댑터가 공유 — 어댑터 간 동작 불일치 해소
-- **마일스톤 정보 컨텍스트 주입**: 모든 어댑터에서 `SessionInput.milestone` (ID·제목·버전·목표)이 실제로 컨텍스트에 포함됨 (이전: 필드만 존재, 미사용)
-- **`role_extra` API 어댑터 지원**: `workspace.toml [roles].*_extra` 설정이 `anthropic_api`·`openai_compatible` 시스템 프롬프트에 전달됨 (이전: `claude_code` 어댑터만 지원)
-- **`prev_reasons` 체크포인트 영속화**: PREV 피드백 이유가 `checkpoint.json`에 저장·복원됨 (이전: 재시작 시 초기화)
-- **모델 템플릿 초기화 선택**: `porpoise init` 시 어댑터 템플릿 목록 제시 및 선택 (Claude Code / Anthropic API / OpenAI Compatible)
-- **OPENAI_CODEX `api_base_url` 입력**: `porpoise init` 시 OpenAI 호환 API Base URL 직접 입력 가능
-- **JSON 세션 디렉터리 자동 생성**: 신규 초기화 프로젝트에 `.porpoise/sessions/` 자동 생성 → 즉시 JSON 모드 진입
-- **IMP-02 경고**: JSON 출력 섹션 누락 프롬프트 파일 감지 시 `porpoise --new` 재실행 안내 출력
-- **IMP-03 경고 (`--verbose`)**: `prompt_overrides` 경로 파일 존재 여부 검증
-- **컨텍스트 순서 정규화**: 모든 어댑터에서 프로젝트 요약 → 마일스톤 → 기술 스택 → 이전 보고서 순서 일관화
-- **테스트 추가**: 7개 신규 테스트 (총 167개)
-
-### [v0.7.1]
-- executor 타임아웃 종료 후 좀비 프로세스 회수 (Unix: `wait4`, Windows: `WaitForSingleObject`)
-
-### [v0.7.0]
-- **파일 미디에이션**: API 어댑터용 파일 읽기·쓰기·이동·삭제 추상화 레이어 (`workspace/apply.rs`, `workspace/executor.rs`)
-- **멀티 모델 지원**: `workspace.toml [models]` 섹션으로 역할별 모델 독립 설정 가능
-- **언어·프레임워크 템플릿**: `porpoise init` 시 언어/프레임워크별 보일러플레이트 템플릿 자동 적용
-- **WorkspaceSnapshot**: API 어댑터용 프로젝트 파일 스냅샷 지원 (`v0_7` 세션 스키마)
-
-### [v0.6.0]
-- **JSON 세션 기반 통신 아키텍처**: 역할 간 데이터를 구조화 JSON 세션 파일(`.porpoise/sessions/`)로 교환
-- **멀티 어댑터 지원**: `claude_code`, `anthropic_api`, `openai_compatible` 어댑터 선택 가능
-- **`SessionInput` / `RoleOutputData`**: 역할 입출력 타입 정의 및 스키마 기반 tool-use 구조화 응답
-- **레거시 호환**: `.porpoise/sessions/` 없는 기존 프로젝트는 `reports/`+`messages/` 기반 레거시 모드 유지
-
----
-
-이전 버전 릴리즈 내역은 [CHANGELOG.md](CHANGELOG.md)를 참조하세요.
+전체 릴리즈 내역은 [CHANGELOG.md](CHANGELOG.md)를 참조하세요.
 
 ## License
 
