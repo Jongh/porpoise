@@ -82,24 +82,6 @@ impl Role {
         }
     }
 
-    pub fn prev(&self) -> Option<Role> {
-        match self {
-            Role::PM => None,
-            Role::Developer => Some(Role::PM),
-            Role::Tester => Some(Role::Developer),
-            Role::Reviewer => Some(Role::Tester),
-        }
-    }
-
-    pub fn prompt_file(&self) -> &'static str {
-        match self {
-            Role::PM => "01-planning.md",
-            Role::Developer => "02-development.md",
-            Role::Tester => "03-testing.md",
-            Role::Reviewer => "04-review.md",
-        }
-    }
-
     pub fn all() -> Vec<Role> {
         vec![Role::PM, Role::Developer, Role::Tester, Role::Reviewer]
     }
@@ -373,14 +355,6 @@ mod tests {
         assert_eq!(Role::Developer.next(), Some(Role::Tester));
         assert_eq!(Role::Tester.next(), Some(Role::Reviewer));
         assert_eq!(Role::Reviewer.next(), None);
-    }
-
-    #[test]
-    fn role_prev_sequence() {
-        assert_eq!(Role::PM.prev(), None);
-        assert_eq!(Role::Developer.prev(), Some(Role::PM));
-        assert_eq!(Role::Tester.prev(), Some(Role::Developer));
-        assert_eq!(Role::Reviewer.prev(), Some(Role::Tester));
     }
 
     #[test]

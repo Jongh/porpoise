@@ -1,4 +1,5 @@
 pub struct LangTemplate {
+    #[allow(dead_code)]
     pub id: &'static str,
     pub display_name: &'static str,
     pub tech_stack: &'static str,
@@ -159,6 +160,7 @@ pub static ALL_TEMPLATES: &[&LangTemplate] = &[
     &RUST, &PYTHON, &TYPESCRIPT, &GO, &JAVA, &SPRING_BOOT,
 ];
 
+#[allow(dead_code)]
 pub fn find_template(id: &str) -> Option<&'static LangTemplate> {
     ALL_TEMPLATES.iter().copied().find(|t| t.id == id)
 }

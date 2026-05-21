@@ -25,24 +25,6 @@ impl ClaudeRunner {
         Ok(ClaudeRunner { binary_path })
     }
 
-    /// Run claude with a prompt file and context files.
-    /// Embeds context file contents directly into the prompt, then calls `claude -p`
-    /// with the prompt piped via stdin (avoids Windows command-line length limits).
-    /// Streams stdout to terminal and saves full output to output_file.
-    pub fn run_with_prompt(
-        &self,
-        prompt_file: &Path,
-        context_files: &[PathBuf],
-        output_file: &Path,
-        model: Option<&str>,
-    ) -> Result<String> {
-        let role_prompt = fs::read_to_string(prompt_file).with_context(|| {
-            format!("Failed to read prompt file: {}", prompt_file.display())
-        })?;
-        let prompt = self.build_prompt_from_content(&role_prompt, context_files)?;
-        self.execute_claude(&prompt, Some(output_file), model)
-    }
-
     /// Run claude with an already-rendered prompt string and context files.
     /// Use this when the prompt content is generated at runtime (e.g., after template substitution).
     /// Pass `output_file: None` to skip writing to disk.

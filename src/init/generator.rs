@@ -940,7 +940,7 @@ mod tests {
         let ws_content =
             std::fs::read_to_string(path.join(".porpoise").join("workspace.toml")).unwrap();
         assert!(ws_content.contains("adapter = \"openai_compatible\""));
-        assert!(ws_content.contains("model_id = \"gemini-2.0-flash\""));
+        assert!(ws_content.contains("model_id = \"gemini-2.5-flash\""));
         assert!(ws_content.contains(
             "api_base_url = \"https://generativelanguage.googleapis.com/v1beta/openai\""
         ));

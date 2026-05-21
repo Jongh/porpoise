@@ -49,6 +49,7 @@ impl Logger {
         eprintln!("[{}] [{}] {}", "ERROR".red_str(), role, msg);
     }
 
+    #[allow(dead_code)]
     pub fn debug(&self, role: &str, msg: &str) {
         if !self.verbose {
             return;
@@ -72,6 +73,7 @@ impl Logger {
         }
     }
 
+    #[allow(dead_code)]
     pub fn log_path(&self) -> &Path {
         &self.log_file
     }
@@ -104,6 +106,7 @@ trait ColorStr {
     fn cyan_str(&self) -> String;
     fn yellow_str(&self) -> String;
     fn red_str(&self) -> String;
+    #[allow(dead_code)]
     fn dimmed_str(&self) -> String;
 }
 

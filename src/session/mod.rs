@@ -434,4 +434,76 @@ mod tests {
         let result = find_latest_session(path, "M1-T01", "planning");
         assert!(result.is_some(), "NEXT 세션은 캐시로 반환되어야 합니다");
     }
+
+    #[test]
+    fn cleanup_sessions_removes_completed_task_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // project.md에 M1-T01 완료, M1-T02 미완료
+        let project_md = path.join(".porpoise").join("project.md");
+        std::fs::write(&project_md, "- [x] M1-T01: 완료된 태스크\n- [ ] M1-T02: 진행 중 태스크\n").unwrap();
+
+        std::fs::write(sessions_dir.join("M1-T01-planning-C1-R0.json"), "{}").unwrap();
+        std::fs::write(sessions_dir.join("M1-T02-planning-C1-R0.json"), "{}").unwrap();
+
+        let workspace = crate::config::workspace::WorkspaceConfig::default();
+        // 기본값: keep_completed=false, max_age_days=30
+        // age 기반 삭제는 발생 안 하지만 completed 삭제는 발생
+        cleanup_sessions(path, &workspace);
+
+        // M1-T01 세션은 삭제되어야 함
+        assert!(!sessions_dir.join("M1-T01-planning-C1-R0.json").exists(), "완료 태스크 세션이 삭제되지 않음");
+        // M1-T02 세션은 보존되어야 함
+        assert!(sessions_dir.join("M1-T02-planning-C1-R0.json").exists(), "미완료 태스크 세션이 삭제됨");
+    }
+
+    #[test]
+    fn cleanup_sessions_keeps_when_keep_completed_true() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let project_md = path.join(".porpoise").join("project.md");
+        std::fs::write(&project_md, "- [x] M1-T01: 완료된 태스크\n").unwrap();
+        std::fs::write(sessions_dir.join("M1-T01-planning-C1-R0.json"), "{}").unwrap();
+
+        let workspace = crate::config::workspace::WorkspaceConfig {
+            sessions: Some(crate::config::workspace::WorkspaceSessions {
+                keep_completed_milestone_sessions: Some(true),
+                max_session_age_days: Some(0), // 나이 기반 삭제 비활성
+            }),
+            ..Default::default()
+        };
+        cleanup_sessions(path, &workspace);
+
+        // keep_completed=true이므로 세션 보존
+        assert!(sessions_dir.join("M1-T01-planning-C1-R0.json").exists(), "keep_completed=true 시 세션이 삭제됨");
+    }
+
+    #[test]
+    fn cleanup_sessions_skips_deletion_when_max_age_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // project.md 없음 → completed_task_ids 비어있음
+        std::fs::write(sessions_dir.join("M2-T01-planning-C1-R0.json"), "{}").unwrap();
+
+        let workspace = crate::config::workspace::WorkspaceConfig {
+            sessions: Some(crate::config::workspace::WorkspaceSessions {
+                keep_completed_milestone_sessions: Some(true),
+                max_session_age_days: Some(0), // 0 = 무제한, 삭제 안 함
+            }),
+            ..Default::default()
+        };
+        cleanup_sessions(path, &workspace);
+
+        // max_age=0이므로 나이 기반 삭제 없음, completed도 keep=true이므로 삭제 없음
+        assert!(sessions_dir.join("M2-T01-planning-C1-R0.json").exists(), "max_age_days=0 설정 시 세션이 삭제됨");
+    }
 }

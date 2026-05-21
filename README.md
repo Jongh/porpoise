@@ -138,6 +138,16 @@ Allowed values for `prev_target`: `development`, `testing`. Omit to restart from
 
 ## CHANGELOG
 
+### [v0.17.0]
+- **API 키 환경변수명 입력 검증**: `porpoise --new` / `porpoise update config`에서 `api_key_env` 입력 시 대문자·숫자·밑줄 형식 검증(`validate_env_var_name`) + 실제 API 키 값 패턴 감지(`is_likely_api_key`, 3-retry 경고) — 실수로 키 값을 환경변수명 필드에 입력하는 오류 방지
+- **초기화 후 OS별 환경변수 설정 안내**: `print_api_key_env_guide()` 추가 — 초기화 완료 및 `update config` 완료 후 PowerShell·Unix 양식의 환경변수 설정 명령 자동 출력
+- **어댑터 생성 전 API 키 env var 사전 검증**: `factory.rs` `make_adapter()`에서 `anthropic_api` / `openai_compatible` 어댑터 생성 전 env var 존재 여부 확인 — 설정되지 않은 경우 즉각적인 명확한 에러 메시지 출력 (기존: 실행 중 HTTP 에러)
+- **Gemini 기본 모델 변경**: `gemini-2.0-flash` → `gemini-2.5-flash` — `init` 시 기본 선택 모델 업데이트
+- **Dead code 경고 16개 → 0개**: 미사용 함수·메서드·필드 제거 및 `#[allow(dead_code)]` 정리 — `Report::stub()`, `report_filename()`, `count_existing_reports()`, `Role::prev()`, `Role::prompt_file()`, `run_with_prompt()` 삭제
+- **`cleanup_sessions` 유닛 테스트 3개 추가**: 완료 태스크 세션 삭제 / `keep_completed=true` 보존 / `max_age=0` 비삭제 시나리오 커버
+- **`workspace.toml` `[sessions]` 주석 예시 추가**: `default_toml()` 끝에 세션 정책 설정 예시를 주석으로 포함
+- **테스트**: 207개 (204 → 207)
+
 ### [v0.16.0]
 - **`porpoise migrate` 서브커맨드 신설**: 레거시 프로젝트(`.porpoise/messages/`, `.porpoise/reports/`)를 JSON 세션 포맷으로 전환 — `sessions/` 디렉토리 생성 후 다음 실행부터 신규 포맷으로 동작, 기존 레거시 파일 보존
 - **`legacy.rs` 삭제 및 진입점 통합**: MD 기반 레거시 오케스트레이터 코드 경로 완전 제거 — `orchestrator::run()` 진입점을 `mod.rs`로 통합, 레거시/신규 분기 로직 단순화

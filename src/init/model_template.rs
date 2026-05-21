@@ -59,9 +59,9 @@ pub static GROQ: ModelTemplate = ModelTemplate {
 };
 
 pub static GEMINI: ModelTemplate = ModelTemplate {
-    display_name: "Google Gemini API / Gemini 2.0 Flash (무료 티어)",
+    display_name: "Google Gemini API / Gemini 2.5 Flash (무료 티어)",
     adapter: "openai_compatible",
-    model_id: Some("gemini-2.0-flash"),
+    model_id: Some("gemini-2.5-flash"),
     api_base_url: Some("https://generativelanguage.googleapis.com/v1beta/openai"),
     api_key_env: Some("GEMINI_API_KEY"),
     structured_output_mode: Some("json_mode"),
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn gemini_template_fields() {
         assert_eq!(GEMINI.adapter, "openai_compatible");
-        assert_eq!(GEMINI.model_id, Some("gemini-2.0-flash"));
+        assert_eq!(GEMINI.model_id, Some("gemini-2.5-flash"));
         assert_eq!(
             GEMINI.api_base_url,
             Some("https://generativelanguage.googleapis.com/v1beta/openai")

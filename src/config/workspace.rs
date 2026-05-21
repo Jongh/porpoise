@@ -365,6 +365,11 @@ reviewer_extra = ""
 # macOS / Linux:
 # [security]
 # allowed_command_prefixes = ["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"]
+
+# === 세션 JSON 자동 정리 정책 ===
+# [sessions]
+# keep_completed_milestone_sessions = false  # true: 완료된 마일스톤 세션 파일 보존
+# max_session_age_days = 30                  # 0 = 무제한 보존
 "#
     }
 

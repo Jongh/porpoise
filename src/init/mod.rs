@@ -81,9 +81,7 @@ pub fn run(path: &Path, args: &Args) -> Result<()> {
         }
 
         let key_env = m.api_key_env.as_deref().or(m.template.api_key_env).unwrap_or("");
-        if !key_env.is_empty() {
-            println!("  → {} 환경변수를 설정하세요.", key_env.yellow());
-        }
+        print_api_key_env_guide(key_env);
     }
 
     println!("{}", "마일스톤 생성 세션을 시작합니다...".cyan());
@@ -183,25 +181,25 @@ fn get_model_overrides(
 
     if std::ptr::eq(template, &ANTHROPIC_CLAUDE_SONNET) {
         let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("claude-sonnet-4-6"));
-        let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("ANTHROPIC_API_KEY"));
+        let api_key_env = prompt_env_var_name("API 키 환경변수", template.api_key_env.unwrap_or("ANTHROPIC_API_KEY"));
         return (Some(model_id), Some(api_key_env), None);
     }
 
     if std::ptr::eq(template, &GROQ) {
         let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("llama-3.3-70b-versatile"));
-        let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("GROQ_API_KEY"));
+        let api_key_env = prompt_env_var_name("API 키 환경변수", template.api_key_env.unwrap_or("GROQ_API_KEY"));
         return (Some(model_id), Some(api_key_env), None);
     }
 
     if std::ptr::eq(template, &GEMINI) {
-        let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("gemini-2.0-flash"));
-        let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("GEMINI_API_KEY"));
+        let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("gemini-2.5-flash"));
+        let api_key_env = prompt_env_var_name("API 키 환경변수", template.api_key_env.unwrap_or("GEMINI_API_KEY"));
         return (Some(model_id), Some(api_key_env), None);
     }
 
     if std::ptr::eq(template, &OPENAI_CODEX) {
         let model_id = prompt_input("모델 ID", template.model_id.unwrap_or("codex-mini-latest"));
-        let api_key_env = prompt_input("API 키 환경변수", template.api_key_env.unwrap_or("OPENAI_API_KEY"));
+        let api_key_env = prompt_env_var_name("API 키 환경변수", template.api_key_env.unwrap_or("OPENAI_API_KEY"));
         let api_base_url = prompt_input("API Base URL", template.api_base_url.unwrap_or("https://api.openai.com/v1"));
         return (Some(model_id), Some(api_key_env), Some(api_base_url));
     }
@@ -213,6 +211,53 @@ fn get_model_overrides(
     }
 
     (None, None, None)
+}
+
+fn validate_env_var_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && !name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+}
+
+fn is_likely_api_key(value: &str) -> bool {
+    value.starts_with("AIzaSy")
+        || value.starts_with("sk-")
+        || value.starts_with("gsk_")
+        || (!value.is_empty() && value.chars().any(|c| c.is_ascii_lowercase()))
+}
+
+fn prompt_env_var_name(prompt: &str, default: &str) -> String {
+    for _ in 0..3 {
+        let value = dialoguer::Input::<String>::new()
+            .with_prompt(prompt)
+            .default(default.to_string())
+            .interact_text()
+            .unwrap_or_else(|_| default.to_string());
+
+        if is_likely_api_key(&value) {
+            println!("{}", "경고: 입력값이 API 키 값처럼 보입니다.".yellow());
+            println!("{}", "api_key_env 필드에는 키 값이 아닌 환경변수 이름(예: GEMINI_API_KEY)을 입력하세요.".yellow());
+            continue;
+        }
+        if validate_env_var_name(&value) || value.is_empty() {
+            return value;
+        }
+        println!("{}", "유효한 환경변수 이름(대문자·숫자·밑줄만, 숫자로 시작 불가)을 입력하세요.".yellow());
+    }
+    println!("{}", format!("  → 기본값 '{}' 사용", default).dimmed());
+    default.to_string()
+}
+
+fn print_api_key_env_guide(env_var_name: &str) {
+    if env_var_name.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", "API 키 환경변수 설정이 필요합니다:".yellow());
+    println!("  Windows (PowerShell): $env:{} = \"실제키값\"", env_var_name.cyan());
+    println!("  macOS / Linux:        export {}=\"실제키값\"", env_var_name.cyan());
+    println!("{}", "  포르포이스 실행 전에 위 명령을 실행하거나 셸 프로파일에 추가하세요.".dimmed());
 }
 
 fn is_interactive() -> bool {
@@ -247,8 +292,9 @@ pub fn run_update_config(path: &Path) -> Result<()> {
         println!("  {} 언어: {}", "✓".green(), lang);
     }
 
-    if let Some(resolved) = select_model_for_update() {
-        let new_section = generator::model_toml_section(Some(&resolved));
+    let select_model_result = select_model_for_update();
+    if let Some(ref resolved) = select_model_result {
+        let new_section = generator::model_toml_section(Some(resolved));
         content = replace_model_section_in_toml(&content, &new_section);
         println!("  {} 모델: {}", "✓".green(), resolved.template.display_name);
     }
@@ -256,6 +302,13 @@ pub fn run_update_config(path: &Path) -> Result<()> {
     std::fs::write(&ws_path, &content)
         .with_context(|| format!("workspace.toml 쓰기 실패: {}", ws_path.display()))?;
     println!("{}", "\n설정 업데이트 완료.".green().bold());
+
+    if let Some(ref resolved) = select_model_result {
+        let key_env = resolved.api_key_env.as_deref()
+            .or(resolved.template.api_key_env)
+            .unwrap_or("");
+        print_api_key_env_guide(key_env);
+    }
 
     Ok(())
 }
@@ -382,6 +435,48 @@ fn replace_model_section_in_toml(content: &str, new_section: &str) -> String {
         result.push('\n');
     }
     result
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn validate_env_var_name_accepts_valid() {
+        assert!(validate_env_var_name("GEMINI_API_KEY"));
+        assert!(validate_env_var_name("ANTHROPIC_API_KEY"));
+        assert!(validate_env_var_name("GROQ_API_KEY"));
+        assert!(validate_env_var_name("MY_KEY_123"));
+    }
+
+    #[test]
+    fn validate_env_var_name_rejects_invalid() {
+        assert!(!validate_env_var_name(""));
+        assert!(!validate_env_var_name("1INVALID"));    // 숫자로 시작
+        assert!(!validate_env_var_name("lower_case"));  // 소문자 포함
+        assert!(!validate_env_var_name("KEY-NAME"));    // 하이픈 포함
+        assert!(!validate_env_var_name("KEY.NAME"));    // 점 포함
+        assert!(!validate_env_var_name(&"A".repeat(65))); // 길이 초과
+    }
+
+    #[test]
+    fn is_likely_api_key_detects_google_key() {
+        assert!(is_likely_api_key("AIzaSyBopDQXiE5ob8RkNlPuThmG4HZaN4HbdS4"));
+        assert!(!is_likely_api_key("GEMINI_API_KEY"));
+    }
+
+    #[test]
+    fn is_likely_api_key_detects_openai_key() {
+        assert!(is_likely_api_key("sk-proj-abc123"));
+        assert!(is_likely_api_key("sk-abcdef"));
+        assert!(!is_likely_api_key("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn is_likely_api_key_detects_groq_key() {
+        assert!(is_likely_api_key("gsk_abcdef123456"));
+        assert!(!is_likely_api_key("GROQ_API_KEY"));
+    }
 }
 
 #[cfg(test)]
