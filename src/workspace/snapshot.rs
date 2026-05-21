@@ -7,7 +7,7 @@ const MAX_FILE_BYTES_TARGET: usize = 32 * 1024;
 const MAX_FILE_BYTES_OTHER: usize = 8 * 1024;
 const TRUNCATION_HEAD: usize = 3 * 1024;
 const TRUNCATION_TAIL: usize = 3 * 1024;
-const GIT_DIFF_MAX: usize = 16 * 1024;
+const GIT_DIFF_MAX_LINES: usize = 200;
 
 static SOURCE_EXTENSIONS: &[&str] = &[
     "rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "kt",
@@ -145,8 +145,10 @@ fn get_git_diff(path: &Path) -> Option<String> {
         .ok()?;
     let s = String::from_utf8_lossy(&output.stdout).to_string();
     if s.is_empty() { return None; }
-    if s.len() > GIT_DIFF_MAX {
-        Some(format!("{}\n[... truncated ...]", &s[..GIT_DIFF_MAX]))
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() > GIT_DIFF_MAX_LINES {
+        let truncated = lines[..GIT_DIFF_MAX_LINES].join("\n");
+        Some(format!("{}\n[... {} lines truncated ...]", truncated, lines.len() - GIT_DIFF_MAX_LINES))
     } else {
         Some(s)
     }

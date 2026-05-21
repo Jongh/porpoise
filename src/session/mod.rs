@@ -14,6 +14,7 @@ pub use input::SessionInput;
 pub use output::{ExitCode, RoleOutputData};
 
 use anyhow::{Context, Result};
+use colored::Colorize;
 use std::path::{Path, PathBuf};
 
 use crate::orchestrator::state::TaskId;
@@ -102,6 +103,93 @@ pub fn count_existing_sessions(path: &Path, task_id: &str, role: &str, cycle: u3
 /// workspaces that must remain compatible with older Porpoise releases.
 pub fn is_new_format(path: &Path) -> bool {
     path.join(".porpoise").join("sessions").is_dir()
+}
+
+/// Removes session JSON files based on workspace.toml [sessions] policy.
+///
+/// - `max_session_age_days = 0`: no deletion (unlimited retention).
+/// - `max_session_age_days = N` (default 30): files older than N days are deleted.
+/// - `keep_completed_milestone_sessions = false` (default): sessions belonging to
+///   completed milestones are also deleted regardless of age.
+pub fn cleanup_sessions(path: &Path, workspace: &crate::config::workspace::WorkspaceConfig) {
+    let sessions_dir = path.join(".porpoise").join("sessions");
+    if !sessions_dir.is_dir() {
+        return;
+    }
+
+    let max_age_days = workspace.session_max_age_days();
+    let keep_completed = workspace.session_keep_completed();
+
+    // Parse completed task IDs from project.md
+    let completed_task_ids: std::collections::HashSet<String> = if !keep_completed {
+        let project_md = path.join(".porpoise").join("project.md");
+        std::fs::read_to_string(&project_md)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("- [x]") {
+                    // "- [x] M1-T01: title" → extract "M1-T01"
+                    trimmed.strip_prefix("- [x]")
+                        .and_then(|rest| rest.trim().split(':').next())
+                        .map(|id| id.trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    let now = std::time::SystemTime::now();
+    let age_threshold = if max_age_days > 0 {
+        Some(std::time::Duration::from_secs(max_age_days as u64 * 86400))
+    } else {
+        None
+    };
+
+    let entries = match std::fs::read_dir(&sessions_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut deleted = 0usize;
+    for entry in entries.flatten() {
+        let file_path = entry.path();
+        if !file_path.is_file() { continue; }
+        let name = file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if !name.ends_with(".json") { continue; }
+
+        // Extract task_id from filename: "M1-T01-planning-C1-R0.json"
+        let task_id_in_file = name.split('-')
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("-");
+
+        let should_delete_by_task = !keep_completed
+            && completed_task_ids.contains(&task_id_in_file);
+
+        let should_delete_by_age = age_threshold.map(|threshold| {
+            entry.metadata()
+                .and_then(|m| m.modified())
+                .map(|mtime| now.duration_since(mtime).unwrap_or_default() > threshold)
+                .unwrap_or(false)
+        }).unwrap_or(false);
+
+        if should_delete_by_task || should_delete_by_age {
+            let _ = std::fs::remove_file(&file_path);
+            deleted += 1;
+        }
+    }
+
+    if deleted > 0 {
+        println!(
+            "  {} 세션 정리: {}개 파일 삭제 (workspace.toml [sessions] 정책 적용)",
+            "ℹ".cyan(),
+            deleted
+        );
+    }
 }
 
 #[cfg(test)]

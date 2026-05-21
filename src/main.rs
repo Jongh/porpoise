@@ -46,6 +46,8 @@ pub enum Commands {
         #[command(subcommand)]
         subcommand: UpdateCommands,
     },
+    /// Migrate a legacy project to the JSON session format
+    Migrate,
 }
 
 #[derive(Parser, Debug)]
@@ -108,6 +110,7 @@ fn run() -> Result<()> {
                 UpdateCommands::Prompt => return init::run_update_prompt(&current_dir),
                 UpdateCommands::Config => return init::run_update_config(&current_dir),
             },
+            Commands::Migrate => return run_migrate(&current_dir),
         }
     }
 
@@ -197,6 +200,43 @@ fn run_approve(path: &Path, verdict: &str) -> Result<()> {
             println!("{}", "판정 대상 파일이 없습니다 (messages/ 파일이 없거나 이미 reports/ 파일이 존재합니다).".yellow());
         }
     }
+
+    Ok(())
+}
+
+fn run_migrate(path: &Path) -> Result<()> {
+    let porpoise_dir = path.join(".porpoise");
+    let sessions_dir = porpoise_dir.join("sessions");
+
+    if sessions_dir.exists() {
+        println!("{}", "이미 신규 포맷(sessions/)이 존재합니다. 마이그레이션이 필요하지 않습니다.".green());
+        return Ok(());
+    }
+
+    let has_legacy = porpoise_dir.join("messages").exists() || porpoise_dir.join("reports").exists();
+    if !has_legacy {
+        println!(
+            "{}",
+            ".porpoise/messages/ 또는 .porpoise/reports/ 폴더가 없습니다. 마이그레이션 대상 프로젝트가 아닙니다.".yellow()
+        );
+        return Ok(());
+    }
+
+    println!("{}", "\n=== 레거시 프로젝트 마이그레이션 ===".cyan().bold());
+    println!("  레거시 보고서 폴더(.porpoise/messages/, .porpoise/reports/)가 감지되었습니다.");
+    println!("  신규 JSON 세션 포맷으로 전환합니다...");
+    println!();
+
+    std::fs::create_dir_all(&sessions_dir)
+        .map_err(|e| anyhow::anyhow!("sessions/ 디렉토리 생성 실패: {}", e))?;
+
+    println!("  {} .porpoise/sessions/ 디렉토리 생성 완료", "✓".green());
+    println!();
+    println!("{}", "마이그레이션 완료. 'porpoise'를 다시 실행하면 신규 포맷으로 시작합니다.".green().bold());
+    println!(
+        "{}",
+        "  기존 레거시 파일(.porpoise/messages/, .porpoise/reports/)은 보존됩니다.".dimmed()
+    );
 
     Ok(())
 }

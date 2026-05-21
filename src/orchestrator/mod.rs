@@ -1,12 +1,9 @@
 pub mod checkpoint;
-pub mod legacy;
 pub mod milestone_session;
 pub mod new_format;
 pub mod report;
 pub mod roles;
 pub mod state;
-
-pub use legacy::run;
 
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -16,13 +13,180 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use crate::config::workspace::WorkspaceConfig;
+use crate::config::Config;
 use crate::logger::Logger;
 use crate::milestone::update_task_status;
 use crate::utils::fs::write_file;
 use crate::utils::input::collect_multiline_input;
+use crate::Args;
 
 use checkpoint::{save_checkpoint, Checkpoint};
-use state::{parse_tasks_from_project_md, OrchestratorState, Role};
+use state::{load_state, parse_tasks_from_project_md, OrchestratorState, Role};
+
+pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
+    let logger = Logger::new(path, args.verbose)?;
+
+    println!();
+    println!("{}", "=== Porpoise Orchestration ===".green().bold());
+    println!();
+
+    let mut state = load_state(path)?;
+    logger.info(
+        "orchestrator",
+        &format!("Loaded state: cycle={} task={}", state.cycle, state.current_task_id),
+    );
+
+    // --from override
+    if let Some(ref from_role) = args.from {
+        match Role::from_str(from_role) {
+            Some(role) => {
+                logger.info("orchestrator", &format!("--from override: {}", role));
+                let start_idx = Role::all().iter().position(|r| r == &role).unwrap_or(0);
+                state.completed_roles = Role::all()[..start_idx].to_vec();
+                state.current_role = Some(role);
+            }
+            None => anyhow::bail!(
+                "Unknown role: '{}'. Valid: planning, development, testing, review",
+                from_role
+            ),
+        }
+    }
+
+    // Migration guard: detect legacy report/ folder and warn
+    {
+        let old_report_dir = path.join(".porpoise").join("report");
+        if old_report_dir.exists() {
+            println!(
+                "{}",
+                "\n⚠  구 버전 report/ 폴더가 감지되었습니다 (v0.3.1 이전 형식).\
+                \n   이 폴더의 파일은 자동 라우팅에 사용되지 않습니다.\
+                \n   reports/ 폴더로 이동 후 재실행하세요.\
+                \n   Windows: ren .porpoise\\report .porpoise\\reports\
+                \n   Unix:    mv .porpoise/report .porpoise/reports"
+                    .yellow()
+                    .bold()
+            );
+        }
+    }
+
+    let workspace = WorkspaceConfig::load(path).unwrap_or_default();
+
+    // IMP-01: warn if workspace.toml is newer than generated prompt files
+    {
+        let ws_path = path.join(".porpoise").join("workspace.toml");
+        let prompts_dir = path.join(".porpoise").join("prompts");
+        if ws_path.exists() {
+            if let Ok(ws_mtime) = std::fs::metadata(&ws_path).and_then(|m| m.modified()) {
+                let outdated = ["01-planning.md", "02-development.md", "03-testing.md", "04-review.md"]
+                    .iter()
+                    .any(|f| {
+                        std::fs::metadata(prompts_dir.join(f))
+                            .and_then(|m| m.modified())
+                            .map(|mtime| ws_mtime > mtime)
+                            .unwrap_or(false)
+                    });
+                if outdated {
+                    println!(
+                        "{}",
+                        "⚠  workspace.toml이 프롬프트 파일보다 최신입니다. 'porpoise update prompt'로 프롬프트를 재생성하세요.".yellow()
+                    );
+                }
+            }
+        }
+    }
+
+    // IMP-03: validate prompt_overrides paths (verbose only)
+    if args.verbose {
+        for role_key in &["pm", "developer", "tester", "reviewer"] {
+            if let Some(full_path) = workspace.resolved_override_path(role_key, path) {
+                if !full_path.exists() {
+                    println!(
+                        "  {} prompt_overrides.{}: 파일 없음 — {}",
+                        "⚠".yellow(),
+                        role_key,
+                        full_path.display()
+                    );
+                    logger.warn(
+                        "orchestrator",
+                        &format!("prompt_override {} 파일 없음: {}", role_key, full_path.display()),
+                    );
+                }
+            }
+        }
+    }
+
+    print_resume_summary(&state);
+
+    if args.dry_run {
+        println!("{}", "[DRY RUN MODE — no execution will happen]".yellow().bold());
+        println!();
+    }
+
+    let effective_model = args.model.clone().or_else(|| config.model().map(str::to_string));
+
+    // Session cleanup based on workspace.toml [sessions] policy
+    crate::session::cleanup_sessions(path, &workspace);
+
+    // Milestone session if all tasks done
+    {
+        let tasks = parse_tasks_from_project_md(path);
+        if tasks.iter().all(|t| t.completed) {
+            logger.info("orchestrator", "No pending tasks — entering milestone session");
+            println!("{}", "\n미완료 작업이 없습니다. 마일스톤 생성 세션을 시작합니다.".cyan().bold());
+            milestone_session::run_milestone_session(
+                path,
+                args.dry_run,
+                &logger,
+                effective_model.as_deref(),
+                &workspace,
+            )?;
+            let new_tasks = parse_tasks_from_project_md(path);
+            match new_tasks.iter().find(|t| !t.completed) {
+                Some(next) => {
+                    state.current_task_id = next.id.clone();
+                    state.current_task_title = next.title.clone();
+                    state.completed_roles = vec![];
+                    state.current_role = Some(Role::PM);
+                    logger.info(
+                        "orchestrator",
+                        &format!("Milestone session done — first task: {}", state.current_task_id),
+                    );
+                }
+                None => {
+                    println!("{}", "실행할 작업이 없습니다. 'porpoise'를 다시 실행하세요.".yellow());
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    if crate::session::is_new_format(path) {
+        return new_format::run_new_format(
+            path,
+            args,
+            config,
+            &workspace,
+            &state,
+            effective_model.as_deref(),
+            &logger,
+        );
+    }
+
+    // Legacy project detected — guide user to run migrate
+    let legacy_exists = path.join(".porpoise").join("messages").exists()
+        || path.join(".porpoise").join("reports").exists();
+    if legacy_exists {
+        println!("{}", "\n⚠  레거시 프로젝트가 감지되었습니다.".yellow().bold());
+        println!("{}", "   'porpoise migrate'를 실행하여 신규 JSON 세션 포맷으로 전환하세요.".dimmed());
+    } else {
+        println!(
+            "{}",
+            "sessions/ 폴더가 없습니다. 'porpoise --new'로 재초기화하세요.".yellow()
+        );
+    }
+    Ok(())
+}
 
 pub(super) fn save_current_checkpoint(
     state: &OrchestratorState,

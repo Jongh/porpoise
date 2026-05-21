@@ -4,6 +4,13 @@
 
 ---
 
+### [v0.16.0]
+- **`porpoise migrate` 서브커맨드 신설**: 레거시 프로젝트(`.porpoise/messages/`, `.porpoise/reports/`)를 JSON 세션 포맷으로 전환 — `sessions/` 디렉토리 생성 후 다음 실행부터 신규 포맷으로 동작, 기존 레거시 파일 보존
+- **`legacy.rs` 삭제 및 진입점 통합**: MD 기반 레거시 오케스트레이터 코드 경로 완전 제거 — `orchestrator::run()` 진입점을 `mod.rs`로 통합, 레거시/신규 분기 로직 단순화
+- **Session JSON 자동 정리 (`cleanup_sessions`)**: `workspace.toml [sessions]` 정책에 따라 완료된 마일스톤 세션 파일 및 오래된 세션 파일 자동 삭제 — `keep_completed_milestone_sessions`(기본: false)·`max_session_age_days`(기본: 30) 설정 추가
+- **Snapshot git diff 라인 제한**: `GIT_DIFF_MAX_LINES = 200` — 기존 byte 기반 (`16KB`) 제한을 라인 기반으로 변경, 컨텍스트 예측 가능성 개선
+- **테스트**: 204개 유지
+
 ### [v0.15.2]
 - **`orchestrator` 모듈 분리**: `mod.rs` (1634줄) → `legacy.rs`(레거시 MD 기반 라우팅)·`new_format.rs`(JSON 세션 라우팅)로 분리 — 공통 헬퍼 12개는 `mod.rs`에 `pub(super)` 헬퍼로 유지, 단일 파일 복잡도 해소
 - **`Milestone` 구조체 dead code 제거**: `metadata: HashMap<String, String>` 필드·`parse_metadata()` 함수·`file_path: PathBuf` 필드 제거 — `parse_milestone_content()` 시그니처에서 `path: &Path` 인자 제거

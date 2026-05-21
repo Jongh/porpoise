@@ -70,6 +70,14 @@ pub struct WorkspaceModelPerRole {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceSessions {
+    /// 완료된 마일스톤의 세션 파일 보존 여부 (기본값: false — 정리 대상)
+    pub keep_completed_milestone_sessions: Option<bool>,
+    /// 이 일수를 초과한 세션 파일 자동 삭제 (기본값: 30, 0 = 무제한)
+    pub max_session_age_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     pub general: Option<WorkspaceGeneral>,
     pub dod: Option<WorkspaceDod>,
@@ -79,6 +87,7 @@ pub struct WorkspaceConfig {
     pub model: Option<WorkspaceModel>,
     pub tech: Option<WorkspaceTech>,
     pub security: Option<WorkspaceSecurity>,
+    pub sessions: Option<WorkspaceSessions>,
 }
 
 impl WorkspaceConfig {
@@ -357,6 +366,20 @@ reviewer_extra = ""
 # [security]
 # allowed_command_prefixes = ["cp", "mv", "rm", "mkdir", "touch", "cat", "grep", "sed", "find", "chmod", "diff", "tar"]
 "#
+    }
+
+    pub fn session_keep_completed(&self) -> bool {
+        self.sessions
+            .as_ref()
+            .and_then(|s| s.keep_completed_milestone_sessions)
+            .unwrap_or(false)
+    }
+
+    pub fn session_max_age_days(&self) -> u32 {
+        self.sessions
+            .as_ref()
+            .and_then(|s| s.max_session_age_days)
+            .unwrap_or(30)
     }
 }
 
