@@ -26,7 +26,7 @@ pub fn make_adapter(workspace: &WorkspaceConfig, project_path: &Path) -> Result<
                      \x20 macOS / Linux:        export {env_name}=\"실제키값\""
                 );
             }
-            Ok(Box::new(AnthropicApiAdapter::new()))
+            Ok(Box::new(AnthropicApiAdapter::new(env_name.to_string())))
         }
         AdapterType::OpenAiCompatible => {
             let base_url = workspace.openai_api_base_url()

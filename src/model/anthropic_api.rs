@@ -46,19 +46,26 @@ fn resolve_role_system_prompt(role: &str, role_extra: &str) -> String {
 }
 
 pub struct AnthropicApiAdapter {
+    api_key_env: String,
     raw_text: Mutex<Option<String>>,
 }
 
 impl AnthropicApiAdapter {
-    pub fn new() -> Self {
+    pub fn new(api_key_env: String) -> Self {
         AnthropicApiAdapter {
+            api_key_env,
             raw_text: Mutex::new(None),
         }
     }
 
-    pub fn get_api_key() -> Result<String> {
-        std::env::var("ANTHROPIC_API_KEY")
-            .context("ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다.\n  export ANTHROPIC_API_KEY=your-key 를 실행하세요.")
+    fn get_api_key(&self) -> Result<String> {
+        std::env::var(&self.api_key_env)
+            .with_context(|| format!(
+                "'{}' 환경변수가 설정되지 않았습니다.\n\
+                 \x20 Windows (PowerShell): $env:{} = \"실제키값\"\n\
+                 \x20 macOS / Linux:        export {}=\"실제키값\"",
+                self.api_key_env, self.api_key_env, self.api_key_env
+            ))
     }
 
     fn get_tool_schema(role: &str) -> &'static str {
@@ -75,7 +82,7 @@ impl AnthropicApiAdapter {
 
 impl ModelAdapter for AnthropicApiAdapter {
     fn execute(&self, input: &SessionInput, config: &ModelConfig) -> Result<RoleOutputData> {
-        let api_key = Self::get_api_key()?;
+        let api_key = self.get_api_key()?;
         let tool_schema_str = Self::get_tool_schema(&input.role);
         let tool_schema: serde_json::Value = serde_json::from_str(tool_schema_str)?;
 
@@ -172,15 +179,21 @@ mod tests {
 
     #[test]
     fn missing_api_key_returns_error() {
-        // 환경 변수 없는 상태에서 에러 반환 확인
-        let original = std::env::var("ANTHROPIC_API_KEY").ok();
-        // Windows에서는 환경변수 조작에 unsafe 없이 remove_var 사용
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        let result = AnthropicApiAdapter::get_api_key();
+        let env_name = "ANTHROPIC_API_KEY_TEST_MISSING_XYZ123";
+        std::env::remove_var(env_name);
+        let adapter = AnthropicApiAdapter::new(env_name.to_string());
+        let result = adapter.get_api_key();
         assert!(result.is_err());
-        // 복원
-        if let Some(key) = original {
-            std::env::set_var("ANTHROPIC_API_KEY", key);
-        }
+    }
+
+    #[test]
+    fn custom_api_key_env_is_used() {
+        let env_name = "ANTHROPIC_API_KEY_TEST_CUSTOM_XYZ456";
+        std::env::set_var(env_name, "test-key-value");
+        let adapter = AnthropicApiAdapter::new(env_name.to_string());
+        let result = adapter.get_api_key();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test-key-value");
+        std::env::remove_var(env_name);
     }
 }

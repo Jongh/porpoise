@@ -4,6 +4,13 @@
 
 ---
 
+### [v0.18.0]
+- **`AnthropicApiAdapter` `api_key_env` 준수**: `workspace.toml`의 `api_key_env` 설정이 `anthropic_api` 어댑터에서 무시되던 버그 수정 — 어댑터 생성 시 설정된 환경변수 이름을 실제로 사용, `ANTHROPIC_API_KEY` 하드코딩 제거
+- **`is_likely_api_key()` 정밀도 개선**: 소문자 포함 문자열 전체를 "API 키"로 오진단하던 로직 제거 — `AIzaSy`, `sk-`, `gsk_`, `xai-`, `claude-` 접두사 기반으로 감지 범위 축소, 소문자 env var 이름에 잘못된 경고 미출력
+- **`porpoise doctor` 서브커맨드 신설**: 설정 진단 명령 추가 — `workspace.toml` 파싱·어댑터 타입·Claude CLI 설치·API 키 env var·Ollama 서버 연결·`sessions/` 디렉토리·최근 마일스톤 파일 7개 항목 순서대로 점검, 실패 항목에 OS별 해결 안내 출력
+- **`cleanup_sessions` 나이 기반 삭제 테스트 보강**: `keep_completed=false + max_age_days=0` 단독 케이스, `max_age_days=1` 조건에서 최근 파일 보존 케이스 추가 — 기존 테스트가 항상 `keep_completed=true`와 조합하던 편향 해소
+- **테스트**: 215개 (207 → 215, +8개)
+
 ### [v0.17.0]
 - **API 키 환경변수명 입력 검증**: `porpoise --new` / `porpoise update config`에서 `api_key_env` 입력 시 대문자·숫자·밑줄 형식 검증(`validate_env_var_name`) + 실제 API 키 값 패턴 감지(`is_likely_api_key`, 3-retry 경고) — 실수로 키 값을 환경변수명 필드에 입력하는 오류 방지
 - **초기화 후 OS별 환경변수 설정 안내**: `print_api_key_env_guide()` 추가 — 초기화 완료 및 `update config` 완료 후 PowerShell·Unix 양식의 환경변수 설정 명령 자동 출력

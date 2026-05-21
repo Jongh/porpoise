@@ -1,5 +1,6 @@
 mod claude;
 mod config;
+mod doctor;
 mod init;
 mod logger;
 mod milestone;
@@ -48,6 +49,8 @@ pub enum Commands {
     },
     /// Migrate a legacy project to the JSON session format
     Migrate,
+    /// Diagnose workspace configuration, adapter, API keys, and dependencies
+    Doctor,
 }
 
 #[derive(Parser, Debug)]
@@ -111,6 +114,10 @@ fn run() -> Result<()> {
                 UpdateCommands::Config => return init::run_update_config(&current_dir),
             },
             Commands::Migrate => return run_migrate(&current_dir),
+            Commands::Doctor => {
+                doctor::run_doctor(&current_dir);
+                return Ok(());
+            }
         }
     }
 

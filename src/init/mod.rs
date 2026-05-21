@@ -224,7 +224,8 @@ fn is_likely_api_key(value: &str) -> bool {
     value.starts_with("AIzaSy")
         || value.starts_with("sk-")
         || value.starts_with("gsk_")
-        || (!value.is_empty() && value.chars().any(|c| c.is_ascii_lowercase()))
+        || value.starts_with("xai-")
+        || value.starts_with("claude-")
 }
 
 fn prompt_env_var_name(prompt: &str, default: &str) -> String {
@@ -476,6 +477,19 @@ mod validation_tests {
     fn is_likely_api_key_detects_groq_key() {
         assert!(is_likely_api_key("gsk_abcdef123456"));
         assert!(!is_likely_api_key("GROQ_API_KEY"));
+    }
+
+    #[test]
+    fn is_likely_api_key_detects_xai_key() {
+        assert!(is_likely_api_key("xai-abc123xyz"));
+        assert!(!is_likely_api_key("XAI_API_KEY"));
+    }
+
+    #[test]
+    fn is_likely_api_key_does_not_flag_lowercase_env_name() {
+        assert!(!is_likely_api_key("my_custom_key"));
+        assert!(!is_likely_api_key("gemini_api_key"));
+        assert!(!is_likely_api_key("some_lowercase_string"));
     }
 }
 

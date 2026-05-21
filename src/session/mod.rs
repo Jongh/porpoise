@@ -506,4 +506,60 @@ mod tests {
         // max_age=0이므로 나이 기반 삭제 없음, completed도 keep=true이므로 삭제 없음
         assert!(sessions_dir.join("M2-T01-planning-C1-R0.json").exists(), "max_age_days=0 설정 시 세션이 삭제됨");
     }
+
+    #[test]
+    fn cleanup_sessions_skips_age_deletion_when_max_age_zero_and_keep_completed_false() {
+        // keep_completed=false (기본값) + max_age_days=0 조합:
+        // 완료 태스크가 없으면 아무것도 삭제되지 않아야 함
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // project.md 없음 → completed_task_ids 비어 있음
+        std::fs::write(sessions_dir.join("M3-T01-planning-C1-R0.json"), "{}").unwrap();
+
+        let workspace = crate::config::workspace::WorkspaceConfig {
+            sessions: Some(crate::config::workspace::WorkspaceSessions {
+                keep_completed_milestone_sessions: Some(false), // 완료 삭제 활성
+                max_session_age_days: Some(0), // 나이 기반 삭제 비활성
+            }),
+            ..Default::default()
+        };
+        cleanup_sessions(path, &workspace);
+
+        // max_age=0이므로 나이 기반 삭제 없음, 완료 태스크도 없으므로 파일 보존
+        assert!(
+            sessions_dir.join("M3-T01-planning-C1-R0.json").exists(),
+            "keep_completed=false + max_age_days=0 조합에서 세션이 삭제됨"
+        );
+    }
+
+    #[test]
+    fn cleanup_sessions_age_deletion_preserves_recently_created_files() {
+        // max_age_days=1 + keep_completed=false 조합:
+        // 방금 만든 파일은 1일 미만이므로 삭제되지 않아야 함
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let sessions_dir = path.join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // project.md 없음 → completed_task_ids 비어 있음 (태스크 기반 삭제 없음)
+        std::fs::write(sessions_dir.join("M4-T01-planning-C1-R0.json"), "{}").unwrap();
+
+        let workspace = crate::config::workspace::WorkspaceConfig {
+            sessions: Some(crate::config::workspace::WorkspaceSessions {
+                keep_completed_milestone_sessions: Some(false),
+                max_session_age_days: Some(1), // 1일 이상 된 파일 삭제
+            }),
+            ..Default::default()
+        };
+        cleanup_sessions(path, &workspace);
+
+        // 방금 만든 파일은 0초 미만 → 1일 threshold 미달 → 보존
+        assert!(
+            sessions_dir.join("M4-T01-planning-C1-R0.json").exists(),
+            "최근 생성 파일이 나이 기반 삭제로 제거됨"
+        );
+    }
 }
