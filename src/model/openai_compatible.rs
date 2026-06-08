@@ -159,23 +159,17 @@ impl ModelAdapter for OpenAiCompatibleAdapter {
         let result = if mode == "auto" || mode == "function_calling" {
             let r = try_function_calling(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, &tool_schema, input, config.verbose);
             if mode == "function_calling" { return r; }
-            match r {
-                Ok(o) => return Ok(o),
-                Err(_) => {},
-            }
+            if let Ok(o) = r { return Ok(o) }
             // json_mode fallback
             let r2 = try_json_mode(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, is_ollama_endpoint(&url), config.verbose);
-            match r2 {
-                Ok(o) => return Ok(o),
-                Err(_) => {},
-            }
+            if let Ok(o) = r2 { return Ok(o) }
             // text_extraction fallback
-            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut *self.raw_text.lock().unwrap(), config.verbose)
+            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut self.raw_text.lock().unwrap(), config.verbose)
         } else if mode == "json_mode" {
             try_json_mode(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, is_ollama_endpoint(&url), config.verbose)
         } else {
             // text_extraction
-            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut *self.raw_text.lock().unwrap(), config.verbose)
+            try_text_extraction(&url, self.get_api_key().as_deref(), &config.model_id, &context_text, input, &mut self.raw_text.lock().unwrap(), config.verbose)
         };
 
         result

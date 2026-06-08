@@ -25,6 +25,8 @@ pub struct Checkpoint {
 }
 
 impl Checkpoint {
+    // 체크포인트의 모든 필드를 받는 생성자 — 인자 수가 많지만 단순 값 객체라 빌더 도입은 과함.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cycle: u32,
         current_role: &str,

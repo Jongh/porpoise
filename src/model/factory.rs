@@ -54,9 +54,7 @@ pub fn make_adapter(workspace: &WorkspaceConfig, project_path: &Path) -> Result<
                 .to_string();
 
             if is_ollama_endpoint(&base_url) {
-                if let Err(e) = check_ollama_availability(&base_url, &model_id) {
-                    return Err(e);
-                }
+                check_ollama_availability(&base_url, &model_id)?;
             }
 
             Ok(Box::new(OpenAiCompatibleAdapter::new(base_url, api_key_env, mode)))

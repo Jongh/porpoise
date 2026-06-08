@@ -162,7 +162,7 @@ pub(super) fn run_new_format(
                         let has_changes = if let crate::session::RoleOutputData::Development(ref dev_o) = o {
                             !dev_o.changes.is_empty()
                         } else { false };
-                        let has_ops = o.file_operations().map_or(false, |ops| !ops.is_empty());
+                        let has_ops = o.file_operations().is_some_and(|ops| !ops.is_empty());
                         if has_changes && !has_ops {
                             logger.warn("orchestrator",
                                 "API 모드 Development: file_operations 없음 — 실제 파일 내용을 file_operations에 포함해야 합니다.");
@@ -332,7 +332,7 @@ pub(super) fn run_new_format(
                     }
                 }
 
-                let target_role = output_data.prev_target().and_then(|t| Role::from_str(t));
+                let target_role = output_data.prev_target().and_then(Role::from_str);
                 match target_role {
                     Some(ref role) if *role != Role::PM => {
                         invalidate_sessions_from_role(path, &state.current_task_id, role, state.cycle, logger);

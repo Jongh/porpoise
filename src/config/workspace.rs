@@ -310,7 +310,7 @@ impl WorkspaceConfig {
                 Role::Reviewer => pr.review.as_deref(),
             }
         });
-        per_role_id.or_else(|| m.model_id.as_deref())
+        per_role_id.or(m.model_id.as_deref())
     }
 
     pub fn default_toml() -> &'static str {

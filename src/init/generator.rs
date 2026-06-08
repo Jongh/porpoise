@@ -318,7 +318,7 @@ fn workspace_toml_default(model_template: Option<&crate::init::model_template::R
     let mut content = WorkspaceConfig::default_toml().to_string();
     let model_section = model_toml_section(model_template);
     if !model_section.is_empty() {
-        content.push_str("\n");
+        content.push('\n');
         content.push_str(&model_section);
     } else {
         // 모델 미선택 시 주석 예시 추가

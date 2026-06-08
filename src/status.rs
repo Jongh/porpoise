@@ -216,11 +216,14 @@ fn load_milestone_tasks(
     let mut in_task_section = false;
 
     for line in content.lines() {
-        if line.trim_start().starts_with("## 태스크 목록") {
+        let header = line.trim_start();
+        // 마일스톤 문서 규약 불일치 대응: 파서(parser.rs)·M1~M18은 "작업 목록",
+        // M19/M20은 "태스크 목록"을 쓴다. 두 헤더를 모두 인식한다.
+        if header.starts_with("## 작업 목록") || header.starts_with("## 태스크 목록") {
             in_task_section = true;
             continue;
         }
-        if in_task_section && line.trim_start().starts_with("## ") {
+        if in_task_section && header.starts_with("## ") {
             break;
         }
         if !in_task_section {
@@ -323,6 +326,25 @@ mod tests {
         assert!(!tasks[1].completed);
         assert!(tasks[1].is_current);
         assert!(!tasks[2].is_current);
+    }
+
+    #[test]
+    fn load_milestone_tasks_accepts_jakeop_header() {
+        // "작업 목록" 헤더(파서·M1~M18 규약)도 인식해야 한다 (헤더 불일치 버그 수정)
+        let tmp = tempfile::tempdir().unwrap();
+        let milestones_dir = tmp.path().join(".porpoise").join("milestones");
+        std::fs::create_dir_all(&milestones_dir).unwrap();
+        std::fs::write(
+            milestones_dir.join("M6.md"),
+            "# M6: 작업 목록 헤더 (v0.6.0)\n\n## 작업 목록\n- [x] M6-T01: 완료\n- [ ] M6-T02: 진행\n\n## 메타데이터\n",
+        )
+        .unwrap();
+
+        let (title, tasks) = load_milestone_tasks(tmp.path(), 6, Some("M6-T02"));
+        assert_eq!(title.as_deref(), Some("작업 목록 헤더"));
+        assert_eq!(tasks.len(), 2, "'작업 목록' 헤더도 파싱되어야 함");
+        assert!(tasks[0].completed);
+        assert!(tasks[1].is_current);
     }
 
     #[test]

@@ -11,18 +11,15 @@ pub(crate) fn default_exit_code_next() -> ExitCode { ExitCode::Next }
 // ExitCode: 기존 orchestrator/report.rs에서 이동 (re-export 유지)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[derive(Default)]
 pub enum ExitCode {
     Next,
     Prev,
+    #[default]
     Resp,
     Limit,
 }
 
-impl Default for ExitCode {
-    fn default() -> Self {
-        ExitCode::Resp
-    }
-}
 
 impl std::fmt::Display for ExitCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
