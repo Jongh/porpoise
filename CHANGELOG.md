@@ -4,8 +4,16 @@
 
 ---
 
+### [v0.20.0]
+- **`porpoise status` 서브커맨드 신설 (M19)**: 현재 마일스톤·태스크·단계·사이클·세션 파일 수를 한 명령으로 출력 — `checkpoint.json`·`milestones/`·`sessions/`를 통합 요약. 미초기화 디렉토리에서는 초기화 안내 출력
+- **`porpoise doctor` 품질 개선 (M19)**: (1) 실패 항목이 있으면 **exit code 1** 반환 — CI 헬스체크(`porpoise doctor || exit 1`) 활용 가능, (2) workspace.toml 체크 메시지에서 어댑터 정보 중복 제거, (3) API 키 미설정 힌트의 macOS/Linux 줄 들여쓰기 정렬
+- **`is_likely_api_key()` 정밀도 개선 (M19)**: `claude-` 접두사 제거(모델 이름 `claude-sonnet-4-6` 오진단 해소), Anthropic `sk-ant-`·OpenAI `sk-proj-` 접두사 추가
+- **테스트**: 259개 (252 → 259, +7개)
+
+> 참고: M19(doctor·status)는 본래 v0.19.0으로 계획되었으나, 지휘자 피벗(M20)이 먼저 v0.19.0으로 릴리즈되어 v0.20.0으로 배치되었습니다.
+
 ### [v0.19.0]
-- **지휘자(conductor) 루프 신설 (M10)**: AI worker→manager 전환의 첫 단계 — task 하나를 `Brief → Dispatch → Verify → Integrate` 4단계로 처리. 실제 코딩 에이전트에게 격리 git worktree에서 통째로 위임(Dispatch)하고, 독립 검증자가 실제 테스트 실행 + 적대적 심사로 PASS/FAIL 판정(Verify), PASS 시 worktree 커밋·병합·완료 처리(Integrate), FAIL 시 피드백 재투입(한도 내). 기존 4단계 phase 호출을 단일 에이전틱 위임이 대체
+- **지휘자(conductor) 루프 신설 (M20)**: AI worker→manager 전환의 첫 단계 — task 하나를 `Brief → Dispatch → Verify → Integrate` 4단계로 처리. 실제 코딩 에이전트에게 격리 git worktree에서 통째로 위임(Dispatch)하고, 독립 검증자가 실제 테스트 실행 + 적대적 심사로 PASS/FAIL 판정(Verify), PASS 시 worktree 커밋·병합·완료 처리(Integrate), FAIL 시 피드백 재투입(한도 내). 기존 4단계 phase 호출을 단일 에이전틱 위임이 대체
 - **`src/conductor/` 모듈 신설**: `brief`(작업 지시서 빌더)·`dispatch`(worktree 격리·diff 캡처)·`verify`(독립 검증 + verdict 파싱)·`integrate`(병합 결정·finalize)·`git`(헬퍼)
 - **`[conductor]` workspace.toml 설정**: `mode`(기본 `legacy`, opt-in `conductor`)·`verifier_model`·`max_redispatch`(기본 2) — claude_code 어댑터 전용, API 어댑터는 항상 legacy
 - **`ClaudeRunner::run_agentic`**: 작업 디렉토리 지정 풀 에이전틱 실행 모드 추가

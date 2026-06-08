@@ -12,7 +12,7 @@ pub struct CheckResult {
     pub hint: Option<String>,
 }
 
-pub fn run_doctor(project_path: &Path) {
+pub fn run_doctor(project_path: &Path) -> usize {
     println!();
     println!("{}", "Porpoise Doctor — 설정 진단".cyan().bold());
     println!("{}", "─────────────────────────────────────".dimmed());
@@ -35,7 +35,8 @@ pub fn run_doctor(project_path: &Path) {
     }
 
     println!("{}", "─────────────────────────────────────".dimmed());
-    if passed == total {
+    let failures = total - passed;
+    if failures == 0 {
         println!(
             "{}",
             format!("진단 완료: {}/{} 항목 통과", passed, total).green().bold()
@@ -43,12 +44,13 @@ pub fn run_doctor(project_path: &Path) {
     } else {
         println!(
             "{}",
-            format!("진단 완료: {}/{} 항목 통과 ({} 실패)", passed, total, total - passed)
+            format!("진단 완료: {}/{} 항목 통과 ({} 실패)", passed, total, failures)
                 .yellow()
                 .bold()
         );
     }
     println!();
+    failures
 }
 
 fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
@@ -68,15 +70,10 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
 
     let workspace = match WorkspaceConfig::load(project_path) {
         Ok(ws) => {
-            let adapter_name = match ws.model_adapter_type() {
-                AdapterType::ClaudeCode => "claude_code",
-                AdapterType::AnthropicApi => "anthropic_api",
-                AdapterType::OpenAiCompatible => "openai_compatible",
-            };
             results.push(CheckResult {
                 label: "workspace.toml".to_string(),
                 ok: true,
-                message: format!("파싱 성공 (어댑터: {})", adapter_name),
+                message: "파싱 성공".to_string(),
                 hint: None,
             });
             ws
@@ -161,7 +158,7 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
                     ok: false,
                     message: format!("{}: 미설정", env_name),
                     hint: Some(format!(
-                        "Windows (PowerShell): $env:{} = \"실제키값\"\n   macOS / Linux:        export {}=\"실제키값\"",
+                        "Windows (PowerShell): $env:{} = \"실제키값\"\nmacOS / Linux:        export {}=\"실제키값\"",
                         env_name, env_name
                     )),
                 }),
@@ -340,6 +337,9 @@ mod tests {
         .unwrap();
 
         let results = collect_checks(tmp.path());
+        let ws_check = results.iter().find(|r| r.label == "workspace.toml");
+        assert!(ws_check.is_some());
+        assert_eq!(ws_check.unwrap().message, "파싱 성공");
         let sessions_check = results.iter().find(|r| r.label == "sessions/");
         assert!(sessions_check.is_some());
         assert!(!sessions_check.unwrap().ok);
@@ -357,6 +357,9 @@ mod tests {
         .unwrap();
 
         let results = collect_checks(tmp.path());
+        let ws_check = results.iter().find(|r| r.label == "workspace.toml");
+        assert!(ws_check.is_some());
+        assert_eq!(ws_check.unwrap().message, "파싱 성공");
         let sessions_check = results.iter().find(|r| r.label == "sessions/");
         assert!(sessions_check.is_some());
         assert!(sessions_check.unwrap().ok);

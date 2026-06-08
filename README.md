@@ -189,8 +189,14 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.20.0]
+- **`porpoise status` 서브커맨드 신설 (M19)**: 현재 마일스톤·태스크·단계·사이클·세션 파일 수를 한 명령으로 출력 — `checkpoint.json`·`milestones/`·`sessions/` 통합 요약
+- **`porpoise doctor` 품질 개선 (M19)**: 실패 시 exit code 1(CI 헬스체크 활용), workspace.toml 메시지 어댑터 중복 제거, API 키 힌트 들여쓰기 정렬
+- **`is_likely_api_key()` 정밀도 개선 (M19)**: `claude-` 제거(모델명 오진단 해소), `sk-ant-`·`sk-proj-` 추가
+- **테스트**: 259개 (252 → 259, +7개)
+
 ### [v0.19.0]
-- **지휘자(conductor) 루프 신설 (M10)**: AI worker→manager 전환의 첫 단계 — task 하나를 `Brief → Dispatch → Verify → Integrate` 4단계로 처리. 실제 코딩 에이전트에게 격리 git worktree에서 통째로 위임하고, 독립 검증자가 실제 테스트 실행 + 적대적 심사로 PASS/FAIL을 판정, PASS 시 병합·완료, FAIL 시 피드백 재투입(한도 내) — 기존 4단계 phase 호출을 단일 에이전틱 위임이 대체
+- **지휘자(conductor) 루프 신설 (M20)**: AI worker→manager 전환의 첫 단계 — task 하나를 `Brief → Dispatch → Verify → Integrate` 4단계로 처리. 실제 코딩 에이전트에게 격리 git worktree에서 통째로 위임하고, 독립 검증자가 실제 테스트 실행 + 적대적 심사로 PASS/FAIL을 판정, PASS 시 병합·완료, FAIL 시 피드백 재투입(한도 내) — 기존 4단계 phase 호출을 단일 에이전틱 위임이 대체
 - **`[conductor]` 설정**: `mode`(기본 `legacy`, opt-in `conductor`)·`verifier_model`·`max_redispatch`(기본 2) — claude_code 어댑터 전용. 기본은 legacy로 기존 동작 100% 보존, conductor는 명시적 opt-in
 - **`src/conductor/` 모듈 신설**: brief·dispatch·verify·integrate·git 헬퍼. `ClaudeRunner::run_agentic`(작업 디렉토리 지정 풀 에이전틱 실행), checkpoint `conductor_phase` 필드, `porpoise doctor` conductor 진단 추가
 - **테스트**: 252개 (215 → 252, +37개)

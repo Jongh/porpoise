@@ -8,6 +8,7 @@ mod milestone;
 mod model;
 mod orchestrator;
 mod session;
+mod status;
 mod utils;
 mod workspace;
 
@@ -52,6 +53,8 @@ pub enum Commands {
     Migrate,
     /// Diagnose workspace configuration, adapter, API keys, and dependencies
     Doctor,
+    /// Show current orchestration status (milestone, task, stage, session count)
+    Status,
 }
 
 #[derive(Parser, Debug)]
@@ -116,7 +119,14 @@ fn run() -> Result<()> {
             },
             Commands::Migrate => return run_migrate(&current_dir),
             Commands::Doctor => {
-                doctor::run_doctor(&current_dir);
+                let failures = doctor::run_doctor(&current_dir);
+                if failures > 0 {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            Commands::Status => {
+                status::run_status(&current_dir);
                 return Ok(());
             }
         }
