@@ -53,6 +53,9 @@ pub fn run_conductor(
         );
     }
 
+    // worktree·런타임 데이터가 메인 작업 트리를 오염시키지 않도록 .porpoise/ gitignore 보장 (M21)
+    crate::orchestrator::ensure_porpoise_gitignored(path);
+
     let runner = ClaudeRunner::new().context(
         "Claude CLI를 찾을 수 없습니다. Claude Code를 설치하고 'claude'가 PATH에 있는지 확인하세요.",
     )?;
@@ -132,6 +135,8 @@ pub fn run_conductor(
 }
 
 /// 한 task의 전체 지휘 사이클 (Brief→Dispatch→Verify→Integrate, 재투입 포함).
+///
+/// worktree는 성공·실패·중단 **모든 경로에서 반드시 정리**된다 (M21: 누수 방지).
 #[allow(clippy::too_many_arguments)]
 fn conduct_task(
     path: &Path,
@@ -146,11 +151,41 @@ fn conduct_task(
     logger: &Logger,
 ) -> Result<TaskOutcome> {
     save_phase(path, task_id, "brief", 0, logger);
-    let mut brief = brief::build_brief(path, task_id, task_title, workspace);
+    let brief = brief::build_brief(path, task_id, task_title, workspace);
 
     let wt = Worktree::create(path, task_id).context("격리 worktree 생성 실패")?;
     logger.info("conductor", &format!("worktree 생성: {}", wt.path.display()));
 
+    let result = conduct_in_worktree(
+        &wt, path, task_id, task_title, brief, workspace, runner,
+        dispatch_model, verifier_model, dod, max_redispatch, logger,
+    );
+
+    // 성공·실패·중단 무관하게 worktree·브랜치 정리
+    wt.remove();
+    if let Err(ref e) = result {
+        logger.warn("conductor", &format!("task {} 실패 — worktree 정리됨: {}", task_id, e));
+    }
+    result
+}
+
+/// 격리 worktree 안에서 Dispatch→Verify→Integrate 루프를 수행한다.
+/// 정리는 호출자(conduct_task)가 담당하므로 여기서는 worktree를 소비하지 않는다.
+#[allow(clippy::too_many_arguments)]
+fn conduct_in_worktree(
+    wt: &Worktree,
+    path: &Path,
+    task_id: &str,
+    task_title: &str,
+    mut brief: brief::Brief,
+    workspace: &WorkspaceConfig,
+    runner: &ClaudeRunner,
+    dispatch_model: Option<&str>,
+    verifier_model: Option<&str>,
+    dod: &[String],
+    max_redispatch: u32,
+    logger: &Logger,
+) -> Result<TaskOutcome> {
     let verify_cmds = workspace.default_verify_commands();
     let allowed = workspace.allowed_command_prefixes();
     let timeout = workspace.verify_timeout_secs();
@@ -181,18 +216,31 @@ fn conduct_task(
         // ── Verify ────────────────────────────────────────────────────────
         save_phase(path, task_id, "verify", redispatch, logger);
         println!("  {} Verify — 독립 검증자 심사 중...", "→".cyan());
-        let verdict = verify::run_verification(
+        let outcome = verify::run_verification(
             &wt.path, task_id, task_title, dod, &diff, &command_results, runner, verifier_model,
         )?;
 
-        write_audit_record(path, task_id, redispatch, &diff, &command_results, &verdict, logger);
+        write_audit_record(
+            path, task_id, redispatch, &diff, &command_results, &outcome, &agent_out, logger,
+        );
 
         // ── Integrate 결정 ────────────────────────────────────────────────
         save_phase(path, task_id, "integrate", redispatch, logger);
-        match integrate::decide(&verdict, redispatch, max_redispatch) {
+        match integrate::decide(&outcome.verdict, redispatch, max_redispatch) {
             IntegrateDecision::Merge => {
-                println!("  {} Verify PASS", "✓".green());
-                break;
+                if outcome.verdict.feedback.is_empty() {
+                    println!("  {} Verify PASS", "✓".green());
+                } else {
+                    println!(
+                        "  {} Verify PASS — {}",
+                        "✓".green(),
+                        outcome.verdict.feedback.lines().next().unwrap_or("").dimmed()
+                    );
+                }
+                let commit_msg = format!("[{}] {}", task_id, task_title);
+                integrate::finalize(wt, path, &commit_msg)?;
+                crate::orchestrator::mark_tasks_complete(path, &[task_id.to_string()], logger)?;
+                return Ok(TaskOutcome::Merged);
             }
             IntegrateDecision::Redispatch { feedback } => {
                 println!("  {} Verify FAIL — 피드백 재투입", "↻".yellow());
@@ -202,21 +250,11 @@ fn conduct_task(
             }
             IntegrateDecision::Halt { feedback } => {
                 println!("  {} Verify FAIL — 한도 소진", "✗".red());
-                let branch = wt.branch.clone();
-                wt.remove();
-                logger.warn("conductor", &format!("task {} 중단: {}", task_id, branch));
+                logger.warn("conductor", &format!("task {} 중단", task_id));
                 return Ok(TaskOutcome::Halted { feedback });
             }
         }
     }
-
-    // ── Integrate 실행 (PASS) ─────────────────────────────────────────────
-    // 커밋 → 병합 → 정리 순서를 finalize가 보장한다 (정리가 브랜치를 삭제하므로 병합이 먼저).
-    let commit_msg = format!("[{}] {}", task_id, task_title);
-    integrate::finalize(wt, path, &commit_msg)?;
-    crate::orchestrator::mark_tasks_complete(path, &[task_id.to_string()], logger)?;
-
-    Ok(TaskOutcome::Merged)
 }
 
 /// 한 task 지휘 결과.
@@ -295,13 +333,18 @@ fn save_halt_hint(path: &Path, task_id: &str, feedback: &str, logger: &Logger) {
 }
 
 /// 감사 추적용 지휘 기록을 sessions/에 저장한다.
+///
+/// M21: 검증자 원문·dispatch 출력을 포함하고(사후분석), 파일명에 타임스탬프를 넣어
+/// 재투입·재실행 간 덮어쓰기로 이력이 소실되지 않게 한다.
+#[allow(clippy::too_many_arguments)]
 fn write_audit_record(
     path: &Path,
     task_id: &str,
     redispatch: u32,
     diff: &str,
     command_results: &[crate::session::v0_7::ExecutionResult],
-    verdict: &verify::Verdict,
+    outcome: &verify::VerifyOutcome,
+    dispatch_output: &str,
     logger: &Logger,
 ) {
     use chrono::Local;
@@ -309,11 +352,13 @@ fn write_audit_record(
     if std::fs::create_dir_all(&sessions_dir).is_err() {
         return;
     }
+    let now = Local::now();
+    let verdict = &outcome.verdict;
     let record = serde_json::json!({
-        "schema_version": "conductor-1",
+        "schema_version": "conductor-2",
         "task_id": task_id,
         "redispatch": redispatch,
-        "timestamp": Local::now().to_rfc3339(),
+        "timestamp": now.to_rfc3339(),
         "diff_lines": diff.lines().count(),
         "verify_commands": command_results.iter().map(|r| serde_json::json!({
             "command": r.command,
@@ -322,11 +367,30 @@ fn write_audit_record(
         })).collect::<Vec<_>>(),
         "verdict": if verdict.pass { "PASS" } else { "FAIL" },
         "feedback": verdict.feedback,
+        "verifier_raw": truncate_chars(&outcome.verifier_raw, 4000),
+        "dispatch_output": truncate_chars(dispatch_output, 4000),
     });
-    let filename = format!("{}-conductor-R{}.json", task_id, redispatch);
+    // 타임스탬프 + R{n}으로 재투입·재실행 이력 보존
+    let filename = format!(
+        "{}-conductor-{}-R{}.json",
+        task_id,
+        now.format("%Y%m%d-%H%M%S"),
+        redispatch
+    );
     let content = serde_json::to_string_pretty(&record).unwrap_or_default();
     if let Err(e) = crate::utils::fs::write_file(&sessions_dir.join(&filename), &content, path) {
         logger.warn("conductor", &format!("감사 기록 저장 실패: {}", e));
+    }
+}
+
+/// 문자열을 최대 길이로 자르고 생략 표시를 붙인다 (감사 기록 크기 제한).
+fn truncate_chars(s: &str, max: usize) -> String {
+    let total = s.chars().count();
+    if total <= max {
+        s.to_string()
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{}…[{} chars 생략]", head, total - max)
     }
 }
 
@@ -338,5 +402,111 @@ fn print_conductor_history(history: &[String]) {
     println!("{}", "─── Conductor History ───".dimmed());
     for entry in history {
         println!("  {}", entry.dimmed());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::v0_7::ExecutionResult;
+    use verify::{Verdict, VerifyOutcome};
+
+    #[test]
+    fn truncate_chars_short_unchanged() {
+        assert_eq!(truncate_chars("hello", 10), "hello");
+        // 정확히 max면 그대로
+        assert_eq!(truncate_chars("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_chars_long_truncated() {
+        let s = "a".repeat(20);
+        let out = truncate_chars(&s, 5);
+        assert!(out.starts_with("aaaaa"));
+        assert!(out.contains("15 chars 생략"), "생략 표시 확인: {}", out);
+    }
+
+    #[test]
+    fn truncate_chars_counts_unicode_not_bytes() {
+        // 한글은 멀티바이트지만 char 단위로 세야 한다 (바이트 슬라이싱 패닉 방지)
+        let s = "가나다라마"; // 5 chars
+        assert_eq!(truncate_chars(s, 5), s);
+        let out = truncate_chars(s, 2);
+        assert!(out.starts_with("가나"));
+        assert!(out.contains("3 chars 생략"), "생략 표시 확인: {}", out);
+    }
+
+    fn cmd_ok() -> ExecutionResult {
+        ExecutionResult {
+            command: "cargo".to_string(),
+            args: vec!["test".to_string()],
+            purpose: String::new(),
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: 0,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn write_audit_record_includes_raw_and_truncates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        std::fs::create_dir_all(path.join(".porpoise")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+
+        let long_raw = "x".repeat(5000); // > 4000 → 잘림
+        let outcome = VerifyOutcome {
+            verdict: Verdict::fail("사유 설명"),
+            verifier_raw: long_raw,
+        };
+        let cmds = vec![cmd_ok()];
+
+        write_audit_record(path, "M1-T01", 0, "diff\nline2", &cmds, &outcome, "dispatch 출력", &logger);
+
+        let sessions = path.join(".porpoise").join("sessions");
+        let files: Vec<_> = std::fs::read_dir(&sessions).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1, "감사 파일 1개 생성");
+        let name = files[0].file_name().to_string_lossy().to_string();
+        assert!(name.starts_with("M1-T01-conductor-"), "파일명: {}", name);
+        assert!(name.ends_with("-R0.json"), "파일명: {}", name);
+
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["schema_version"], "conductor-2");
+        assert_eq!(v["verdict"], "FAIL");
+        assert_eq!(v["feedback"], "사유 설명");
+        assert_eq!(v["diff_lines"], 2);
+        assert_eq!(v["dispatch_output"], "dispatch 출력");
+        assert_eq!(v["verify_commands"][0]["command"], "cargo");
+        assert_eq!(v["verify_commands"][0]["exit_code"], 0);
+        // 검증자 원문이 잘림 표시와 함께 포함
+        assert!(
+            v["verifier_raw"].as_str().unwrap().contains("chars 생략"),
+            "원문 잘림 확인"
+        );
+    }
+
+    #[test]
+    fn write_audit_record_filename_unique_per_redispatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        std::fs::create_dir_all(path.join(".porpoise")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+        let outcome = VerifyOutcome { verdict: Verdict::pass(), verifier_raw: String::new() };
+
+        // 서로 다른 redispatch 인덱스는 파일명이 구분되어 이력이 보존됨
+        write_audit_record(path, "M1-T01", 0, "d", &[], &outcome, "", &logger);
+        write_audit_record(path, "M1-T01", 1, "d", &[], &outcome, "", &logger);
+
+        let sessions = path.join(".porpoise").join("sessions");
+        let names: Vec<String> = std::fs::read_dir(&sessions)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(names.iter().any(|n| n.ends_with("-R0.json")));
+        assert!(names.iter().any(|n| n.ends_with("-R1.json")));
     }
 }

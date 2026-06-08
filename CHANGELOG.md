@@ -4,6 +4,14 @@
 
 ---
 
+### [v0.21.0]
+- **conductor 검증자 신뢰성 경화 (M21)**: 라이브 스모크 테스트에서 드러난 false-negative FAIL(코드 정상·`cargo test` 통과인데 검증자 LLM 응답을 파싱하지 못해 보수적 FAIL → 정상 작업 폐기)을 해소 — verdict 파싱 실패 시 즉시 FAIL 대신 **재질의 1회 → 객관 증거(`verify_commands` 통과) 기반 폴백**으로 처리. 검증자 출력 형식 강제 강화("도구·탐색·설명 금지, JSON 객체 하나만")
+- **감사 기록 관측성 (`conductor-2`)**: `sessions/<task>-conductor-<timestamp>-R<n>.json`에 검증자 원문·dispatch 출력 포함, 타임스탬프 파일명으로 재투입·재실행 이력 보존
+- **worktree 누수 방지**: `conduct_task`가 성공·실패·중단 모든 경로에서 worktree·브랜치 정리 보장, conductor 시작 시 `.porpoise/` gitignore 자동 보장
+- **라이브 재검증 하니스**: `scripts/conductor-revalidate.ps1`(N회 반복 + 검증자 신뢰성 자동 집계), `scripts/conductor-smoke.ps1`, `docs/conductor.md`(기본 ON 승격 기준)
+- conductor 기본 모드는 **legacy 유지**(opt-in) — 라이브 재검증으로 승격 기준 충족 확인
+- **테스트**: 270개 (259 → 270, +11개)
+
 ### [v0.20.0]
 - **`porpoise status` 서브커맨드 신설 (M19)**: 현재 마일스톤·태스크·단계·사이클·세션 파일 수를 한 명령으로 출력 — `checkpoint.json`·`milestones/`·`sessions/`를 통합 요약. 미초기화 디렉토리에서는 초기화 안내 출력
 - **`porpoise doctor` 품질 개선 (M19)**: (1) 실패 항목이 있으면 **exit code 1** 반환 — CI 헬스체크(`porpoise doctor || exit 1`) 활용 가능, (2) workspace.toml 체크 메시지에서 어댑터 정보 중복 제거, (3) API 키 미설정 힌트의 macOS/Linux 줄 들여쓰기 정렬

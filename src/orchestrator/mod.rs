@@ -562,7 +562,7 @@ fn filter_gitignored_files(files: Vec<String>) -> Vec<String> {
     files.into_iter().filter(|f| !ignored.contains(&f.replace('\\', "/"))).collect()
 }
 
-fn ensure_porpoise_gitignored(project_root: &std::path::Path) {
+pub(crate) fn ensure_porpoise_gitignored(project_root: &std::path::Path) {
     let gitignore_path = project_root.join(".gitignore");
     let content = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
     let already_present = content.lines().any(|l| {

@@ -201,4 +201,23 @@ mod tests {
         assert!(log.contains("M10-T03"), "커밋 메시지 확인: {}", log);
         wt.remove();
     }
+
+    #[test]
+    fn remove_cleans_up_dirty_worktree() {
+        // M21 에러 경로 모사: 에이전트가 worktree를 변경했으나 병합 전 정리.
+        // 미커밋 변경이 있어도 worktree·브랜치가 잔여 없이 정리되어야 한다.
+        let tmp = init_repo();
+        let root = tmp.path();
+
+        let wt = Worktree::create(root, "M21-T04").expect("worktree 생성");
+        std::fs::write(wt.path.join("dirty.txt"), "uncommitted\n").unwrap();
+        let branch = wt.branch.clone();
+        let wt_path = wt.path.clone();
+
+        wt.remove();
+
+        assert!(!wt_path.exists(), "미커밋 변경이 있는 worktree도 정리되어야 함");
+        let branches = run_git(root, &["branch", "--list", &branch]).stdout;
+        assert!(branches.trim().is_empty(), "브랜치가 정리되어야 함: {:?}", branches);
+    }
 }

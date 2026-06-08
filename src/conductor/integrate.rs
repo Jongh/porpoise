@@ -32,15 +32,13 @@ pub fn decide(verdict: &Verdict, redispatch_count: u32, max_redispatch: u32) -> 
     }
 }
 
-/// PASS된 task를 통합한다: worktree 커밋 → 브랜치 병합 → worktree·브랜치 정리.
+/// PASS된 task를 통합한다: worktree 커밋 → 브랜치 병합.
 ///
-/// 순서가 중요하다 — `Worktree::remove()`가 브랜치를 삭제하므로 반드시
-/// **병합을 먼저** 수행한 뒤 정리해야 한다. 이 함수가 그 순서를 캡슐화한다.
-pub fn finalize(wt: Worktree, repo_root: &Path, commit_msg: &str) -> Result<()> {
+/// worktree 정리는 호출자가 담당한다(에러·halt 경로 포함 항상 정리 보장을 위해).
+/// `&Worktree`만 빌려 커밋·병합만 수행하며, 병합 실패 시 에러를 전파한다.
+pub fn finalize(wt: &Worktree, repo_root: &Path, commit_msg: &str) -> Result<()> {
     wt.commit(commit_msg).context("worktree 커밋 실패")?;
-    let branch = wt.branch.clone();
-    merge_worktree(repo_root, &branch).context("worktree 병합 실패")?;
-    wt.remove();
+    merge_worktree(repo_root, &wt.branch).context("worktree 병합 실패")?;
     Ok(())
 }
 
@@ -132,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_commits_merges_and_cleans_up() {
+    fn finalize_commits_and_merges_caller_cleans_up() {
         let tmp = init_repo();
         let root = tmp.path();
 
@@ -141,18 +139,18 @@ mod tests {
         let wt_path = wt.path.clone();
         std::fs::write(wt.path.join("done.txt"), "finalized\n").unwrap();
 
-        // 프로덕션과 동일한 호출 — 병합이 정리보다 먼저 일어나야 성공한다.
-        // (구버전: remove가 브랜치를 먼저 삭제해 병합 실패 → 이 테스트가 회귀를 잡는다)
-        finalize(wt, root, "[M10-T06] 완료").expect("finalize 성공");
+        // finalize는 커밋·병합만 — 정리는 호출자(여기선 테스트)가 수행
+        finalize(&wt, root, "[M10-T06] 완료").expect("finalize 성공");
 
         // 병합 결과가 main에 반영
         assert!(root.join("done.txt").exists(), "병합된 파일이 main에 있어야 함");
-        // worktree 디렉토리와 브랜치가 정리됨
+        let log = run_git(root, &["log", "-1", "--pretty=%s"]).stdout;
+        assert!(log.contains("M10-T06"), "main HEAD에 task 커밋이 있어야 함: {}", log);
+
+        // 호출자가 정리
+        wt.remove();
         assert!(!wt_path.exists(), "worktree 디렉토리가 제거되어야 함");
         let branches = run_git(root, &["branch", "--list", &branch]).stdout;
         assert!(branches.trim().is_empty(), "브랜치가 정리되어야 함: {:?}", branches);
-        // 병합 커밋이 main HEAD에 존재
-        let log = run_git(root, &["log", "-1", "--pretty=%s"]).stdout;
-        assert!(log.contains("M10-T06"), "main HEAD에 task 커밋이 있어야 함: {}", log);
     }
 }

@@ -26,28 +26,70 @@ impl Verdict {
     pub fn fail(feedback: impl Into<String>) -> Self {
         Verdict { pass: false, feedback: feedback.into() }
     }
+    /// PASS이지만 설명 메모를 동반한다 (예: 객관 증거 기반 통과).
+    pub fn pass_with_note(feedback: impl Into<String>) -> Self {
+        Verdict { pass: true, feedback: feedback.into() }
+    }
 }
 
-/// 검증자 LLM의 원문 응답에서 PASS/FAIL 판정을 추출한다.
+/// Verify 단계의 산출물 — 판정 + 검증자 원문(감사·관측용).
+#[derive(Debug, Clone)]
+pub struct VerifyOutcome {
+    pub verdict: Verdict,
+    /// 마지막 검증자 LLM 응답 원문 (LLM 호출이 없었으면 빈 문자열).
+    pub verifier_raw: String,
+}
+
+/// 검증자 LLM 원문에서 판정을 추출한다. 추출 불가면 None.
 ///
 /// 우선순위: ① JSON 객체 `{"verdict":"PASS"|"FAIL","feedback":"..."}`
 /// ② 폴백 — 마지막 비어있지 않은 줄의 PASS/FAIL 토큰.
-/// 어느 쪽도 못 찾으면 보수적으로 FAIL.
-pub fn parse_verdict(raw: &str) -> Verdict {
+/// 호출자(run_verification)는 None일 때 재질의 후 객관 증거로 폴백한다.
+pub fn try_parse_verdict(raw: &str) -> Option<Verdict> {
     if let Some(v) = parse_verdict_json(raw) {
-        return v;
+        return Some(v);
     }
-    // 폴백: 토큰 스캔 (마지막 줄 우선)
     for line in raw.lines().rev() {
         let t = line.trim().trim_matches(|c: char| !c.is_ascii_alphabetic());
         if t.eq_ignore_ascii_case("PASS") {
-            return Verdict::pass();
+            return Some(Verdict::pass());
         }
         if t.eq_ignore_ascii_case("FAIL") {
-            return Verdict::fail(extract_feedback_fallback(raw));
+            return Some(Verdict::fail(extract_feedback_fallback(raw)));
         }
     }
-    Verdict::fail("검증자 응답에서 PASS/FAIL 판정을 찾을 수 없습니다. (보수적 FAIL)")
+    None
+}
+
+/// 검증자 verdict를 (재질의 포함) 파싱하지 못했을 때 **객관 증거**로 최종 판정한다.
+///
+/// 이 지점은 검증 명령에 실패가 없을 때만 도달한다(실패는 LLM 호출 전 단계에서 FAIL 처리됨).
+/// 따라서 실행된 명령이 있으면 "모두 통과"를 의미하므로 객관 증거 기반 PASS로 처리하여
+/// 검증자 출력 비신뢰성으로 인한 false-negative FAIL을 방지한다. 명령이 전혀 없으면
+/// 객관 증거가 없으므로 보수적 FAIL.
+pub fn fallback_verdict(command_results: &[ExecutionResult]) -> Verdict {
+    if command_results.is_empty() {
+        Verdict::fail(
+            "검증자 verdict를 재질의 후에도 파싱할 수 없고, 객관 증거로 쓸 검증 명령도 없습니다. \
+             (보수적 FAIL — workspace.toml [tech]에 test_command/verify_commands를 설정하면 \
+             객관 증거 기반 판정이 가능합니다.)",
+        )
+    } else {
+        Verdict::pass_with_note(
+            "검증자 verdict를 파싱하지 못했으나(재질의 포함), 모든 검증 명령이 통과하여 \
+             객관 증거 기반으로 통과 처리합니다.",
+        )
+    }
+}
+
+/// 검증자가 파싱 불가 응답을 줬을 때 보내는 재질의 프롬프트.
+fn build_reask_prompt(original: &str) -> String {
+    format!(
+        "{}\n\n=== 재요청 ===\n앞선 응답에서 판정(verdict)을 찾을 수 없었습니다. \
+         설명·도구 사용·파일 탐색 없이, 아래 JSON 객체 한 줄만 정확히 출력하세요:\n\
+         {{\"verdict\": \"PASS\" 또는 \"FAIL\", \"feedback\": \"FAIL인 경우 사유\"}}",
+        original
+    )
 }
 
 fn parse_verdict_json(raw: &str) -> Option<Verdict> {
@@ -186,8 +228,9 @@ pub fn build_verify_prompt(
     parts.push(format!("=== 변경 내역 (git diff) ===\n{}", diff_block));
 
     parts.push(
-        "=== 출력 형식 ===\n\
-         반드시 아래 JSON 객체 하나만 출력하세요 (다른 텍스트 금지):\n\
+        "=== 출력 형식 (엄수) ===\n\
+         위에 주어진 diff와 명령 결과만으로 판단하세요. 추가 탐색·도구 사용·장황한 설명을 하지 마세요.\n\
+         응답은 **아래 JSON 객체 단 하나**여야 하며, 그 외의 텍스트(분석·코드펜스·머리말)를 절대 포함하지 마세요:\n\
          {\"verdict\": \"PASS\" 또는 \"FAIL\", \"feedback\": \"FAIL인 경우 수정해야 할 구체적 사항\"}"
             .to_string(),
     );
@@ -195,7 +238,12 @@ pub fn build_verify_prompt(
     parts.join("\n\n")
 }
 
-/// 전체 검증 수행: 실제 명령 실행 → (실패 시 즉시 FAIL) → 독립 검증자 LLM 심사.
+/// 전체 검증 수행: 실제 명령 실행 → (실패 시 즉시 FAIL) → 독립 검증자 LLM 심사
+/// → (파싱 불가 시) 재질의 1회 → (여전히 불가 시) 객관 증거 폴백.
+///
+/// 검증자는 격리 worktree 안에서 실행하여 실제 저장소를 건드리지 않는다.
+/// 파싱 실패가 즉시 FAIL로 이어지지 않으므로(M21), 검증자 출력 비신뢰성에 의한
+/// false-negative FAIL을 방지한다.
 #[allow(clippy::too_many_arguments)]
 pub fn run_verification(
     worktree_path: &Path,
@@ -206,25 +254,43 @@ pub fn run_verification(
     command_results: &[ExecutionResult],
     runner: &ClaudeRunner,
     verifier_model: Option<&str>,
-) -> Result<Verdict> {
+) -> Result<VerifyOutcome> {
     // 변경이 전혀 없으면 작업 미수행 — 즉시 FAIL
     if diff.trim().is_empty() {
-        return Ok(Verdict::fail(
-            "에이전트가 어떤 파일도 변경하지 않았습니다. 작업이 수행되지 않았습니다.",
-        ));
+        return Ok(VerifyOutcome {
+            verdict: Verdict::fail(
+                "에이전트가 어떤 파일도 변경하지 않았습니다. 작업이 수행되지 않았습니다.",
+            ),
+            verifier_raw: String::new(),
+        });
     }
 
     // 객관 증거 우선: 검증 명령이 하나라도 실패하면 LLM 판단 없이 FAIL
     if let Some(summary) = summarize_command_failures(command_results) {
-        return Ok(Verdict::fail(summary));
+        return Ok(VerifyOutcome { verdict: Verdict::fail(summary), verifier_raw: String::new() });
     }
 
-    // 독립 검증자 LLM 심사 (worktree 안에서 실행하여 diff 외 파일도 참조 가능)
+    // 1차 심사
     let prompt = build_verify_prompt(task_id, task_title, dod, diff, command_results);
     let raw = runner
         .run_agentic(&prompt, worktree_path, verifier_model)
         .context("검증자 실행 실패")?;
-    Ok(parse_verdict(&raw))
+    if let Some(verdict) = try_parse_verdict(&raw) {
+        return Ok(VerifyOutcome { verdict, verifier_raw: raw });
+    }
+
+    // 재질의 1회 (파싱 가능한 verdict만 다시 요청)
+    let reask = build_reask_prompt(&prompt);
+    let raw2 = runner
+        .run_agentic(&reask, worktree_path, verifier_model)
+        .context("검증자 재질의 실패")?;
+    if let Some(verdict) = try_parse_verdict(&raw2) {
+        return Ok(VerifyOutcome { verdict, verifier_raw: raw2 });
+    }
+
+    // 여전히 파싱 불가 → 객관 증거 폴백 (false-negative 방지)
+    let combined = format!("[1차 응답]\n{}\n\n[재질의 응답]\n{}", raw, raw2);
+    Ok(VerifyOutcome { verdict: fallback_verdict(command_results), verifier_raw: combined })
 }
 
 #[cfg(test)]
@@ -246,13 +312,13 @@ mod tests {
 
     #[test]
     fn parse_verdict_json_pass() {
-        let v = parse_verdict(r#"{"verdict":"PASS","feedback":""}"#);
+        let v = try_parse_verdict(r#"{"verdict":"PASS","feedback":""}"#).unwrap();
         assert!(v.pass);
     }
 
     #[test]
     fn parse_verdict_json_fail_with_feedback() {
-        let v = parse_verdict(r#"여기 결과: {"verdict":"FAIL","feedback":"테스트 누락"} 끝"#);
+        let v = try_parse_verdict(r#"여기 결과: {"verdict":"FAIL","feedback":"테스트 누락"} 끝"#).unwrap();
         assert!(!v.pass);
         assert_eq!(v.feedback, "테스트 누락");
     }
@@ -260,24 +326,18 @@ mod tests {
     #[test]
     fn parse_verdict_json_in_code_fence() {
         let raw = "분석...\n```json\n{\"verdict\": \"PASS\", \"feedback\": \"\"}\n```\n";
-        assert!(parse_verdict(raw).pass);
+        assert!(try_parse_verdict(raw).unwrap().pass);
     }
 
     #[test]
     fn parse_verdict_fallback_token() {
-        assert!(parse_verdict("리뷰 내용\n\nPASS").pass);
-        assert!(!parse_verdict("리뷰 내용\n\nFAIL").pass);
-    }
-
-    #[test]
-    fn parse_verdict_unknown_is_conservative_fail() {
-        let v = parse_verdict("아무 판정 없음");
-        assert!(!v.pass);
+        assert!(try_parse_verdict("리뷰 내용\n\nPASS").unwrap().pass);
+        assert!(!try_parse_verdict("리뷰 내용\n\nFAIL").unwrap().pass);
     }
 
     #[test]
     fn parse_verdict_fail_without_feedback_gets_default() {
-        let v = parse_verdict(r#"{"verdict":"FAIL"}"#);
+        let v = try_parse_verdict(r#"{"verdict":"FAIL"}"#).unwrap();
         assert!(!v.pass);
         assert!(!v.feedback.is_empty());
     }
@@ -286,7 +346,7 @@ mod tests {
     fn json_object_wins_over_trailing_token() {
         // JSON이 PASS인데 본문에 FAIL 단어가 섞여 있어도 JSON 우선
         let raw = "이 변경은 FAIL할 뻔했지만\n{\"verdict\":\"PASS\",\"feedback\":\"\"}";
-        assert!(parse_verdict(raw).pass);
+        assert!(try_parse_verdict(raw).unwrap().pass);
     }
 
     #[test]
@@ -316,5 +376,52 @@ mod tests {
         let prompt = build_verify_prompt("M1-T01", "작업", &[], "diff --git a/x", &[]);
         assert!(prompt.contains("diff --git a/x"));
         assert!(prompt.contains("verdict"));
+    }
+
+    // ── M21: 재질의·객관 증거 폴백 ──────────────────────────────────────────
+
+    #[test]
+    fn try_parse_verdict_none_when_unparseable() {
+        // 라이브 스모크 테스트에서 관찰된 실패 형태: verdict 토큰·JSON 없음
+        assert!(try_parse_verdict("음... 변경을 살펴보니 괜찮아 보입니다만 확신이 없네요").is_none());
+        assert!(try_parse_verdict("").is_none());
+    }
+
+    #[test]
+    fn try_parse_verdict_some_when_parseable() {
+        assert_eq!(try_parse_verdict(r#"{"verdict":"PASS","feedback":""}"#).unwrap().pass, true);
+        assert_eq!(try_parse_verdict("결론\nFAIL").unwrap().pass, false);
+    }
+
+    #[test]
+    fn fallback_verdict_passes_when_commands_all_passed() {
+        // 핵심 회귀 방지: cargo test 통과(exit 0)인데 verdict 파싱 실패 → 즉시 FAIL 금지
+        let results = vec![exec("cargo", 0)];
+        let v = fallback_verdict(&results);
+        assert!(v.pass, "객관 증거(명령 통과)가 있으면 폴백은 PASS여야 함");
+        assert!(v.feedback.contains("객관 증거"));
+    }
+
+    #[test]
+    fn fallback_verdict_fails_when_no_objective_evidence() {
+        // 검증 명령이 전혀 없으면 객관 증거가 없으므로 보수적 FAIL
+        let v = fallback_verdict(&[]);
+        assert!(!v.pass);
+        assert!(v.feedback.contains("객관 증거"));
+    }
+
+    #[test]
+    fn reask_prompt_demands_json_only() {
+        let r = build_reask_prompt("원본 프롬프트");
+        assert!(r.contains("원본 프롬프트"));
+        assert!(r.contains("재요청"));
+        assert!(r.contains("verdict"));
+    }
+
+    #[test]
+    fn pass_with_note_is_pass_but_has_feedback() {
+        let v = Verdict::pass_with_note("객관 증거 기반");
+        assert!(v.pass);
+        assert!(!v.feedback.is_empty());
     }
 }

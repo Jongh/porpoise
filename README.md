@@ -223,6 +223,13 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.21.0]
+- **conductor 검증자 신뢰성 경화 (M21)**: 검증자 LLM 응답 파싱 실패 시 즉시 FAIL 대신 **재질의 1회 → 객관 증거(`verify_commands` 통과) 폴백** — 라이브 테스트에서 관찰된 false-negative FAIL 해소. 출력 형식 강제 강화
+- **감사 기록 관측성 (`conductor-2`)**: 검증자 원문·dispatch 출력 포함, 타임스탬프 파일명으로 이력 보존
+- **worktree 누수 방지**: 모든 경로(성공·실패·중단)에서 정리 보장 + `.porpoise/` gitignore 자동 보장
+- **라이브 재검증 하니스**: `scripts/conductor-revalidate.ps1`·`docs/conductor.md`(승격 기준). conductor 기본 모드는 legacy 유지(opt-in)
+- **테스트**: 270개 (259 → 270, +11개)
+
 ### [v0.20.0]
 - **`porpoise status` 서브커맨드 신설 (M19)**: 현재 마일스톤·태스크·단계·사이클·세션 파일 수를 한 명령으로 출력 — `checkpoint.json`·`milestones/`·`sessions/` 통합 요약
 - **`porpoise doctor` 품질 개선 (M19)**: 실패 시 exit code 1(CI 헬스체크 활용), workspace.toml 메시지 어댑터 중복 제거, API 키 힌트 들여쓰기 정렬
