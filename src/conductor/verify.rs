@@ -286,6 +286,7 @@ pub fn run_verification(
     runner: &ClaudeRunner,
     verifier_model: Option<&str>,
     fallback_halt: bool,
+    stream: bool,
 ) -> Result<VerifyOutcome> {
     // 변경이 전혀 없으면 작업 미수행 — 즉시 FAIL
     if diff.trim().is_empty() {
@@ -315,7 +316,7 @@ pub fn run_verification(
         chaos_response()
     } else {
         runner
-            .run_agentic(&prompt, worktree_path, verifier_model)
+            .run_agentic(&prompt, worktree_path, verifier_model, stream)
             .context("검증자 실행 실패")?
     };
     if let Some(verdict) = try_parse_verdict(&raw) {
@@ -328,7 +329,7 @@ pub fn run_verification(
         chaos_response()
     } else {
         runner
-            .run_agentic(&reask, worktree_path, verifier_model)
+            .run_agentic(&reask, worktree_path, verifier_model, stream)
             .context("검증자 재질의 실패")?
     };
     if let Some(verdict) = try_parse_verdict(&raw2) {

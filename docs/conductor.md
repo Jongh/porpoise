@@ -66,6 +66,21 @@ Pop-Location
 
 판정: 병합 커밋에 의도한 변경만 / worktree·브랜치 잔여 0 / `sessions/` 감사 기록 / 무결성.
 
+## 병렬 함대 (M23, opt-in)
+
+독립적인 task가 여럿일 때 `[conductor] max_parallel`(기본 1=순차, [1,8])을 올리면 task들을
+**각자 worktree에서 동시에** dispatch·verify하고, 결과를 **순차·충돌 인지**로 통합한다.
+
+```toml
+[conductor]
+max_parallel = 3
+```
+
+- **낙관적 동시성**: 일단 병렬 실행하고, 통합 시 병합 충돌이 나면 그 task만 **갱신된 base에서 재투입**하여 사실상 직렬화한다(수렴). 시도 한도(`max_redispatch`) 초과 시 중단.
+- **독립 task 전제**: 병렬 task는 같은 base에서 분기하므로 서로의 변경을 못 본다. 의존 task는 `max_parallel = 1` 권장.
+- **출력**: 병렬 실행 중에는 에이전트 출력을 캡처만 하고, 완료 후 task별로 그룹 표시(인터리브 방지).
+- **비용 주의**: 동시 N개 claude 프로세스 → 토큰·레이트리밋 N배. 감사 기록은 task별 유지.
+
 ## 라이브 재검증 하니스
 
 ```powershell

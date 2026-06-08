@@ -223,6 +223,13 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.23.0]
+- **병렬 함대 (M23, opt-in)**: `[conductor] max_parallel`(기본 1=순차)을 올리면 독립 task N개를 각자 worktree에서 **동시 dispatch·verify**하고 순차·충돌 인지로 통합. 기본 1이라 무변경
+- **낙관적 동시성**: 병합 충돌 시 그 task만 abort 후 **갱신 base에서 재투입**(충돌/실패 피드백을 brief에 주입해 수렴). 시도 한도·무진전 시 안전 중단
+- **출력 캡처**: 병렬 실행 출력을 task별 그룹 표시(인터리브 방지). `doctor`에 `병렬: N개` 표시
+- **라이브 검증**: 독립(P1)·충돌 수렴(P2) 모두 PASS. 하니스 `scripts/conductor-parallel-validate.ps1`·런북 추가
+- **테스트**: 286개 (282 → 286, +4개)
+
 ### [v0.22.0]
 - **⚠ 기본 동작 변경 — conductor 모드 기본 ON (M22)**: claude_code 어댑터에서 `[conductor].mode` 미설정 시 기본 conductor 루프로 동작. 기존 4단계 방식은 `[conductor] mode = "legacy"`로 opt-out. API 어댑터 무영향. 첫 진입 시 1회 안내
 - **비-git 자동 폴백**: 기본 ON이어도 git 저장소가 아니면 자동 legacy 폴백(하드 실패 방지)

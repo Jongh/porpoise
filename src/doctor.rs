@@ -224,14 +224,21 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
                     .conductor_verifier_model()
                     .unwrap_or("(Dispatch와 동일)");
                 let basis = if workspace.conductor_mode_unset() { "기본 ON" } else { "명시적" };
+                let parallel = workspace.conductor_max_parallel();
+                let par_str = if parallel > 1 {
+                    format!(", 병렬: {}개", parallel)
+                } else {
+                    String::new()
+                };
                 results.push(CheckResult {
                     label: "conductor".to_string(),
                     ok: true,
                     message: format!(
-                        "활성 ({}, 재투입 한도: {}, 검증자: {})",
+                        "활성 ({}, 재투입 한도: {}, 검증자: {}{})",
                         basis,
                         workspace.conductor_max_redispatch(),
-                        verifier
+                        verifier,
+                        par_str
                     ),
                     hint: None,
                 });

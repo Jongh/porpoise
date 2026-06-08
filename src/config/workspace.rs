@@ -91,6 +91,8 @@ pub struct WorkspaceConductor {
     /// 검증자 verdict 파싱 실패 시 폴백 정책:
     /// "pass_if_checks_pass" (기본 — 검증 명령 전부 통과면 객관 증거로 PASS) | "halt" (보수 — 사용자 검토)
     pub verdict_fallback: Option<String>,
+    /// 동시에 dispatch·verify할 task 수 (기본 1 = 순차). >1이면 병렬 함대(독립 task 전제, M23).
+    pub max_parallel: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -396,6 +398,7 @@ reviewer_extra = ""
 # verifier_model = ""         # 검증자 전용 모델 (생략 시 Dispatch와 동일). 독립성을 위해 다른 모델 권장
 # max_redispatch = 2          # Verify FAIL 시 재투입 최대 횟수
 # verdict_fallback = "pass_if_checks_pass"  # 검증자 verdict 파싱 실패 시: 검증 명령 통과면 PASS | "halt"(보수)
+# max_parallel = 1            # 동시 처리 task 수 (1=순차, >1=병렬 함대 — 독립 task 전제, [1,8] 클램프)
 "#
     }
 
@@ -418,6 +421,16 @@ reviewer_extra = ""
             .as_ref()
             .and_then(|c| c.mode.as_deref())
             .is_none()
+    }
+
+    /// 동시 처리 task 수 (기본 1 = 순차). [1, 8] 범위로 클램프한다 (M23).
+    /// >1이면 독립 task를 병렬로 dispatch·verify하고 순차·충돌 인지로 통합한다.
+    pub fn conductor_max_parallel(&self) -> u32 {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.max_parallel)
+            .unwrap_or(1)
+            .clamp(1, 8)
     }
 
     /// 폴백 정책이 "halt"인지 여부. true면 검증자 verdict 파싱 실패 시 객관 증거 PASS 대신
@@ -826,6 +839,21 @@ verify_timeout_secs = 30
         assert!(cfg.conductor_verdict_fallback_halt());
         let cfg2: WorkspaceConfig = toml::from_str("[conductor]\nverdict_fallback = \"pass_if_checks_pass\"\n").unwrap();
         assert!(!cfg2.conductor_verdict_fallback_halt());
+    }
+
+    #[test]
+    fn conductor_max_parallel_default_and_clamp() {
+        // 기본 1 (순차)
+        assert_eq!(WorkspaceConfig::default().conductor_max_parallel(), 1);
+        // 설정값 사용
+        let cfg: WorkspaceConfig = toml::from_str("[conductor]\nmax_parallel = 4\n").unwrap();
+        assert_eq!(cfg.conductor_max_parallel(), 4);
+        // 상한 8로 클램프
+        let hi: WorkspaceConfig = toml::from_str("[conductor]\nmax_parallel = 99\n").unwrap();
+        assert_eq!(hi.conductor_max_parallel(), 8);
+        // 하한 1로 클램프 (0 → 1)
+        let lo: WorkspaceConfig = toml::from_str("[conductor]\nmax_parallel = 0\n").unwrap();
+        assert_eq!(lo.conductor_max_parallel(), 1);
     }
 
     #[test]

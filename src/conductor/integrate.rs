@@ -42,24 +42,58 @@ pub fn finalize(wt: &Worktree, repo_root: &Path, commit_msg: &str) -> Result<()>
     Ok(())
 }
 
-/// task 브랜치를 현재 브랜치로 병합한다.
+/// task 브랜치를 현재 브랜치로 병합한다 (단일 task 경로 — fast-forward 가정).
 ///
-/// 순차 단일 task 시나리오에서는 main HEAD가 분기 지점에서 이동하지 않았으므로
-/// fast-forward로 병합된다. 충돌이 발생하면(병렬 함대 — M12 범위) 병합을 중단(abort)하고
-/// 에러를 반환한다.
+/// 충돌이 발생하면 병합을 중단(abort)하고 에러를 반환한다. 병렬 함대의 충돌 인지 병합은
+/// `try_merge_worktree`를 사용한다.
 pub fn merge_worktree(repo_root: &Path, branch: &str) -> Result<()> {
     let out = run_git(repo_root, &["merge", "--no-edit", branch]);
     if !out.success {
-        // 충돌 등으로 실패 → 병합 상태를 깨끗이 되돌림
         run_git(repo_root, &["merge", "--abort"]);
-        anyhow::bail!(
-            "worktree 병합 실패 ({}): {}\n순차 단일 task에서는 충돌이 없어야 합니다. \
-             병렬 실행 충돌 해소는 후속 마일스톤(M12) 범위입니다.",
-            branch,
-            out.stderr.trim()
-        );
+        anyhow::bail!("worktree 병합 실패 ({}): {}", branch, out.stderr.trim());
     }
     Ok(())
+}
+
+/// 병렬 함대에서 PASS된 task 하나를 통합한다: 커밋 → 충돌 인지 병합 → worktree 정리.
+///
+/// 순서가 중요하다 — `Worktree::remove()`가 브랜치를 삭제하므로 반드시 **병합을 먼저** 한다.
+/// 병합 시도 후에는 결과(Merged/Conflicted/Err)와 무관하게 worktree를 정리한다(누수 방지).
+pub fn integrate_parallel(wt: Worktree, repo_root: &Path, commit_msg: &str) -> Result<MergeOutcome> {
+    let outcome = wt
+        .commit(commit_msg)
+        .context("worktree 커밋 실패")
+        .and_then(|()| try_merge_worktree(repo_root, &wt.branch));
+    wt.remove();
+    outcome
+}
+
+/// 병렬 함대 통합의 병합 결과 (M23).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeOutcome {
+    /// 깨끗이 병합됨 (FF 또는 3-way 자동 병합).
+    Merged,
+    /// 충돌 — 병합을 abort했으며, 해당 task는 갱신된 base에서 재투입해야 한다.
+    Conflicted,
+}
+
+/// 충돌 인지 병합 (M23 병렬 함대). 병렬로 만든 여러 task 브랜치를 **순서대로** 통합할 때 쓴다.
+///
+/// 첫 병합 후 HEAD가 이동하므로 후속 병합은 non-FF가 될 수 있고, 겹치는 파일을 건드린 task는
+/// 충돌한다. 충돌이면 `git merge --abort`로 되돌리고 `Conflicted`를 반환한다(에러 아님) —
+/// 호출자가 해당 task를 재투입한다. 병합 외 사유로 실패하면(브랜치 부재 등) 에러를 전파한다.
+pub fn try_merge_worktree(repo_root: &Path, branch: &str) -> Result<MergeOutcome> {
+    let out = run_git(repo_root, &["merge", "--no-edit", branch]);
+    if out.success {
+        return Ok(MergeOutcome::Merged);
+    }
+    // 실패 — 진행 중인 병합을 abort. abort가 성공하면 충돌이었던 것(병합이 진행 중이었음).
+    let abort = run_git(repo_root, &["merge", "--abort"]);
+    if abort.success {
+        Ok(MergeOutcome::Conflicted)
+    } else {
+        anyhow::bail!("병합 실패 (충돌 아님, {}): {}", branch, out.stderr.trim());
+    }
 }
 
 #[cfg(test)]
@@ -152,5 +186,73 @@ mod tests {
         assert!(!wt_path.exists(), "worktree 디렉토리가 제거되어야 함");
         let branches = run_git(root, &["branch", "--list", &branch]).stdout;
         assert!(branches.trim().is_empty(), "브랜치가 정리되어야 함: {:?}", branches);
+    }
+
+    #[test]
+    fn try_merge_clean_then_conflict() {
+        // 병렬 함대 충돌 인지: 같은 파일을 다르게 건드린 두 브랜치를 순차 병합 →
+        // 첫 번째 Merged, 두 번째 Conflicted(abort됨).
+        let tmp = init_repo();
+        let root = tmp.path();
+
+        // 두 worktree 모두 동일 base(seed만 있는 HEAD)에서 분기
+        let wt_a = Worktree::create(root, "M23-T01").expect("wtA");
+        std::fs::write(wt_a.path.join("shared.txt"), "from A\n").unwrap();
+        wt_a.commit("[M23-T01] A").expect("commit A");
+
+        let wt_b = Worktree::create(root, "M23-T02").expect("wtB");
+        std::fs::write(wt_b.path.join("shared.txt"), "from B\n").unwrap();
+        wt_b.commit("[M23-T02] B").expect("commit B");
+
+        // A 병합 → 깨끗 (main이 base에서 안 움직였으므로 FF)
+        assert_eq!(
+            try_merge_worktree(root, &wt_a.branch).unwrap(),
+            MergeOutcome::Merged
+        );
+        // B 병합 → shared.txt add/add 충돌 → Conflicted (abort됨)
+        assert_eq!(
+            try_merge_worktree(root, &wt_b.branch).unwrap(),
+            MergeOutcome::Conflicted
+        );
+
+        // 충돌 abort 후 작업 트리가 깨끗해야 함 (병합 진행 중 아님)
+        assert!(!root.join(".git").join("MERGE_HEAD").exists(), "병합이 abort되어야 함");
+        // A의 내용은 그대로 병합되어 있어야 함
+        assert!(std::fs::read_to_string(root.join("shared.txt")).unwrap().contains("from A"));
+
+        wt_a.remove();
+        wt_b.remove();
+    }
+
+    #[test]
+    fn integrate_parallel_merges_then_conflict_and_cleans_up() {
+        // 병렬 통합 헬퍼: 커밋→병합→정리 순서. (구버전처럼 remove가 먼저면 병합이 실패해 이 테스트가 잡음)
+        let tmp = init_repo();
+        let root = tmp.path();
+
+        let wt_a = Worktree::create(root, "M23-T10").expect("wtA");
+        let branch_a = wt_a.branch.clone();
+        std::fs::write(wt_a.path.join("shared.txt"), "from A\n").unwrap();
+
+        let wt_b = Worktree::create(root, "M23-T11").expect("wtB");
+        let branch_b = wt_b.branch.clone();
+        std::fs::write(wt_b.path.join("shared.txt"), "from B\n").unwrap();
+
+        // A 통합 → Merged, worktree·브랜치 정리됨
+        assert_eq!(
+            integrate_parallel(wt_a, root, "[M23-T10] A").unwrap(),
+            MergeOutcome::Merged
+        );
+        assert!(root.join("shared.txt").exists(), "A 병합 결과가 main에 있어야 함");
+        assert!(run_git(root, &["branch", "--list", &branch_a]).stdout.trim().is_empty(), "A 브랜치 정리");
+
+        // B 통합 → Conflicted(같은 파일 add/add), 정리됨
+        assert_eq!(
+            integrate_parallel(wt_b, root, "[M23-T11] B").unwrap(),
+            MergeOutcome::Conflicted
+        );
+        assert!(run_git(root, &["branch", "--list", &branch_b]).stdout.trim().is_empty(), "B 브랜치 정리");
+        assert!(!root.join(".git").join("MERGE_HEAD").exists(), "충돌 abort됨");
+        assert!(std::fs::read_to_string(root.join("shared.txt")).unwrap().contains("from A"), "A 내용 유지");
     }
 }

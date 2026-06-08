@@ -36,7 +36,7 @@ impl ClaudeRunner {
         model: Option<&str>,
     ) -> Result<String> {
         let prompt = self.build_prompt_from_content(prompt_str, context_files)?;
-        self.execute_claude(&prompt, output_file, model, None)
+        self.execute_claude(&prompt, output_file, model, None, true)
     }
 
     /// Run claude as a full agentic session inside `working_dir`.
@@ -46,13 +46,15 @@ impl ClaudeRunner {
     /// worktree. The agent is free to plan, edit, and run tools on its own —
     /// Porpoise does not constrain it to a single phase. Returns the captured
     /// stdout (the agent's final narration), not a structured report.
+    /// `stream=true`면 에이전트 출력을 라인 단위로 즉시 출력(순차), `false`면 캡처만(병렬, M23).
     pub fn run_agentic(
         &self,
         prompt: &str,
         working_dir: &Path,
         model: Option<&str>,
+        stream: bool,
     ) -> Result<String> {
-        self.execute_claude(prompt, None, model, Some(working_dir))
+        self.execute_claude(prompt, None, model, Some(working_dir), stream)
     }
 
     /// Build a Command that correctly invokes the claude binary.
@@ -116,6 +118,7 @@ impl ClaudeRunner {
         output_file: Option<&Path>,
         model: Option<&str>,
         working_dir: Option<&Path>,
+        stream: bool,
     ) -> Result<String> {
         // On Windows, .cmd/.bat files cannot be spawned directly via CreateProcess.
         // They must be invoked through `cmd.exe /C`.
@@ -153,7 +156,10 @@ impl ClaudeRunner {
         for line in reader.lines() {
             match line {
                 Ok(l) => {
-                    println!("{}", l);
+                    // 병렬 실행 시 출력 인터리브 방지: stream=false면 캡처만 (M23)
+                    if stream {
+                        println!("{}", l);
+                    }
                     full_output.push_str(&l);
                     full_output.push('\n');
                 }

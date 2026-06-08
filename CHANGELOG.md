@@ -4,6 +4,15 @@
 
 ---
 
+### [v0.23.0]
+- **병렬 함대 (M23, opt-in)**: `[conductor] max_parallel`(기본 1=순차, [1,8])을 올리면 독립 task N개를 **각자 worktree에서 동시에** dispatch·verify하고, 결과를 **순차·충돌 인지**로 통합. 기본 1이라 기존 동작 무변경
+- **낙관적 동시성**: 병합 충돌이 나면 그 task만 abort 후 **갱신된 base에서 재투입**하여 직렬화(수렴). 재투입 시 충돌/실패 피드백을 brief에 주입하여 에이전트가 갱신 코드 위에 재적용하도록 함. 시도 한도(`max_redispatch`) 초과·무진전 시 안전 중단
+- **충돌 인지 병합**: `try_merge_worktree`로 non-FF 병합 처리, 충돌 시 abort + `Conflicted` 반환
+- **출력 캡처**: 병렬 실행 중 에이전트 출력을 캡처만 하고 완료 후 task별 그룹 표시(인터리브 방지)
+- **라이브 검증 완료**: 독립 task 병렬(P1)·충돌→재투입 수렴(P2) 모두 라이브 PASS. 하니스 `scripts/conductor-parallel-validate.ps1`·런북 `docs/conductor-parallel-runbook.md` 추가
+- **`porpoise doctor`**: `병렬: N개` 표시
+- **테스트**: 286개 (282 → 286, +4개)
+
 ### [v0.22.0]
 - **⚠ 기본 동작 변경 — conductor 모드 기본 ON (M22)**: claude_code 어댑터에서 `[conductor].mode` 미설정 시 **기본적으로 conductor 루프**(에이전트 통째 위임 + 독립 검증)로 동작합니다. 기존 4단계 phase 방식을 쓰려면 `workspace.toml`에 `[conductor] mode = "legacy"`로 opt-out하세요. API 어댑터는 영향 없음(항상 legacy). 기존 프로젝트 첫 진입 시 1회 전환 안내 출력
 - **비-git 자동 폴백**: 기본 ON이지만 git 저장소가 아니면 **자동으로 legacy로 폴백**(하드 실패 방지) — `git init` 또는 명시적 `mode` 설정 안내

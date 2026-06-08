@@ -14,6 +14,7 @@ pub mod brief;
 pub mod dispatch;
 pub mod git;
 pub mod integrate;
+pub mod parallel;
 pub mod verify;
 
 use anyhow::{Context, Result};
@@ -97,6 +98,15 @@ pub fn run_conductor(
     let verifier_model = workspace.conductor_verifier_model().map(str::to_string);
     let dispatch_model = effective_model.filter(|s| !s.is_empty()).map(str::to_string);
     let dod = workspace.dod_items();
+
+    // M23: max_parallel>1이면 병렬 함대 경로로 위임 (1이면 아래 순차 루프)
+    let max_parallel = workspace.conductor_max_parallel();
+    if max_parallel > 1 {
+        return parallel::run_parallel(
+            path, args, config, workspace, &runner, effective_model, &dod,
+            max_parallel, max_redispatch, logger,
+        );
+    }
 
     let mut history: Vec<String> = Vec::new();
 
@@ -234,7 +244,7 @@ fn conduct_in_worktree(
             "→".cyan(),
             if redispatch > 0 { format!(" (재투입 {})", redispatch) } else { String::new() }
         );
-        let agent_out = wt.run_agent(runner, &brief, dispatch_model)?;
+        let agent_out = wt.run_agent(runner, &brief, dispatch_model, true)?;
         logger.info("conductor", &format!("dispatch 출력 {} bytes", agent_out.len()));
 
         let diff = wt.capture_diff();
@@ -252,7 +262,7 @@ fn conduct_in_worktree(
         println!("  {} Verify — 독립 검증자 심사 중...", "→".cyan());
         let outcome = verify::run_verification(
             &wt.path, task_id, task_title, dod, &diff, &command_results, runner, verifier_model,
-            fallback_halt,
+            fallback_halt, true,
         )?;
 
         write_audit_record(
