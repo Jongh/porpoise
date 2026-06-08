@@ -4,6 +4,14 @@
 
 ---
 
+### [v0.22.0]
+- **⚠ 기본 동작 변경 — conductor 모드 기본 ON (M22)**: claude_code 어댑터에서 `[conductor].mode` 미설정 시 **기본적으로 conductor 루프**(에이전트 통째 위임 + 독립 검증)로 동작합니다. 기존 4단계 phase 방식을 쓰려면 `workspace.toml`에 `[conductor] mode = "legacy"`로 opt-out하세요. API 어댑터는 영향 없음(항상 legacy). 기존 프로젝트 첫 진입 시 1회 전환 안내 출력
+- **비-git 자동 폴백**: 기본 ON이지만 git 저장소가 아니면 **자동으로 legacy로 폴백**(하드 실패 방지) — `git init` 또는 명시적 `mode` 설정 안내
+- **폴백 정책 (`verdict_fallback`)**: 검증자 verdict 파싱 실패가 재질의 후에도 지속될 때 — `"pass_if_checks_pass"`(기본, 검증 명령 통과면 객관 증거로 PASS) | `"halt"`(보수, 사용자 검토). 폴백 PASS 시 콘솔·감사에 `⚠ 경고` + `fallback_used` 표식(`conductor-3` 스키마)
+- **라이브 검증 완료**: 정상 경로(false-negative 0)와 안전망 폴백(파싱 실패 → 재질의 → 객관 증거 PASS) 모두 라이브 3/3 검증. 재검증 하니스(`scripts/conductor-revalidate.ps1`, `-ForceFallback`)·런북(`docs/conductor-revalidation-runbook.md`) 추가
+- **`porpoise status`/`doctor`**: conductor 실행 모드(기본 ON/legacy) 표시
+- **테스트**: 282개 (270 → 282, +12개)
+
 ### [v0.21.0]
 - **conductor 검증자 신뢰성 경화 (M21)**: 라이브 스모크 테스트에서 드러난 false-negative FAIL(코드 정상·`cargo test` 통과인데 검증자 LLM 응답을 파싱하지 못해 보수적 FAIL → 정상 작업 폐기)을 해소 — verdict 파싱 실패 시 즉시 FAIL 대신 **재질의 1회 → 객관 증거(`verify_commands` 통과) 기반 폴백**으로 처리. 검증자 출력 형식 강제 강화("도구·탐색·설명 금지, JSON 객체 하나만")
 - **감사 기록 관측성 (`conductor-2`)**: `sessions/<task>-conductor-<timestamp>-R<n>.json`에 검증자 원문·dispatch 출력 포함, 타임스탬프 파일명으로 재투입·재실행 이력 보존

@@ -15,7 +15,15 @@ Brief → Dispatch → Verify → Integrate
   → PASS/FAIL
 - **Integrate**: PASS면 커밋·병합·완료 처리, FAIL이면 피드백 재투입(`max_redispatch` 한도) 또는 중단
 
-claude_code 어댑터 전용. API 어댑터는 항상 legacy. `[conductor] mode = "conductor"`로 활성화.
+claude_code 어댑터 전용. API 어댑터는 항상 legacy.
+**v0.22.0부터 claude_code에서 기본 활성화**된다(미설정 = conductor). 기존 4단계 방식을 쓰려면 opt-out:
+
+```toml
+[conductor]
+mode = "legacy"
+```
+
+기존 프로젝트가 처음 conductor로 진입하면 1회 전환 안내가 출력된다.
 
 ## 검증자 신뢰성 (M21)
 
@@ -29,6 +37,18 @@ claude_code 어댑터 전용. API 어댑터는 항상 legacy. `[conductor] mode 
 4. **감사 관측성**: `sessions/<task>-conductor-<timestamp>-R<n>.json`에 검증자 원문·dispatch 출력
    포함, 타임스탬프 파일명으로 재투입·재실행 이력 보존.
 5. **worktree 누수 방지**: 성공·실패·중단 모든 경로에서 worktree·브랜치 정리 보장.
+
+## 폴백 정책 (M22)
+
+검증자 verdict 파싱 실패가 재질의 후에도 지속될 때의 처리를 `[conductor] verdict_fallback`으로 제어한다.
+
+| 값 | 동작 |
+|----|------|
+| `pass_if_checks_pass` (기본) | 검증 명령이 전부 통과면 객관 증거 기반 **PASS** (false-negative 방지). 폴백 발동 시 콘솔·감사에 경고 표시 |
+| `halt` | 폴백 PASS 대신 **FAIL** 처리하여 사용자 검토 유도 (false-positive 보수 차단) |
+
+- 폴백 PASS로 병합된 task는 감사 기록에 `fallback_used: true`로 표식되어 추적 가능하다.
+- `verify_commands`가 전혀 없으면 정책과 무관하게 보수적 FAIL(객관 증거 부재).
 
 ## 라이브 스모크 테스트
 
@@ -46,14 +66,26 @@ Pop-Location
 
 판정: 병합 커밋에 의도한 변경만 / worktree·브랜치 잔여 0 / `sessions/` 감사 기록 / 무결성.
 
-## 기본 ON 승격 기준 (M21-T06)
+## 라이브 재검증 하니스
 
-현재 기본값은 **legacy** (conductor는 명시적 opt-in). 아래 기준을 **모두** 충족하면
-차기 버전에서 conductor 기본 ON으로 전환한다.
+```powershell
+# N회 반복 + 검증자 신뢰성 자동 집계 (각 회차 직접 실행: 지휘? y / 새 마일스톤? n / 릴리즈 태그? Enter)
+pwsh scripts/conductor-revalidate.ps1 -Runs 3
 
-- [ ] 스모크 하니스로 **동일 task ≥3회 연속 실행 시 검증자 false-negative 0회**
-- [ ] 3회 모두 worktree·브랜치 잔여 0, 병합 커밋에 무관 변경 혼입 0
-- [ ] 검증 명령 실패가 정확히 FAIL로 이어지는지(정상 음성) 확인
-- [ ] 재투입 → 수렴(또는 명확한 halt)이 의도대로 동작
+# 안전망(재질의·폴백) 라이브 발동 강제 — 검증자 파싱 실패를 유도해 폴백 경로 검증
+pwsh scripts/conductor-revalidate.ps1 -Runs 3 -ForceFallback
+```
 
-승격 시 API 어댑터는 영향 없음(항상 legacy 유지).
+`-ForceFallback`은 `PORPOISE_VERIFY_CHAOS=1`로 검증자가 파싱 불가 응답을 내도록 유도한다.
+이때 정상 코드라면 재질의→객관 증거 폴백으로 **PASS 회복**(false-negative 0)되어야 한다.
+
+## 기본 ON 승격 (완료 — M22)
+
+M21 라이브 재검증(3/3 PASS, false-negative 0)으로 아래 기준을 충족하여 **v0.22.0에서 기본 ON으로 승격**했다.
+
+- [x] 스모크 하니스로 동일 task ≥3회 연속 실행 시 검증자 false-negative 0회
+- [x] 전 회차 worktree·브랜치 잔여 0, 병합 커밋에 무관 변경 혼입 0
+- [x] 감사 관측성(verifier_raw·dispatch·타임스탬프 이력) 라이브 확인
+- [ ] (M22 검증 항목) `-ForceFallback`으로 폴백 경로를 라이브 1회 이상 발동 + false-positive 0
+
+승격 후에도 API 어댑터는 영향 없음(항상 legacy). 기존 사용자는 `mode = "legacy"`로 즉시 opt-out 가능.

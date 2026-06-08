@@ -82,12 +82,15 @@ pub struct WorkspaceSessions {
 /// 독립 검증자(Verify)가 PASS/FAIL을 판정하는 신규 실행 경로를 제어한다.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceConductor {
-    /// "conductor" (기본) | "legacy" — legacy는 기존 4단계 phase 오케스트레이션 사용
+    /// "conductor" (기본, v0.22.0~) | "legacy" — legacy는 기존 4단계 phase 오케스트레이션 사용
     pub mode: Option<String>,
     /// 검증자 모델 ID (생략 시 Dispatch와 동일 모델). 독립 검증을 위해 다른 모델 권장.
     pub verifier_model: Option<String>,
     /// Verify FAIL 시 재투입(re-dispatch) 최대 횟수 (기본값: 2)
     pub max_redispatch: Option<u32>,
+    /// 검증자 verdict 파싱 실패 시 폴백 정책:
+    /// "pass_if_checks_pass" (기본 — 검증 명령 전부 통과면 객관 증거로 PASS) | "halt" (보수 — 사용자 검토)
+    pub verdict_fallback: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -387,22 +390,43 @@ reviewer_extra = ""
 
 # === 지휘자(conductor) 루프 설정 (claude_code 어댑터 전용) ===
 # task 하나를 실제 코딩 에이전트에게 통째로 위임하고 독립 검증자가 PASS/FAIL을 판정합니다.
-# v0.19.0 기준 기본값은 legacy(기존 4단계 phase 방식)이며, conductor는 명시적 opt-in입니다.
+# v0.22.0부터 claude_code 어댑터에서 기본 활성화됩니다. 기존 4단계 방식을 쓰려면 mode = "legacy".
 # [conductor]
-# mode = "conductor"          # "legacy" (기본) | "conductor" (지휘자 루프 활성화)
+# mode = "conductor"          # "conductor" (기본) | "legacy" (기존 4단계 phase 방식)
 # verifier_model = ""         # 검증자 전용 모델 (생략 시 Dispatch와 동일). 독립성을 위해 다른 모델 권장
 # max_redispatch = 2          # Verify FAIL 시 재투입 최대 횟수
+# verdict_fallback = "pass_if_checks_pass"  # 검증자 verdict 파싱 실패 시: 검증 명령 통과면 PASS | "halt"(보수)
 "#
     }
 
-    /// conductor 모드 활성화 여부. v0.19.0에서는 **명시적 opt-in** — `[conductor].mode`가
-    /// "conductor"로 설정된 경우에만 true (기본값: legacy). 종단 간 라이브 검증이 끝나면
-    /// 향후 버전에서 기본 활성화로 승격 예정. 실제 진입은 claude_code 어댑터일 때만.
+    /// conductor 모드 활성화 여부. v0.22.0부터 **기본 활성화** — `[conductor].mode`가
+    /// "legacy"가 아니면 true(미설정 포함). M21 라이브 검증으로 승격 기준 충족됨.
+    /// 실제 진입은 claude_code 어댑터일 때만 (API 어댑터는 항상 legacy).
     pub fn conductor_enabled(&self) -> bool {
+        let mode = self
+            .conductor
+            .as_ref()
+            .and_then(|c| c.mode.as_deref())
+            .unwrap_or("conductor");
+        !mode.eq_ignore_ascii_case("legacy")
+    }
+
+    /// `[conductor].mode`가 명시되지 않았는지 여부. true면 기본값(conductor)으로 동작 중 —
+    /// 기존 사용자에게 1회 전환 안내를 띄울지 판단하는 데 쓴다.
+    pub fn conductor_mode_unset(&self) -> bool {
         self.conductor
             .as_ref()
             .and_then(|c| c.mode.as_deref())
-            .map(|m| m.eq_ignore_ascii_case("conductor"))
+            .is_none()
+    }
+
+    /// 폴백 정책이 "halt"인지 여부. true면 검증자 verdict 파싱 실패 시 객관 증거 PASS 대신
+    /// 사용자 검토를 위해 FAIL 처리한다 (기본: false = pass_if_checks_pass).
+    pub fn conductor_verdict_fallback_halt(&self) -> bool {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.verdict_fallback.as_deref())
+            .map(|v| v.eq_ignore_ascii_case("halt"))
             .unwrap_or(false)
     }
 
@@ -780,12 +804,28 @@ verify_timeout_secs = 30
     }
 
     #[test]
-    fn conductor_disabled_by_default() {
-        // v0.19.0: 기본 legacy — 명시적 opt-in 전까지 비활성
+    fn conductor_enabled_by_default() {
+        // v0.22.0: 기본 활성화 (미설정 = conductor)
         let cfg = WorkspaceConfig::default();
-        assert!(!cfg.conductor_enabled());
+        assert!(cfg.conductor_enabled());
+        assert!(cfg.conductor_mode_unset());
         assert_eq!(cfg.conductor_max_redispatch(), 2);
         assert!(cfg.conductor_verifier_model().is_none());
+        assert!(!cfg.conductor_verdict_fallback_halt());
+    }
+
+    #[test]
+    fn conductor_mode_unset_false_when_set() {
+        let cfg: WorkspaceConfig = toml::from_str("[conductor]\nmode = \"conductor\"\n").unwrap();
+        assert!(!cfg.conductor_mode_unset());
+    }
+
+    #[test]
+    fn conductor_verdict_fallback_halt_parses() {
+        let cfg: WorkspaceConfig = toml::from_str("[conductor]\nverdict_fallback = \"halt\"\n").unwrap();
+        assert!(cfg.conductor_verdict_fallback_halt());
+        let cfg2: WorkspaceConfig = toml::from_str("[conductor]\nverdict_fallback = \"pass_if_checks_pass\"\n").unwrap();
+        assert!(!cfg2.conductor_verdict_fallback_halt());
     }
 
     #[test]
@@ -823,8 +863,8 @@ verify_timeout_secs = 30
     #[test]
     fn default_toml_includes_conductor_docs() {
         let cfg: WorkspaceConfig = toml::from_str(WorkspaceConfig::default_toml()).unwrap();
-        // 주석 처리된 [conductor]이므로 파싱 후 기본값(legacy = 비활성)이어야 함
-        assert!(!cfg.conductor_enabled());
+        // 주석 처리된 [conductor]이므로 파싱 후 기본값(conductor = 활성, v0.22.0~)이어야 함
+        assert!(cfg.conductor_enabled());
         assert!(WorkspaceConfig::default_toml().contains("[conductor]"));
     }
 

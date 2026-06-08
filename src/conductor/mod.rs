@@ -32,6 +32,36 @@ use crate::Args;
 use dispatch::Worktree;
 use integrate::IntegrateDecision;
 
+/// conductor vs legacy 라우팅 결정 결과.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Routing {
+    /// conductor 경로로 진입.
+    Conductor,
+    /// legacy 경로 (conductor 비활성·API 어댑터 등).
+    Legacy,
+    /// conductor가 기본 ON(mode 미설정)이지만 git 저장소가 아님 → 자동 legacy 폴백 (+안내 출력).
+    LegacyNonGit,
+}
+
+/// conductor/legacy 라우팅을 결정한다 (순수 함수 — 테스트 용이).
+///
+/// 핵심: 기본 ON 전환(M22)으로 비-git 프로젝트가 하드 실패하지 않도록, mode 미설정 +
+/// 비-git이면 조용히 legacy로 폴백한다. 명시적으로 conductor를 선택했다면 conductor로 진입해
+/// `run_conductor`가 git 필요성을 명확히 안내(bail)하게 둔다.
+pub fn route_decision(enabled: bool, is_claude_code: bool, is_git: bool, mode_unset: bool) -> Routing {
+    if !(enabled && is_claude_code) {
+        return Routing::Legacy;
+    }
+    if is_git {
+        return Routing::Conductor;
+    }
+    if mode_unset {
+        Routing::LegacyNonGit
+    } else {
+        Routing::Conductor
+    }
+}
+
 /// 지휘자 루프 진입점. orchestrator::run에서 claude_code 어댑터 + conductor 모드일 때 호출된다.
 pub fn run_conductor(
     path: &Path,
@@ -55,6 +85,9 @@ pub fn run_conductor(
 
     // worktree·런타임 데이터가 메인 작업 트리를 오염시키지 않도록 .porpoise/ gitignore 보장 (M21)
     crate::orchestrator::ensure_porpoise_gitignored(path);
+
+    // M22: 기본 ON 전환 — 기존 사용자에게 1회 안내 (mode 미설정 시에만)
+    maybe_show_transition_notice(path, workspace);
 
     let runner = ClaudeRunner::new().context(
         "Claude CLI를 찾을 수 없습니다. Claude Code를 설치하고 'claude'가 PATH에 있는지 확인하세요.",
@@ -189,6 +222,7 @@ fn conduct_in_worktree(
     let verify_cmds = workspace.default_verify_commands();
     let allowed = workspace.allowed_command_prefixes();
     let timeout = workspace.verify_timeout_secs();
+    let fallback_halt = workspace.conductor_verdict_fallback_halt();
 
     let mut redispatch = 0u32;
 
@@ -218,6 +252,7 @@ fn conduct_in_worktree(
         println!("  {} Verify — 독립 검증자 심사 중...", "→".cyan());
         let outcome = verify::run_verification(
             &wt.path, task_id, task_title, dod, &diff, &command_results, runner, verifier_model,
+            fallback_halt,
         )?;
 
         write_audit_record(
@@ -228,7 +263,14 @@ fn conduct_in_worktree(
         save_phase(path, task_id, "integrate", redispatch, logger);
         match integrate::decide(&outcome.verdict, redispatch, max_redispatch) {
             IntegrateDecision::Merge => {
-                if outcome.verdict.feedback.is_empty() {
+                if outcome.fallback_used {
+                    // M22: 검증자 판정 없이 객관 증거로 통과 — false-positive 경계 신호
+                    println!(
+                        "  {} Verify PASS (폴백) — 검증자 판정 파싱 실패, 객관 증거(검증 명령 통과) 기반 통과. 검토 권장",
+                        "⚠".yellow().bold()
+                    );
+                    logger.warn("conductor", &format!("task {} 폴백 PASS (검증자 판정 불가)", task_id));
+                } else if outcome.verdict.feedback.is_empty() {
                     println!("  {} Verify PASS", "✓".green());
                 } else {
                     println!(
@@ -332,6 +374,27 @@ fn save_halt_hint(path: &Path, task_id: &str, feedback: &str, logger: &Logger) {
     }
 }
 
+/// M22: conductor 기본 ON 전환을 기존 사용자에게 1회 안내한다.
+/// `[conductor].mode`가 명시되지 않았고(=기본값으로 동작) 마커가 없을 때만 출력한다.
+fn maybe_show_transition_notice(path: &Path, workspace: &WorkspaceConfig) {
+    if !workspace.conductor_mode_unset() {
+        return; // 명시적으로 conductor를 선택한 사용자는 안내 불필요
+    }
+    let marker = path.join(".porpoise").join(".conductor-notified");
+    if marker.exists() {
+        return;
+    }
+    println!();
+    println!("{}", "ℹ conductor 모드가 기본 활성화되었습니다 (v0.22.0~).".cyan().bold());
+    println!("{}", "  task를 실제 코딩 에이전트에게 통째로 위임하고 독립 검증자가 게이트합니다.".dimmed());
+    println!("{}", "  기존 4단계(Planning·Development·Testing·Review) 방식을 쓰려면".dimmed());
+    println!("{}", "  .porpoise/workspace.toml에 [conductor] mode = \"legacy\"를 추가하세요.".yellow());
+    if let Err(e) = std::fs::write(&marker, "shown\n") {
+        // 마커 저장 실패는 치명적이지 않음 (다음 실행에 안내가 한 번 더 나올 뿐)
+        eprintln!("  (안내 마커 저장 실패: {})", e);
+    }
+}
+
 /// 감사 추적용 지휘 기록을 sessions/에 저장한다.
 ///
 /// M21: 검증자 원문·dispatch 출력을 포함하고(사후분석), 파일명에 타임스탬프를 넣어
@@ -355,7 +418,7 @@ fn write_audit_record(
     let now = Local::now();
     let verdict = &outcome.verdict;
     let record = serde_json::json!({
-        "schema_version": "conductor-2",
+        "schema_version": "conductor-3",
         "task_id": task_id,
         "redispatch": redispatch,
         "timestamp": now.to_rfc3339(),
@@ -367,6 +430,8 @@ fn write_audit_record(
         })).collect::<Vec<_>>(),
         "verdict": if verdict.pass { "PASS" } else { "FAIL" },
         "feedback": verdict.feedback,
+        // M22: 검증자 판정 파싱 실패로 객관 증거 폴백이 발동했는지 (false-positive 추적용)
+        "fallback_used": outcome.fallback_used,
         "verifier_raw": truncate_chars(&outcome.verifier_raw, 4000),
         "dispatch_output": truncate_chars(dispatch_output, 4000),
     });
@@ -410,6 +475,36 @@ mod tests {
     use super::*;
     use crate::session::v0_7::ExecutionResult;
     use verify::{Verdict, VerifyOutcome};
+
+    #[test]
+    fn route_api_adapter_is_legacy() {
+        // claude_code가 아니면 enabled여도 legacy
+        assert_eq!(route_decision(true, false, true, true), Routing::Legacy);
+    }
+
+    #[test]
+    fn route_disabled_is_legacy() {
+        // mode=legacy(비활성) → legacy
+        assert_eq!(route_decision(false, true, true, false), Routing::Legacy);
+    }
+
+    #[test]
+    fn route_conductor_when_git() {
+        assert_eq!(route_decision(true, true, true, true), Routing::Conductor);
+        assert_eq!(route_decision(true, true, true, false), Routing::Conductor);
+    }
+
+    #[test]
+    fn route_non_git_unset_falls_back_to_legacy() {
+        // 기본 ON(mode 미설정) + 비-git → 자동 legacy 폴백 (하드 실패 방지)
+        assert_eq!(route_decision(true, true, false, true), Routing::LegacyNonGit);
+    }
+
+    #[test]
+    fn route_non_git_explicit_conductor_stays_conductor() {
+        // 명시적 conductor + 비-git → conductor 진입(run_conductor가 git 필요를 안내)
+        assert_eq!(route_decision(true, true, false, false), Routing::Conductor);
+    }
 
     #[test]
     fn truncate_chars_short_unchanged() {
@@ -460,6 +555,7 @@ mod tests {
         let outcome = VerifyOutcome {
             verdict: Verdict::fail("사유 설명"),
             verifier_raw: long_raw,
+            fallback_used: false,
         };
         let cmds = vec![cmd_ok()];
 
@@ -474,13 +570,14 @@ mod tests {
 
         let content = std::fs::read_to_string(files[0].path()).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(v["schema_version"], "conductor-2");
         assert_eq!(v["verdict"], "FAIL");
         assert_eq!(v["feedback"], "사유 설명");
         assert_eq!(v["diff_lines"], 2);
         assert_eq!(v["dispatch_output"], "dispatch 출력");
         assert_eq!(v["verify_commands"][0]["command"], "cargo");
         assert_eq!(v["verify_commands"][0]["exit_code"], 0);
+        assert_eq!(v["schema_version"], "conductor-3");
+        assert_eq!(v["fallback_used"], false);
         // 검증자 원문이 잘림 표시와 함께 포함
         assert!(
             v["verifier_raw"].as_str().unwrap().contains("chars 생략"),
@@ -489,12 +586,34 @@ mod tests {
     }
 
     #[test]
+    fn write_audit_record_marks_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        std::fs::create_dir_all(path.join(".porpoise")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+        // 폴백 PASS — fallback_used=true가 감사에 기록되어야 함
+        let outcome = VerifyOutcome {
+            verdict: Verdict::pass_with_note("객관 증거 기반"),
+            verifier_raw: "prose".to_string(),
+            fallback_used: true,
+        };
+        write_audit_record(path, "M2-T01", 0, "d", &[cmd_ok()], &outcome, "", &logger);
+
+        let sessions = path.join(".porpoise").join("sessions");
+        let f = std::fs::read_dir(&sessions).unwrap().flatten().next().unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(f.path()).unwrap()).unwrap();
+        assert_eq!(v["fallback_used"], true);
+        assert_eq!(v["verdict"], "PASS");
+    }
+
+    #[test]
     fn write_audit_record_filename_unique_per_redispatch() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path();
         std::fs::create_dir_all(path.join(".porpoise")).unwrap();
         let logger = crate::logger::Logger::new(path, false).unwrap();
-        let outcome = VerifyOutcome { verdict: Verdict::pass(), verifier_raw: String::new() };
+        let outcome = VerifyOutcome { verdict: Verdict::pass(), verifier_raw: String::new(), fallback_used: false };
 
         // 서로 다른 redispatch 인덱스는 파일명이 구분되어 이력이 보존됨
         write_audit_record(path, "M1-T01", 0, "d", &[], &outcome, "", &logger);

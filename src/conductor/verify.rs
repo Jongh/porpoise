@@ -38,6 +38,9 @@ pub struct VerifyOutcome {
     pub verdict: Verdict,
     /// 마지막 검증자 LLM 응답 원문 (LLM 호출이 없었으면 빈 문자열).
     pub verifier_raw: String,
+    /// 검증자 verdict 파싱 실패로 **객관 증거 폴백**(또는 halt)이 발동됐는지.
+    /// true + verdict.pass면 "검증자 판정 없이 객관 증거로 통과" → 검토 권장 신호 (M22).
+    pub fallback_used: bool,
 }
 
 /// 검증자 LLM 원문에서 판정을 추출한다. 추출 불가면 None.
@@ -244,6 +247,34 @@ pub fn build_verify_prompt(
 /// 검증자는 격리 worktree 안에서 실행하여 실제 저장소를 건드리지 않는다.
 /// 파싱 실패가 즉시 FAIL로 이어지지 않으므로(M21), 검증자 출력 비신뢰성에 의한
 /// false-negative FAIL을 방지한다.
+/// 검증자 파싱 실패가 재질의 후에도 지속될 때의 최종 판정 (정책 분기, 순수 함수).
+/// `halt`면 객관 증거 PASS 대신 사용자 검토를 위해 FAIL — false-positive를 보수적으로 차단(M22).
+pub fn resolve_fallback(command_results: &[ExecutionResult], halt: bool) -> Verdict {
+    if halt {
+        Verdict::fail(
+            "검증자 verdict를 재질의 후에도 파싱할 수 없습니다. \
+             [conductor] verdict_fallback=\"halt\" 정책에 따라 사용자 검토를 위해 FAIL 처리합니다.",
+        )
+    } else {
+        fallback_verdict(command_results)
+    }
+}
+
+/// 테스트 전용 혼돈 모드 활성 여부 (`PORPOISE_VERIFY_CHAOS=1`).
+fn chaos_active() -> bool {
+    std::env::var("PORPOISE_VERIFY_CHAOS").map(|v| v == "1").unwrap_or(false)
+}
+
+/// 테스트 전용: 검증자 LLM 호출을 **건너뛰고** 파싱 불가 응답을 주입한다 (M22-T04).
+///
+/// 프롬프트에 "산문으로 답하라"를 덧붙이는 방식은 강한 검증자 모델이 JSON 출력 계약과의
+/// 충돌을 인지해 무시하므로 비결정적이다. 대신 호출 자체를 우회하여 안전망(재질의·폴백)을
+/// **결정론적으로** 발동시킨다. 평상시(미설정)엔 영향 없음.
+fn chaos_response() -> String {
+    eprintln!("  ⚠ PORPOISE_VERIFY_CHAOS=1 — 검증자 호출을 건너뛰고 파싱 불가 응답 주입 (안전망 검증)");
+    "[혼돈 모드] 검증자 산문 응답입니다. 구조화된 판정이 없습니다.".to_string()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_verification(
     worktree_path: &Path,
@@ -254,6 +285,7 @@ pub fn run_verification(
     command_results: &[ExecutionResult],
     runner: &ClaudeRunner,
     verifier_model: Option<&str>,
+    fallback_halt: bool,
 ) -> Result<VerifyOutcome> {
     // 변경이 전혀 없으면 작업 미수행 — 즉시 FAIL
     if diff.trim().is_empty() {
@@ -262,35 +294,54 @@ pub fn run_verification(
                 "에이전트가 어떤 파일도 변경하지 않았습니다. 작업이 수행되지 않았습니다.",
             ),
             verifier_raw: String::new(),
+            fallback_used: false,
         });
     }
 
     // 객관 증거 우선: 검증 명령이 하나라도 실패하면 LLM 판단 없이 FAIL
     if let Some(summary) = summarize_command_failures(command_results) {
-        return Ok(VerifyOutcome { verdict: Verdict::fail(summary), verifier_raw: String::new() });
+        return Ok(VerifyOutcome {
+            verdict: Verdict::fail(summary),
+            verifier_raw: String::new(),
+            fallback_used: false,
+        });
     }
 
-    // 1차 심사
+    let chaos = chaos_active();
+
+    // 1차 심사 (chaos면 LLM 호출을 건너뛰고 파싱 불가 응답 주입)
     let prompt = build_verify_prompt(task_id, task_title, dod, diff, command_results);
-    let raw = runner
-        .run_agentic(&prompt, worktree_path, verifier_model)
-        .context("검증자 실행 실패")?;
+    let raw = if chaos {
+        chaos_response()
+    } else {
+        runner
+            .run_agentic(&prompt, worktree_path, verifier_model)
+            .context("검증자 실행 실패")?
+    };
     if let Some(verdict) = try_parse_verdict(&raw) {
-        return Ok(VerifyOutcome { verdict, verifier_raw: raw });
+        return Ok(VerifyOutcome { verdict, verifier_raw: raw, fallback_used: false });
     }
 
     // 재질의 1회 (파싱 가능한 verdict만 다시 요청)
     let reask = build_reask_prompt(&prompt);
-    let raw2 = runner
-        .run_agentic(&reask, worktree_path, verifier_model)
-        .context("검증자 재질의 실패")?;
+    let raw2 = if chaos {
+        chaos_response()
+    } else {
+        runner
+            .run_agentic(&reask, worktree_path, verifier_model)
+            .context("검증자 재질의 실패")?
+    };
     if let Some(verdict) = try_parse_verdict(&raw2) {
-        return Ok(VerifyOutcome { verdict, verifier_raw: raw2 });
+        return Ok(VerifyOutcome { verdict, verifier_raw: raw2, fallback_used: false });
     }
 
-    // 여전히 파싱 불가 → 객관 증거 폴백 (false-negative 방지)
+    // 여전히 파싱 불가 → 정책에 따른 폴백 (기본: 객관 증거 PASS, halt: 보수 FAIL)
     let combined = format!("[1차 응답]\n{}\n\n[재질의 응답]\n{}", raw, raw2);
-    Ok(VerifyOutcome { verdict: fallback_verdict(command_results), verifier_raw: combined })
+    Ok(VerifyOutcome {
+        verdict: resolve_fallback(command_results, fallback_halt),
+        verifier_raw: combined,
+        fallback_used: true,
+    })
 }
 
 #[cfg(test)]
@@ -416,6 +467,32 @@ mod tests {
         assert!(r.contains("원본 프롬프트"));
         assert!(r.contains("재요청"));
         assert!(r.contains("verdict"));
+    }
+
+    #[test]
+    fn chaos_injected_response_is_unparseable() {
+        // 주입 응답은 try_parse_verdict가 None이어야 안전망(재질의·폴백)이 결정론적으로 발동한다
+        let raw = "[혼돈 모드] 검증자 산문 응답입니다. 구조화된 판정이 없습니다.";
+        assert!(try_parse_verdict(raw).is_none());
+    }
+
+    #[test]
+    fn resolve_fallback_halt_policy_fails() {
+        // halt 정책: 검증 명령이 통과해도 폴백은 FAIL (false-positive 보수 차단)
+        let results = vec![exec("cargo", 0)];
+        let v = resolve_fallback(&results, true);
+        assert!(!v.pass);
+        assert!(v.feedback.contains("halt"));
+    }
+
+    #[test]
+    fn resolve_fallback_default_policy_passes_on_objective_evidence() {
+        // 기본 정책: 검증 명령 통과면 객관 증거로 PASS
+        let results = vec![exec("cargo", 0)];
+        assert!(resolve_fallback(&results, false).pass);
+        // 객관 증거 없으면 정책 무관 보수 FAIL
+        assert!(!resolve_fallback(&[], false).pass);
+        assert!(!resolve_fallback(&[], true).pass);
     }
 
     #[test]

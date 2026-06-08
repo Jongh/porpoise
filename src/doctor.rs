@@ -223,11 +223,13 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
                 let verifier = workspace
                     .conductor_verifier_model()
                     .unwrap_or("(Dispatch와 동일)");
+                let basis = if workspace.conductor_mode_unset() { "기본 ON" } else { "명시적" };
                 results.push(CheckResult {
                     label: "conductor".to_string(),
                     ok: true,
                     message: format!(
-                        "활성 (재투입 한도: {}, 검증자: {})",
+                        "활성 ({}, 재투입 한도: {}, 검증자: {})",
+                        basis,
                         workspace.conductor_max_redispatch(),
                         verifier
                     ),
@@ -249,7 +251,7 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
             results.push(CheckResult {
                 label: "conductor".to_string(),
                 ok: true,
-                message: "legacy 모드 (기본) — 활성화: [conductor] mode = \"conductor\"".to_string(),
+                message: "legacy 모드 (명시적 opt-out) — 기본 conductor 대신 4단계 phase 방식 사용".to_string(),
                 hint: None,
             });
         }

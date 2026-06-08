@@ -14,6 +14,8 @@ struct TaskStatus {
 
 struct StatusInfo {
     adapter: String,
+    /// 실행 모드 표시 (claude_code: "conductor (기본 ON)"/"legacy", API 어댑터: None)
+    run_mode: Option<String>,
     model_id: Option<String>,
     task_id: Option<String>,
     role: Option<String>,
@@ -40,6 +42,9 @@ pub fn run_status(project_path: &Path) {
 
     println!("프로젝트: {}", project_path.display().to_string().cyan());
     println!("어댑터: {}", info.adapter.cyan());
+    if let Some(ref mode) = info.run_mode {
+        println!("실행 모드: {}", mode.cyan());
+    }
     if let Some(ref model) = info.model_id {
         println!("모델: {}", model.dimmed());
     }
@@ -102,6 +107,18 @@ fn collect_status(project_path: &Path) -> StatusInfo {
         AdapterType::OpenAiCompatible => "openai_compatible".to_string(),
     };
 
+    // 실행 모드: claude_code만 conductor 적용 (API 어댑터는 항상 legacy → None)
+    let run_mode = if matches!(workspace.model_adapter_type(), AdapterType::ClaudeCode) {
+        if workspace.conductor_enabled() {
+            let basis = if workspace.conductor_mode_unset() { "기본 ON" } else { "명시" };
+            Some(format!("conductor ({})", basis))
+        } else {
+            Some("legacy (opt-out)".to_string())
+        }
+    } else {
+        None
+    };
+
     let model_id = workspace
         .model
         .as_ref()
@@ -144,6 +161,7 @@ fn collect_status(project_path: &Path) -> StatusInfo {
 
     StatusInfo {
         adapter,
+        run_mode,
         model_id,
         task_id,
         role,

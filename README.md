@@ -223,6 +223,13 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.22.0]
+- **⚠ 기본 동작 변경 — conductor 모드 기본 ON (M22)**: claude_code 어댑터에서 `[conductor].mode` 미설정 시 기본 conductor 루프로 동작. 기존 4단계 방식은 `[conductor] mode = "legacy"`로 opt-out. API 어댑터 무영향. 첫 진입 시 1회 안내
+- **비-git 자동 폴백**: 기본 ON이어도 git 저장소가 아니면 자동 legacy 폴백(하드 실패 방지)
+- **폴백 정책 `verdict_fallback`**: 검증자 파싱 실패 지속 시 `pass_if_checks_pass`(기본) | `halt`. 폴백 PASS는 `⚠ 경고` + 감사 `fallback_used`(`conductor-3`)
+- **라이브 검증 완료**: 정상 경로·안전망 폴백 모두 라이브 3/3. 하니스 `-ForceFallback`·런북 추가. `status`/`doctor`에 실행 모드 표시
+- **테스트**: 282개 (270 → 282, +12개)
+
 ### [v0.21.0]
 - **conductor 검증자 신뢰성 경화 (M21)**: 검증자 LLM 응답 파싱 실패 시 즉시 FAIL 대신 **재질의 1회 → 객관 증거(`verify_commands` 통과) 폴백** — 라이브 테스트에서 관찰된 false-negative FAIL 해소. 출력 형식 강제 강화
 - **감사 기록 관측성 (`conductor-2`)**: 검증자 원문·dispatch 출력 포함, 타임스탬프 파일명으로 이력 보존

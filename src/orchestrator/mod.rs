@@ -162,20 +162,45 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     }
 
     if crate::session::is_new_format(path) {
-        // 지휘자(conductor) 경로: claude_code 어댑터 + conductor 모드일 때만.
-        // API 어댑터(anthropic_api/openai_compatible)는 에이전틱 위임이 불가하므로 항상 legacy.
-        let use_conductor = workspace.conductor_enabled()
-            && workspace.model_adapter_type() == crate::model::adapter::AdapterType::ClaudeCode;
-        if use_conductor {
-            return crate::conductor::run_conductor(
-                path,
-                args,
-                config,
-                &workspace,
-                &state,
-                effective_model.as_deref(),
-                &logger,
-            );
+        // 지휘자(conductor) 경로: claude_code 어댑터 + conductor 모드 + git 저장소일 때.
+        // API 어댑터는 에이전틱 위임 불가 → 항상 legacy. 비-git + 기본 ON → 자동 legacy 폴백(M22).
+        use crate::conductor::Routing;
+        let is_claude_code =
+            workspace.model_adapter_type() == crate::model::adapter::AdapterType::ClaudeCode;
+        let is_git = crate::conductor::git::is_git_repo(path);
+        let routing = crate::conductor::route_decision(
+            workspace.conductor_enabled(),
+            is_claude_code,
+            is_git,
+            workspace.conductor_mode_unset(),
+        );
+        match routing {
+            Routing::Conductor => {
+                return crate::conductor::run_conductor(
+                    path,
+                    args,
+                    config,
+                    &workspace,
+                    &state,
+                    effective_model.as_deref(),
+                    &logger,
+                );
+            }
+            Routing::LegacyNonGit => {
+                println!(
+                    "{}",
+                    "ℹ conductor가 기본 활성화되어 있으나 git 저장소가 아니므로 legacy(4단계)로 진행합니다."
+                        .yellow()
+                );
+                println!(
+                    "{}",
+                    "  conductor를 쓰려면 'git init' 후 재실행하거나, 이 안내를 끄려면 \
+                     workspace.toml에 [conductor] mode = \"legacy\"를 설정하세요."
+                        .dimmed()
+                );
+                logger.info("orchestrator", "비-git + 기본 conductor → legacy 자동 폴백");
+            }
+            Routing::Legacy => {}
         }
         return new_format::run_new_format(
             path,
