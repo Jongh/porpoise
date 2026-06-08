@@ -317,6 +317,34 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
         }
     }
 
+    // 8. 의존성 그래프 검증 (M24) — 순환·dangling
+    {
+        let tasks = crate::orchestrator::state::parse_tasks_from_project_md(project_path);
+        let has_deps = tasks.iter().any(|t| !t.dependencies.is_empty());
+        if has_deps {
+            match crate::conductor::schedule::validate_dependencies(&tasks) {
+                Ok(warnings) if warnings.is_empty() => results.push(CheckResult {
+                    label: "의존성 그래프".to_string(),
+                    ok: true,
+                    message: "유효 (순환·dangling 없음)".to_string(),
+                    hint: None,
+                }),
+                Ok(warnings) => results.push(CheckResult {
+                    label: "의존성 그래프".to_string(),
+                    ok: false,
+                    message: format!("dangling 의존성 {}건", warnings.len()),
+                    hint: Some(warnings.join("\n")),
+                }),
+                Err(e) => results.push(CheckResult {
+                    label: "의존성 그래프".to_string(),
+                    ok: false,
+                    message: e,
+                    hint: Some("project.md의 (deps: ...) 표기에서 순환을 제거하세요.".to_string()),
+                }),
+            }
+        }
+    }
+
     results
 }
 

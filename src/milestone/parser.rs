@@ -116,12 +116,14 @@ fn parse_tasks(content: &str) -> Vec<Task> {
         let rest = &trimmed[6..];
         if let Some(colon_pos) = rest.find(": ") {
             let id_part = rest[..colon_pos].trim();
-            let title = rest[colon_pos + 2..].trim();
+            let raw_title = rest[colon_pos + 2..].trim();
             if id_part.starts_with('M') && id_part.contains("-T") {
+                let (title, dependencies) = crate::orchestrator::state::parse_task_deps(raw_title);
                 tasks.push(Task {
                     id: id_part.to_string(),
-                    title: title.to_string(),
+                    title,
                     completed,
+                    dependencies,
                 });
             }
         }

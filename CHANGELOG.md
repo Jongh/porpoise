@@ -4,6 +4,14 @@
 
 ---
 
+### [v0.24.0]
+- **계획 두뇌 — 의존성 그래프 스케줄링 (M24)**: task가 `(deps: M1-T01, M1-T02)` 형식으로 선행 task를 선언하면, conductor가 **ready(모든 선행 완료) task만** 배치한다. 선행 완료 시 다음 라운드에서 의존 task가 ready로 전이 — DAG 기반 위상(topological) 실행. `src/conductor/schedule.rs`에 `ready_tasks`·`has_cycle`(DFS)·`dangling_deps`·`validate_dependencies` 순수 함수 신설
+- **순환·dangling 검증**: 시작 전 의존성 그래프를 검사해 **순환(cycle)이면 거부**(무한 대기 방지), 존재하지 않는 의존성(dangling)은 **경고 후 무시**(오타가 task를 영구 차단하지 않도록 ready 계산에서도 '만족'으로 취급). `porpoise doctor`에 의존성 그래프 검증 항목 추가
+- **`porpoise status`**: ready task는 `⏳`, 선행 대기 중인 task는 `🔒 (대기: deps)`로 표시
+- **deps 파싱·전파**: `Task`에 `dependencies: Vec<String>` 추가, `parse_task_deps`로 `(deps: ...)` 접미사 파싱(`TaskId::new` 정규화). 마일스톤→project.md 미러링 시 `(deps: ...)`를 **보존**하도록 수정(이전엔 누락되어 스케줄링이 무력화됨). 계획 프롬프트(`05-milestone.tmpl`)에 에이전트 크기 분해·독립 우선·`(deps:)` 작성 가이드 추가
+- **라이브 검증(D1)**: max_parallel=3, T03이 T01·T02에 의존하는 시나리오에서 라운드 1에 **T01·T02만**(2개) 병렬 실행, 라운드 2에 T03 실행. project.md `(deps:)` 보존·무충돌(redispatch=0) 완료 확인. PASS
+- **테스트**: 299개 (286 → 299, +13개)
+
 ### [v0.23.0]
 - **병렬 함대 (M23, opt-in)**: `[conductor] max_parallel`(기본 1=순차, [1,8])을 올리면 독립 task N개를 **각자 worktree에서 동시에** dispatch·verify하고, 결과를 **순차·충돌 인지**로 통합. 기본 1이라 기존 동작 무변경
 - **낙관적 동시성**: 병합 충돌이 나면 그 task만 abort 후 **갱신된 base에서 재투입**하여 직렬화(수렴). 재투입 시 충돌/실패 피드백을 brief에 주입하여 에이전트가 갱신 코드 위에 재적용하도록 함. 시도 한도(`max_redispatch`) 초과·무진전 시 안전 중단

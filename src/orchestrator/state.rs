@@ -87,11 +87,35 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Task {
     pub id: String,
     pub title: String,
     pub completed: bool,
+    /// 선행 task id 목록 (M24). `(deps: M{n}-T01, ...)` 표기에서 파싱. 없으면 빈 vec.
+    pub dependencies: Vec<String>,
+}
+
+/// task 제목에서 `(deps: id, id, ...)` 표기를 분리한다. (정제된 제목, 정규화된 의존성 id 목록) 반환.
+/// 표기가 없으면 (원래 제목, 빈 vec). (M24)
+pub fn parse_task_deps(title: &str) -> (String, Vec<String>) {
+    if let Some(start) = title.rfind("(deps:") {
+        if let Some(end_rel) = title[start..].find(')') {
+            let end = start + end_rel;
+            let inner = &title[start + "(deps:".len()..end];
+            let deps: Vec<String> = inner
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| TaskId::new(s).to_string())
+                .collect();
+            let clean = format!("{}{}", &title[..start], &title[end + 1..])
+                .trim()
+                .to_string();
+            return (clean, deps);
+        }
+    }
+    (title.to_string(), vec![])
 }
 
 /// Parses M{n}-T{nn} task items from .porpoise/project.md.
@@ -124,13 +148,15 @@ pub fn parse_tasks_from_project_md(path: &Path) -> Vec<Task> {
 
             if let Some(colon_pos) = rest.find(": ") {
                 let id_part = rest[..colon_pos].trim();
-                let title = rest[colon_pos + 2..].trim();
+                let raw_title = rest[colon_pos + 2..].trim();
                 // Only accept M{n}-T{nn} format
                 if id_part.starts_with('M') && id_part.contains("-T") {
+                    let (title, dependencies) = parse_task_deps(raw_title);
                     tasks.push(Task {
                         id: TaskId::new(id_part).to_string(),
-                        title: title.to_string(),
+                        title,
                         completed,
+                        dependencies,
                     });
                 }
             }
@@ -329,6 +355,44 @@ fn extract_from_old_format(filename: &str) -> Option<Role> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_task_deps_none() {
+        let (title, deps) = parse_task_deps("add 함수 추가");
+        assert_eq!(title, "add 함수 추가");
+        assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn parse_task_deps_extracts_and_strips() {
+        let (title, deps) = parse_task_deps("sub 함수 추가 (deps: M24-T01, M24-T02)");
+        assert_eq!(title, "sub 함수 추가");
+        assert_eq!(deps, vec!["M24-T01", "M24-T02"]);
+    }
+
+    #[test]
+    fn parse_task_deps_normalizes_ids() {
+        // T1 → T01 정규화 (zero-pad)
+        let (_t, deps) = parse_task_deps("작업 (deps: M24-T1)");
+        assert_eq!(deps, vec!["M24-T01"]);
+    }
+
+    #[test]
+    fn parse_tasks_from_project_md_with_deps() {
+        let temp = tempfile::tempdir().unwrap();
+        let docs = temp.path().join(".porpoise");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(
+            docs.join("project.md"),
+            "## 작업 목록\n- [ ] M1-T01: 첫 작업\n- [ ] M1-T02: 둘째 작업 (deps: M1-T01)\n",
+        )
+        .unwrap();
+        let tasks = parse_tasks_from_project_md(temp.path());
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks[0].dependencies.is_empty());
+        assert_eq!(tasks[1].dependencies, vec!["M1-T01"]);
+        assert_eq!(tasks[1].title, "둘째 작업"); // deps 표기 제거됨
+    }
 
     #[test]
     fn role_from_str_all_variants() {

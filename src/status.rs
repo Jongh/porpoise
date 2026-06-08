@@ -10,6 +10,7 @@ struct TaskStatus {
     title: String,
     completed: bool,
     is_current: bool,
+    dependencies: Vec<String>,
 }
 
 struct StatusInfo {
@@ -73,19 +74,30 @@ pub fn run_status(project_path: &Path) {
             done,
             total
         );
+        // M24: 의존성 충족 여부로 ready/대기 구분
+        let completed_ids: std::collections::HashSet<&str> =
+            info.tasks.iter().filter(|t| t.completed).map(|t| t.id.as_str()).collect();
         for t in &info.tasks {
+            let waiting = !t.completed
+                && !t.dependencies.is_empty()
+                && !t.dependencies.iter().all(|d| completed_ids.contains(d.as_str()));
             let marker = if t.completed {
                 "✅"
             } else if t.is_current {
                 "🔄"
+            } else if waiting {
+                "🔒"
             } else {
                 "⏳"
             };
-            let label = if t.is_current {
+            let mut label = if t.is_current {
                 format!("{}   ← 현재", t.title).yellow().to_string()
             } else {
                 t.title.clone()
             };
+            if waiting {
+                label = format!("{}  (대기: {})", label, t.dependencies.join(", ")).dimmed().to_string();
+            }
             println!("  {} {}: {}", marker, t.id.dimmed(), label);
         }
     } else {
@@ -259,7 +271,9 @@ fn load_milestone_tasks(
         let rest = &trimmed[6..];
         if let Some(colon) = rest.find(": ") {
             let id = rest[..colon].trim().to_string();
-            let task_title = rest[colon + 2..].trim().to_string();
+            let raw_title = rest[colon + 2..].trim();
+            let (task_title, dependencies) =
+                crate::orchestrator::state::parse_task_deps(raw_title);
             if id.starts_with('M') && id.contains("-T") {
                 let is_current = current_task_id.map(|c| c == id).unwrap_or(false);
                 tasks.push(TaskStatus {
@@ -267,6 +281,7 @@ fn load_milestone_tasks(
                     title: task_title,
                     completed,
                     is_current,
+                    dependencies,
                 });
             }
         }

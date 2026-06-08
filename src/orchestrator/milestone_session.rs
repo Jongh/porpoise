@@ -376,10 +376,15 @@ fn milestone_output_to_milestone(
     } else {
         Some(output.version.clone())
     };
-    let tasks: Vec<Task> = output.tasks.iter().map(|t| Task {
-        id: normalize_task_id(&t.id, next_id),
-        title: t.title.clone(),
-        completed: false,
+    let tasks: Vec<Task> = output.tasks.iter().map(|t| {
+        // 계획 두뇌가 제목에 (deps: ...)를 넣었으면 분리한다 (M24)
+        let (title, dependencies) = crate::orchestrator::state::parse_task_deps(&t.title);
+        Task {
+            id: normalize_task_id(&t.id, next_id),
+            title,
+            completed: false,
+            dependencies,
+        }
     }).collect();
 
     Milestone {
@@ -413,7 +418,13 @@ pub fn append_milestone_to_project_md(path: &Path, milestone: &Milestone) -> Res
     );
     for task in &milestone.tasks {
         let checkbox = if task.completed { "[x]" } else { "[ ]" };
-        new_section.push_str(&format!("- {} {}: {}\n", checkbox, task.id, task.title));
+        // M24: 의존성을 project.md에 보존 — conductor가 project.md를 읽어 스케줄링하므로 (deps:)가 유실되면 안 됨
+        let deps = if task.dependencies.is_empty() {
+            String::new()
+        } else {
+            format!(" (deps: {})", task.dependencies.join(", "))
+        };
+        new_section.push_str(&format!("- {} {}: {}{}\n", checkbox, task.id, task.title, deps));
     }
 
     let new_content = format!("{}{}", content, new_section);
@@ -438,7 +449,7 @@ mod tests {
     }
 
     fn make_task(id: &str, title: &str, completed: bool) -> Task {
-        Task { id: id.to_string(), title: title.to_string(), completed }
+        Task { id: id.to_string(), title: title.to_string(), completed, ..Default::default() }
     }
 
     fn setup_project_md(dir: &std::path::Path, content: &str) {
@@ -467,6 +478,29 @@ mod tests {
         assert!(content.contains("- [ ] M2-T01: 작업1\n"));
         assert!(content.contains("- [x] M2-T02: 작업2\n"));
         assert!(!content.contains("(v"));
+    }
+
+    #[test]
+    fn append_preserves_dependencies() {
+        // M24: project.md mirror 시 (deps: ...)가 보존되어야 conductor가 스케줄링할 수 있다
+        let dir = tempfile::tempdir().unwrap();
+        setup_project_md(dir.path(), "# 프로젝트\n");
+
+        let t2 = Task {
+            id: "M5-T02".to_string(),
+            title: "둘째".to_string(),
+            completed: false,
+            dependencies: vec!["M5-T01".to_string()],
+        };
+        let m = make_milestone(5, "의존성 테스트", None, vec![
+            make_task("M5-T01", "첫째", false),
+            t2,
+        ]);
+        append_milestone_to_project_md(dir.path(), &m).unwrap();
+
+        let content = read_project_md(dir.path());
+        assert!(content.contains("- [ ] M5-T01: 첫째\n"));
+        assert!(content.contains("- [ ] M5-T02: 둘째 (deps: M5-T01)\n"), "deps가 보존되어야 함: {}", content);
     }
 
     #[test]
@@ -589,7 +623,7 @@ mod tests {
 
     #[test]
     fn write_milestone_file_creates_parseable_file() {
-        use crate::milestone::parser::{load_all_milestones, parse_milestone_file};
+        use crate::milestone::parser::parse_milestone_file;
         use crate::session::milestone::{MilestoneOutput, MilestoneTask};
         use crate::session::output::ExitCode as SessionExitCode;
 

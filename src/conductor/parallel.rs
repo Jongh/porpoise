@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use colored::Colorize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::claude::runner::ClaudeRunner;
@@ -20,6 +20,7 @@ use crate::Args;
 use super::brief;
 use super::dispatch::Worktree;
 use super::integrate::{self, MergeOutcome};
+use super::schedule;
 use super::verify::{self, VerifyOutcome};
 
 /// 한 task의 병렬 실행 산출물 (통합 전).
@@ -59,6 +60,7 @@ pub fn run_parallel(
         "{}",
         "  ⚠ 병렬은 독립 task 전제입니다. 의존 task는 충돌 시 재투입으로 직렬화됩니다. (토큰 동시 소모 주의)".dimmed()
     );
+    // 의존성 그래프 검증은 run_conductor에서 이미 수행됨 (순환 거부, dangling 경고).
 
     let dispatch_model = effective_model.filter(|s| !s.is_empty());
     let verifier_model = workspace.conductor_verifier_model();
@@ -75,7 +77,9 @@ pub fn run_parallel(
 
     loop {
         let tasks = parse_tasks_from_project_md(path);
-        let pending: Vec<Task> = tasks.into_iter().filter(|t| !t.completed).collect();
+        let completed_ids: HashSet<String> =
+            tasks.iter().filter(|t| t.completed).map(|t| t.id.clone()).collect();
+        let pending: Vec<Task> = tasks.iter().filter(|t| !t.completed).cloned().collect();
         if pending.is_empty() {
             if !super::handle_all_tasks_done(path, args, config, workspace, effective_model, logger)? {
                 break;
@@ -83,7 +87,16 @@ pub fn run_parallel(
             continue;
         }
 
-        let batch = select_batch(&pending, max_parallel as usize);
+        // M24: 의존성이 모두 충족된 ready task만 배치 대상
+        let ready = schedule::ready_tasks(&pending, &completed_ids);
+        if ready.is_empty() {
+            println!(
+                "{}",
+                "\n⚠ 실행 가능한(의존성 충족) task가 없습니다. 의존성 그래프(deps:)를 확인하세요. 중단합니다.".yellow().bold()
+            );
+            break;
+        }
+        let batch = select_batch(&ready, max_parallel as usize);
         let ids = batch.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(", ");
         println!(
             "{}",
@@ -309,7 +322,7 @@ mod tests {
     use super::*;
 
     fn task(id: &str) -> Task {
-        Task { id: id.to_string(), title: format!("{} 작업", id), completed: false }
+        Task { id: id.to_string(), title: format!("{} 작업", id), completed: false, ..Default::default() }
     }
 
     #[test]

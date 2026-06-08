@@ -15,6 +15,7 @@ pub mod dispatch;
 pub mod git;
 pub mod integrate;
 pub mod parallel;
+pub mod schedule;
 pub mod verify;
 
 use anyhow::{Context, Result};
@@ -99,6 +100,17 @@ pub fn run_conductor(
     let dispatch_model = effective_model.filter(|s| !s.is_empty()).map(str::to_string);
     let dod = workspace.dod_items();
 
+    // M24: 의존성 그래프 검증 (순환 거부, dangling 경고) — 순차·병렬 공통
+    match schedule::validate_dependencies(&parse_tasks_from_project_md(path)) {
+        Ok(warnings) => {
+            for w in &warnings {
+                println!("  {} {}", "⚠".yellow(), w);
+                logger.warn("conductor", w);
+            }
+        }
+        Err(e) => anyhow::bail!("{}", e),
+    }
+
     // M23: max_parallel>1이면 병렬 함대 경로로 위임 (1이면 아래 순차 루프)
     let max_parallel = workspace.conductor_max_parallel();
     if max_parallel > 1 {
@@ -112,14 +124,25 @@ pub fn run_conductor(
 
     loop {
         let tasks = parse_tasks_from_project_md(path);
-        let task = match tasks.iter().find(|t| !t.completed).cloned() {
+        let completed_ids: std::collections::HashSet<String> =
+            tasks.iter().filter(|t| t.completed).map(|t| t.id.clone()).collect();
+        let pending: Vec<_> = tasks.iter().filter(|t| !t.completed).cloned().collect();
+        if pending.is_empty() {
+            // 모든 task 완료 → 마일스톤 생성 세션
+            if !handle_all_tasks_done(path, args, config, workspace, effective_model, logger)? {
+                break;
+            }
+            continue;
+        }
+        // M24: 의존성 충족 순서 — 첫 ready task (의존 위반 방지)
+        let task = match schedule::ready_tasks(&pending, &completed_ids).into_iter().next() {
             Some(t) => t,
             None => {
-                // 모든 task 완료 → 마일스톤 생성 세션
-                if !handle_all_tasks_done(path, args, config, workspace, effective_model, logger)? {
-                    break;
-                }
-                continue;
+                println!(
+                    "{}",
+                    "\n⚠ 실행 가능한(의존성 충족) task가 없습니다. 의존성 그래프(deps:)를 확인하세요.".yellow().bold()
+                );
+                break;
             }
         };
 
