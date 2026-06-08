@@ -6,6 +6,17 @@ AI 기반 소프트웨어 개발 오케스트레이션 도구 — Claude Code �
 
 Porpoise는 마일스톤 단위로 개발 워크플로를 오케스트레이션합니다. 각 단계(Planning · Development · Testing · Review)마다 AI가 구조화된 JSON 세션 리포트를 생성하고, 다음 단계는 이를 컨텍스트로 이어받아 실행됩니다. 사용자 개입을 최소화하면서 반복 사이클을 자동으로 완주합니다.
 
+### 실행 모드
+
+Porpoise는 두 가지 실행 모드를 제공합니다.
+
+| 모드 | 동작 | 상태 |
+|------|------|------|
+| **legacy** (기본) | task당 `Planning → Development → Testing → Review` 4단계를 각각 LLM 호출로 실행하고 JSON 세션으로 이어붙임 | 안정 |
+| **conductor** (opt-in, v0.19.0~) | task를 **실제 코딩 에이전트에게 통째로 위임**하고, **독립 검증자**가 실제 테스트 실행 + 적대적 심사로 게이트 | 실험적 |
+
+**conductor 모드**는 "코딩은 에이전트가, 거버넌스(계획·독립 검증·병합·릴리즈)는 Porpoise가" 담당하는 *worker → manager* 방향 전환의 첫걸음입니다. `Brief → Dispatch(격리 git worktree) → Verify(독립 검증) → Integrate(병합·완료)` 4단계로 동작하며, claude_code 어댑터에서 `[conductor] mode = "conductor"`로 활성화합니다. 종단 간 라이브 검증 전까지 기본값은 legacy입니다.
+
 **지원 어댑터**
 
 | 어댑터 | 설명 | 대표 모델 |
@@ -54,6 +65,9 @@ porpoise --new
 # 기존 프로젝트 재개
 porpoise
 
+# 현재 진행 상황 요약 (마일스톤·태스크·단계·세션 수)
+porpoise status
+
 # 환경 설정 진단 (API 키·CLI·sessions/ 등 한 번에 확인)
 porpoise doctor
 ```
@@ -76,7 +90,11 @@ porpoise --dry-run
 # 상세 출력 (AI 원문·리포트 포함)
 porpoise --verbose
 
+# 현재 진행 상황 요약 (마일스톤·태스크·단계·사이클·세션 파일 수)
+porpoise status
+
 # 환경 진단 (workspace.toml·어댑터·API 키·CLI 설치 등)
+# 실패 항목이 있으면 exit code 1 — CI 헬스체크로 활용 가능
 porpoise doctor
 
 # 수동 판정 파일 생성 (레거시 프로젝트용)
@@ -108,6 +126,17 @@ porpoise clean [--days N] [--dry-run]
 
 중단 후 재실행 시 체크포인트에서 자동 재개됩니다.
 
+### conductor 모드 (opt-in)
+
+`[conductor] mode = "conductor"` (claude_code 어댑터)를 설정하면 위 4단계 phase 호출 대신 task당 다음 흐름으로 동작합니다.
+
+1. **Brief**: project.md · 마일스톤 목표 · DoD · 규약 · 기술 스택을 단일 작업 지시서로 조립
+2. **Dispatch**: 격리된 git worktree(`.porpoise/worktrees/<task>`)에서 실제 코딩 에이전트에게 통째로 위임 — 에이전트가 알아서 계획·코딩·테스트
+3. **Verify**: **독립 검증자**(설정 시 다른 모델)가 `verify_commands`를 실제 실행하고 diff + DoD를 적대적으로 심사하여 **PASS / FAIL** 판정
+4. **Integrate**: PASS면 worktree를 병합하고 task 완료 처리, FAIL이면 검증자 피드백을 덧붙여 **재투입**(`max_redispatch` 한도). 한도 초과 시 사용자 개입 요청
+
+작업을 만든 에이전트가 아닌 *독립 검증자*가 통과를 판정하는 것이 신뢰의 핵심입니다. 병렬 실행·자동 task 분해는 후속 마일스톤에서 다룹니다.
+
 ## Configuration (`workspace.toml`)
 
 초기화 시 `.porpoise/workspace.toml`이 생성됩니다. 주요 설정:
@@ -131,6 +160,11 @@ verify_commands = [
 [sessions]
 # keep_completed_milestone_sessions = false  # true: 완료 세션 파일 보존
 # max_session_age_days = 30                  # 0 = 무제한
+
+[conductor]                    # 지휘자 모드 (claude_code 어댑터 전용)
+# mode = "conductor"           # "legacy" (기본) | "conductor" (에이전트 위임 + 독립 검증)
+# verifier_model = ""          # 검증자 전용 모델 (생략 시 Dispatch와 동일). 독립성 위해 다른 모델 권장
+# max_redispatch = 2           # Verify FAIL 시 재투입 최대 횟수
 ```
 
 ## File structure (generated)
