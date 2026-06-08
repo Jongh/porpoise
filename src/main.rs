@@ -1,4 +1,5 @@
 mod claude;
+mod conductor;
 mod config;
 mod doctor;
 mod init;

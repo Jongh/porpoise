@@ -36,7 +36,23 @@ impl ClaudeRunner {
         model: Option<&str>,
     ) -> Result<String> {
         let prompt = self.build_prompt_from_content(prompt_str, context_files)?;
-        self.execute_claude(&prompt, output_file, model)
+        self.execute_claude(&prompt, output_file, model, None)
+    }
+
+    /// Run claude as a full agentic session inside `working_dir`.
+    ///
+    /// Unlike `run_with_prompt_str`, this sets the child process's current
+    /// directory so the agent reads and writes files relative to an isolated
+    /// worktree. The agent is free to plan, edit, and run tools on its own —
+    /// Porpoise does not constrain it to a single phase. Returns the captured
+    /// stdout (the agent's final narration), not a structured report.
+    pub fn run_agentic(
+        &self,
+        prompt: &str,
+        working_dir: &Path,
+        model: Option<&str>,
+    ) -> Result<String> {
+        self.execute_claude(prompt, None, model, Some(working_dir))
     }
 
     /// Build a Command that correctly invokes the claude binary.
@@ -99,6 +115,7 @@ impl ClaudeRunner {
         prompt: &str,
         output_file: Option<&Path>,
         model: Option<&str>,
+        working_dir: Option<&Path>,
     ) -> Result<String> {
         // On Windows, .cmd/.bat files cannot be spawned directly via CreateProcess.
         // They must be invoked through `cmd.exe /C`.
@@ -106,6 +123,9 @@ impl ClaudeRunner {
         cmd.arg("-p");
         if let Some(m) = model {
             cmd.arg("--model").arg(m);
+        }
+        if let Some(dir) = working_dir {
+            cmd.current_dir(dir);
         }
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());

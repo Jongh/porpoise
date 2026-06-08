@@ -18,6 +18,10 @@ pub struct Checkpoint {
     pub retry_count: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prev_reasons: Vec<String>,
+    /// 지휘자(conductor) 루프의 현재 단계: "brief" | "dispatch" | "verify" | "integrate".
+    /// 레거시 phase 경로에서는 None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conductor_phase: Option<String>,
 }
 
 impl Checkpoint {
@@ -41,7 +45,14 @@ impl Checkpoint {
             current_task_id: current_task_id.to_string(),
             retry_count,
             prev_reasons,
+            conductor_phase: None,
         }
+    }
+
+    /// 지휘자 단계를 표시한 사본을 반환한다.
+    pub fn with_conductor_phase(mut self, phase: &str) -> Self {
+        self.conductor_phase = Some(phase.to_string());
+        self
     }
 }
 
@@ -174,6 +185,7 @@ pub(crate) fn parse_checkpoint(content: &str) -> Result<Checkpoint> {
         current_task_id,
         retry_count,
         prev_reasons,
+        conductor_phase: None,
     })
 }
 

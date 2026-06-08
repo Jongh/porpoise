@@ -162,6 +162,21 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
     }
 
     if crate::session::is_new_format(path) {
+        // 지휘자(conductor) 경로: claude_code 어댑터 + conductor 모드일 때만.
+        // API 어댑터(anthropic_api/openai_compatible)는 에이전틱 위임이 불가하므로 항상 legacy.
+        let use_conductor = workspace.conductor_enabled()
+            && workspace.model_adapter_type() == crate::model::adapter::AdapterType::ClaudeCode;
+        if use_conductor {
+            return crate::conductor::run_conductor(
+                path,
+                args,
+                config,
+                &workspace,
+                &state,
+                effective_model.as_deref(),
+                &logger,
+            );
+        }
         return new_format::run_new_format(
             path,
             args,

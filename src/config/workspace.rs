@@ -77,6 +77,19 @@ pub struct WorkspaceSessions {
     pub max_session_age_days: Option<u32>,
 }
 
+/// `[conductor]` — 에이전트 함대 지휘자 루프 설정 (M10+).
+/// task 하나를 실제 코딩 에이전트에게 통째로 위임(Dispatch)하고
+/// 독립 검증자(Verify)가 PASS/FAIL을 판정하는 신규 실행 경로를 제어한다.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceConductor {
+    /// "conductor" (기본) | "legacy" — legacy는 기존 4단계 phase 오케스트레이션 사용
+    pub mode: Option<String>,
+    /// 검증자 모델 ID (생략 시 Dispatch와 동일 모델). 독립 검증을 위해 다른 모델 권장.
+    pub verifier_model: Option<String>,
+    /// Verify FAIL 시 재투입(re-dispatch) 최대 횟수 (기본값: 2)
+    pub max_redispatch: Option<u32>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     pub general: Option<WorkspaceGeneral>,
@@ -88,6 +101,7 @@ pub struct WorkspaceConfig {
     pub tech: Option<WorkspaceTech>,
     pub security: Option<WorkspaceSecurity>,
     pub sessions: Option<WorkspaceSessions>,
+    pub conductor: Option<WorkspaceConductor>,
 }
 
 impl WorkspaceConfig {
@@ -370,7 +384,42 @@ reviewer_extra = ""
 # [sessions]
 # keep_completed_milestone_sessions = false  # true: 완료된 마일스톤 세션 파일 보존
 # max_session_age_days = 30                  # 0 = 무제한 보존
+
+# === 지휘자(conductor) 루프 설정 (claude_code 어댑터 전용) ===
+# task 하나를 실제 코딩 에이전트에게 통째로 위임하고 독립 검증자가 PASS/FAIL을 판정합니다.
+# v0.19.0 기준 기본값은 legacy(기존 4단계 phase 방식)이며, conductor는 명시적 opt-in입니다.
+# [conductor]
+# mode = "conductor"          # "legacy" (기본) | "conductor" (지휘자 루프 활성화)
+# verifier_model = ""         # 검증자 전용 모델 (생략 시 Dispatch와 동일). 독립성을 위해 다른 모델 권장
+# max_redispatch = 2          # Verify FAIL 시 재투입 최대 횟수
 "#
+    }
+
+    /// conductor 모드 활성화 여부. v0.19.0에서는 **명시적 opt-in** — `[conductor].mode`가
+    /// "conductor"로 설정된 경우에만 true (기본값: legacy). 종단 간 라이브 검증이 끝나면
+    /// 향후 버전에서 기본 활성화로 승격 예정. 실제 진입은 claude_code 어댑터일 때만.
+    pub fn conductor_enabled(&self) -> bool {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.mode.as_deref())
+            .map(|m| m.eq_ignore_ascii_case("conductor"))
+            .unwrap_or(false)
+    }
+
+    /// Verify FAIL 시 재투입 최대 횟수 (기본값: 2).
+    pub fn conductor_max_redispatch(&self) -> u32 {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.max_redispatch)
+            .unwrap_or(2)
+    }
+
+    /// 검증자 전용 모델 ID. 생략 시 None (Dispatch와 동일 모델 사용).
+    pub fn conductor_verifier_model(&self) -> Option<&str> {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.verifier_model.as_deref())
+            .filter(|s| !s.is_empty())
     }
 
     pub fn session_keep_completed(&self) -> bool {
@@ -728,6 +777,55 @@ verify_timeout_secs = 30
         };
         let cmds = cfg.default_verify_commands();
         assert_eq!(cmds[0].command, "cargo");
+    }
+
+    #[test]
+    fn conductor_disabled_by_default() {
+        // v0.19.0: 기본 legacy — 명시적 opt-in 전까지 비활성
+        let cfg = WorkspaceConfig::default();
+        assert!(!cfg.conductor_enabled());
+        assert_eq!(cfg.conductor_max_redispatch(), 2);
+        assert!(cfg.conductor_verifier_model().is_none());
+    }
+
+    #[test]
+    fn conductor_legacy_mode_disables() {
+        let toml = "[conductor]\nmode = \"legacy\"\n";
+        let cfg: WorkspaceConfig = toml::from_str(toml).unwrap();
+        assert!(!cfg.conductor_enabled());
+    }
+
+    #[test]
+    fn conductor_mode_case_insensitive() {
+        // "CONDUCTOR" (대문자)도 활성, "LEGACY"는 비활성
+        let cfg_on: WorkspaceConfig = toml::from_str("[conductor]\nmode = \"CONDUCTOR\"\n").unwrap();
+        assert!(cfg_on.conductor_enabled());
+        let cfg_off: WorkspaceConfig = toml::from_str("[conductor]\nmode = \"LEGACY\"\n").unwrap();
+        assert!(!cfg_off.conductor_enabled());
+    }
+
+    #[test]
+    fn conductor_explicit_conductor_mode_enabled() {
+        let toml = "[conductor]\nmode = \"conductor\"\nmax_redispatch = 5\nverifier_model = \"claude-opus-4-8\"\n";
+        let cfg: WorkspaceConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.conductor_enabled());
+        assert_eq!(cfg.conductor_max_redispatch(), 5);
+        assert_eq!(cfg.conductor_verifier_model(), Some("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn conductor_empty_verifier_model_is_none() {
+        let toml = "[conductor]\nverifier_model = \"\"\n";
+        let cfg: WorkspaceConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.conductor_verifier_model().is_none());
+    }
+
+    #[test]
+    fn default_toml_includes_conductor_docs() {
+        let cfg: WorkspaceConfig = toml::from_str(WorkspaceConfig::default_toml()).unwrap();
+        // 주석 처리된 [conductor]이므로 파싱 후 기본값(legacy = 비활성)이어야 함
+        assert!(!cfg.conductor_enabled());
+        assert!(WorkspaceConfig::default_toml().contains("[conductor]"));
     }
 
     #[test]

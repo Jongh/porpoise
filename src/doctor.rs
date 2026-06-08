@@ -217,6 +217,47 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
         });
     }
 
+    // 6.5 지휘자(conductor) 모드 진단 (claude_code 어댑터 한정)
+    if adapter_type == AdapterType::ClaudeCode {
+        let enabled = workspace.conductor_enabled();
+        if enabled {
+            // conductor는 git worktree가 필요
+            if crate::conductor::git::is_git_repo(project_path) {
+                let verifier = workspace
+                    .conductor_verifier_model()
+                    .unwrap_or("(Dispatch와 동일)");
+                results.push(CheckResult {
+                    label: "conductor".to_string(),
+                    ok: true,
+                    message: format!(
+                        "활성 (재투입 한도: {}, 검증자: {})",
+                        workspace.conductor_max_redispatch(),
+                        verifier
+                    ),
+                    hint: None,
+                });
+            } else {
+                results.push(CheckResult {
+                    label: "conductor".to_string(),
+                    ok: false,
+                    message: "활성이지만 git 저장소가 아님".to_string(),
+                    hint: Some(
+                        "'git init'으로 저장소를 초기화하거나 workspace.toml에 \
+                         [conductor] mode = \"legacy\"를 설정하세요."
+                            .to_string(),
+                    ),
+                });
+            }
+        } else {
+            results.push(CheckResult {
+                label: "conductor".to_string(),
+                ok: true,
+                message: "legacy 모드 (기본) — 활성화: [conductor] mode = \"conductor\"".to_string(),
+                hint: None,
+            });
+        }
+    }
+
     // 7. 최근 마일스톤 파일
     let milestones_dir = project_path.join(".porpoise").join("milestones");
     match std::fs::read_dir(&milestones_dir) {

@@ -189,6 +189,12 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.19.0]
+- **지휘자(conductor) 루프 신설 (M10)**: AI worker→manager 전환의 첫 단계 — task 하나를 `Brief → Dispatch → Verify → Integrate` 4단계로 처리. 실제 코딩 에이전트에게 격리 git worktree에서 통째로 위임하고, 독립 검증자가 실제 테스트 실행 + 적대적 심사로 PASS/FAIL을 판정, PASS 시 병합·완료, FAIL 시 피드백 재투입(한도 내) — 기존 4단계 phase 호출을 단일 에이전틱 위임이 대체
+- **`[conductor]` 설정**: `mode`(기본 `legacy`, opt-in `conductor`)·`verifier_model`·`max_redispatch`(기본 2) — claude_code 어댑터 전용. 기본은 legacy로 기존 동작 100% 보존, conductor는 명시적 opt-in
+- **`src/conductor/` 모듈 신설**: brief·dispatch·verify·integrate·git 헬퍼. `ClaudeRunner::run_agentic`(작업 디렉토리 지정 풀 에이전틱 실행), checkpoint `conductor_phase` 필드, `porpoise doctor` conductor 진단 추가
+- **테스트**: 252개 (215 → 252, +37개)
+
 ### [v0.18.0]
 - **`AnthropicApiAdapter` `api_key_env` 준수**: `workspace.toml`의 `api_key_env` 설정이 `anthropic_api` 어댑터에서 무시되던 버그 수정 — 어댑터 생성 시 설정된 환경변수 이름을 실제로 사용, `ANTHROPIC_API_KEY` 하드코딩 제거
 - **`is_likely_api_key()` 정밀도 개선**: 소문자 포함 문자열 전체를 "API 키"로 오진단하던 로직 제거 — `AIzaSy`, `sk-`, `gsk_`, `xai-`, `claude-` 접두사 기반으로 감지 범위 축소
