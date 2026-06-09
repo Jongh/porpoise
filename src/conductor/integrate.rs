@@ -189,6 +189,30 @@ mod tests {
     }
 
     #[test]
+    fn finalize_succeeds_when_agent_already_committed() {
+        // M26 회귀: 에이전트가 worktree 안에서 이미 커밋한 경우에도 finalize가 성공하고
+        // 병합되어야 한다. (commit()이 clean 트리에서 "nothing to commit"으로 bail하면 이 테스트가 잡음)
+        let tmp = init_repo();
+        let root = tmp.path();
+
+        let wt = Worktree::create(root, "M26-T09").expect("worktree 생성");
+        let branch = wt.branch.clone();
+        std::fs::write(wt.path.join("agent.txt"), "agent committed\n").unwrap();
+        // 에이전트가 직접 커밋 → 작업트리 clean
+        wt.commit("[M26-T09] 에이전트 커밋").expect("에이전트 커밋");
+
+        // finalize의 commit 단계는 새로 커밋할 게 없지만 에러 없이 진행되고 병합돼야 함
+        finalize(&wt, root, "[M26-T09] 통합 커밋").expect("finalize는 성공해야 함");
+
+        assert!(root.join("agent.txt").exists(), "에이전트 커밋 내용이 main에 병합되어야 함");
+        let log = run_git(root, &["log", "-1", "--pretty=%s"]).stdout;
+        assert!(log.contains("M26-T09"), "main에 task 커밋이 반영되어야 함: {}", log);
+
+        wt.remove();
+        assert!(run_git(root, &["branch", "--list", &branch]).stdout.trim().is_empty());
+    }
+
+    #[test]
     fn try_merge_clean_then_conflict() {
         // 병렬 함대 충돌 인지: 같은 파일을 다르게 건드린 두 브랜치를 순차 병합 →
         // 첫 번째 Merged, 두 번째 Conflicted(abort됨).

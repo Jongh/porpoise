@@ -17,6 +17,9 @@ pub struct Worktree {
     pub repo_root: PathBuf,
     pub path: PathBuf,
     pub branch: String,
+    /// worktree가 분기한 base 커밋 SHA. diff를 현재 HEAD가 아니라 이 base 기준으로
+    /// 계산하여, 에이전트가 worktree 안에서 커밋해도 변경을 포착한다 (M26).
+    pub base_commit: String,
 }
 
 impl Worktree {
@@ -45,23 +48,45 @@ impl Worktree {
             anyhow::bail!("git worktree 생성 실패: {}", out.stderr.trim());
         }
 
+        // 분기 직후이므로 worktree HEAD == base. 이 SHA를 고정해 두면 이후 에이전트가
+        // 커밋해 HEAD가 움직여도 capture_diff가 원래 base 대비로 변경을 포착한다.
+        let base_commit = run_git(&path, &["rev-parse", "HEAD"]).stdout.trim().to_string();
+
         Ok(Worktree {
             repo_root: repo_root.to_path_buf(),
             path,
             branch,
+            base_commit,
         })
     }
 
-    /// worktree 안의 모든 변경(미추적 포함)을 스테이징한 뒤 diff를 반환한다.
+    /// worktree 안의 모든 변경(미추적 포함)을 스테이징한 뒤, **분기 base 대비** diff를 반환한다.
     /// 변경이 없으면 빈 문자열.
+    ///
+    /// diff를 현재 HEAD가 아니라 `base_commit` 기준으로 계산하는 것이 핵심이다(M26):
+    /// 에이전트가 worktree 안에서 커밋하면 HEAD가 이동해 `git diff --cached`(index vs HEAD)는
+    /// 비게 되지만, base 대비로는 커밋된 변경이 그대로 포착된다. base가 비어 있으면(예외적)
+    /// 기존 동작(index vs HEAD)으로 폴백한다.
     pub fn capture_diff(&self) -> String {
         run_git(&self.path, &["add", "-A"]);
-        run_git(&self.path, &["diff", "--cached"]).stdout
+        if self.base_commit.is_empty() {
+            run_git(&self.path, &["diff", "--cached"]).stdout
+        } else {
+            run_git(&self.path, &["diff", "--cached", &self.base_commit]).stdout
+        }
     }
 
     /// worktree의 변경을 task 브랜치에 커밋한다 (스테이징 후).
+    ///
+    /// 에이전트가 worktree 안에서 **이미 커밋**해 스테이징할 변경이 없으면 커밋을 건너뛴다(M26):
+    /// 그 커밋은 이미 task 브랜치에 있으므로 후속 병합이 그대로 가져온다. 이 가드가 없으면
+    /// clean 작업트리에서 `git commit`이 "nothing to commit"으로 실패해 통합이 깨진다.
     pub fn commit(&self, message: &str) -> Result<()> {
         run_git(&self.path, &["add", "-A"]);
+        // `git diff --cached --quiet`: 스테이징된 변경이 없으면 exit 0(success).
+        if run_git(&self.path, &["diff", "--cached", "--quiet"]).success {
+            return Ok(()); // 새로 커밋할 것 없음 — 에이전트 커밋이 이미 브랜치에 존재
+        }
         let out = run_git(&self.path, &["commit", "-m", message]);
         if !out.success {
             anyhow::bail!("worktree 커밋 실패: {}", out.stderr.trim());
@@ -174,6 +199,40 @@ mod tests {
         // 브랜치가 제거되었는지 확인
         let branches = run_git(root, &["branch", "--list", &branch]).stdout;
         assert!(branches.trim().is_empty(), "브랜치가 정리되어야 함: {:?}", branches);
+    }
+
+    #[test]
+    fn capture_diff_sees_committed_work() {
+        // M26 회귀: 에이전트가 worktree 안에서 커밋해도 변경이 포착되어야 한다.
+        // (과거엔 git diff --cached가 현재 HEAD 기준이라 커밋 후 빈 diff → 정상 작업이 폐기됨)
+        let tmp = init_repo();
+        let root = tmp.path();
+
+        let wt = Worktree::create(root, "M26-T01").expect("worktree 생성");
+        assert!(!wt.base_commit.is_empty(), "base 커밋 SHA가 기록되어야 함");
+
+        // 에이전트가 파일을 만들고 worktree 안에서 커밋한다.
+        std::fs::write(wt.path.join("b.rs"), "fn sub(a:i64,b:i64)->i64{a-b}\n").unwrap();
+        wt.commit("[M26-T01] add b.rs").expect("커밋");
+
+        // 작업트리는 clean이지만 base 대비로는 변경이 보여야 한다.
+        let diff = wt.capture_diff();
+        assert!(
+            diff.contains("b.rs"),
+            "커밋된 변경이 base 대비 diff에 포착되어야 함: {:?}",
+            diff
+        );
+        assert!(diff.contains("sub"));
+        wt.remove();
+    }
+
+    #[test]
+    fn capture_diff_empty_when_no_work() {
+        // 변경이 전혀 없으면 여전히 빈 diff (빈-diff 가드가 정상 동작하도록 유지).
+        let tmp = init_repo();
+        let wt = Worktree::create(tmp.path(), "M26-T02").expect("worktree 생성");
+        assert!(wt.capture_diff().trim().is_empty(), "변경 없으면 빈 diff여야 함");
+        wt.remove();
     }
 
     #[test]

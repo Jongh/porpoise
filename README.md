@@ -223,6 +223,13 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.25.1]
+- **변경 감지 버그 수정 (M26)**: 에이전트가 격리 worktree 안에서 **자기 작업을 커밋하면** conductor가 빈 diff로 인식해 정상 작업을 "변경 없음"으로 폐기·halt 하던 비결정적 신뢰성 버그를 수정. `capture_diff`를 현재 HEAD가 아니라 **worktree 분기 base 커밋 기준**(`git diff --cached <base>`)으로 계산하여 커밋 여부와 무관하게 변경을 포착
+- **통합 단계 보강**: 위 수정으로 에이전트-커밋 task가 PASS→통합에 진입하게 되면서, clean 작업트리에서 `git commit`이 "nothing to commit"으로 실패하던 2차 결함도 수정 — 스테이징 변경이 없으면 커밋을 건너뛰고 이미 브랜치에 있는 에이전트 커밋을 병합
+- **검증**: 커밋 시나리오 회귀 테스트 3개 추가, 순수 git 레벨 재현 하니스(`scripts/conductor-commit-detect-validate.ps1`)로 OLD(HEAD 기준)=빈 값 / NEW(base 기준)=포착 대조 증명. 문서 `docs/conductor-change-detection.md`
+- M25 라이브 검증(report-live)에서 M1-T02가 3회 FAIL→halt 되며 드러난 버그
+- **테스트**: 313개 (310 → 313, +3개)
+
 ### [v0.25.0]
 - **함대 실행 리포트 — `porpoise report` (M25)**: conductor가 매 라운드 `sessions/`에 쓰기만 하고 아무도 읽지 않던 감사 기록(conductor-3)을 **마일스톤 실행 요약**으로 집계·가시화. 태스크별 verdict·시도·재투입·폴백 + 마일스톤 롤업(성공률·재투입 합계·폴백 비율)
 - **`--milestone N` / `--markdown` / `--out`**: 특정 마일스톤 한정, Markdown 리포트 내보내기(`.porpoise/reports/run-M{N}.md`로 축적 — 릴리즈 노트·회고 근거). `--out` 지정 시 자동 내보내기
