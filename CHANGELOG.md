@@ -4,6 +4,13 @@
 
 ---
 
+### [v0.25.2]
+- **`porpoise report` 집계 버그 수정 (M27)**: 같은 task를 **재실행하면** 이전 run의 오래된(stale) 레코드가 `sessions/`에 함께 쌓여, 기존 "최종 라운드 = max redispatch(동률 시 timestamp)" 기준이 **stale FAIL(R2)을 fresh PASS(R0)보다 우선**시해 최종 verdict를 오판하고 `attempts`/`재투입`도 부풀리던 버그를 수정
+- **최신 run 기준 집계**: `aggregate`를 timestamp 정렬 후 **마지막 `R0`(redispatch==0 = run 시작)부터 끝까지를 최신 run**으로 보고, 그 run만 집계하도록 변경. `verdict`·`시도`·`재투입`·`fallback`이 가장 최근 실행만 반영. R0가 없으면(세션 정리 등) 전체를 한 run으로 폴백
+- **검증**: 회귀 테스트 3개 추가 — 재실행(이전 FAIL×3 + 이번 PASS → final PASS·시도1·재투입0), 최신 run 다중 라운드 보존, `read_dir` 비정렬 입력에서도 정렬로 올바른 run 선택. 라이브 재확인: **동일 sessions**(stale FAIL 포함)에서 report가 M1-T02를 ❌ FAIL→✅ PASS, 롤업 PASS 2/2(100%)로 정정
+- **발견 경위**: M26 검증(report-live 재구동)에서 PASS·MERGED된 task가 report엔 FAIL로 표시되며 드러난 순수 집계 버그(conductor 동작은 정상). 런북에 재실행-인지 집계 규칙 명시
+- **테스트**: 316개 (313 → 316, +3개)
+
 ### [v0.25.1]
 - **변경 감지 버그 수정 (M26)**: 에이전트가 격리 worktree 안에서 **자기 작업을 커밋하면** conductor가 빈 diff로 인식해 정상 작업을 "변경 없음"으로 폐기·halt 하던 비결정적 신뢰성 버그를 수정. `Worktree`가 분기 시점 base 커밋 SHA를 기록하고, `capture_diff`를 `git diff --cached <base>`로 계산하여 커밋·미커밋·미추적 변경을 **모두 base 대비로 포착**(커밋 여부 무관)
 - **통합 단계 2차 결함 수정**: 위 수정으로 에이전트-커밋 task가 PASS→통합에 진입하면서 드러난, clean 작업트리에서 `git commit`이 "nothing to commit"으로 실패하던 문제도 해결 — `commit()`이 스테이징 변경 없음을 감지하면 커밋을 건너뛰고(에이전트 커밋은 이미 브랜치에 존재) 병합이 가져가도록 함. 빈-diff 가드는 유지(진짜 작업 없음은 여전히 FAIL)

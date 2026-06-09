@@ -40,7 +40,11 @@ porpoise report --milestone 25 --markdown --out docs/run-M25.md
 ## 집계 규칙 (요약)
 
 - `sessions/<task>-conductor-<ts>-R<n>.json`만 대상. 비대상 파일은 조용히 무시하고, **손상된 대상 파일만** 스킵 후 건수로 표시.
-- 태스크별로 모든 라운드를 모아 **최종 라운드의 verdict**를 결과로, **어느 라운드든 폴백**이면 폴백으로 집계.
+- **재실행-인지 집계(M27)**: 같은 task를 다시 실행하면 이전 run의 레코드가 섞인다. timestamp 순으로
+  정렬한 뒤 **마지막 `R0`(redispatch==0 = run 시작)부터 끝까지를 "최신 run"**으로 보고, 그 run만
+  집계한다. 따라서 `verdict`·`시도`·`재투입`은 **가장 최근 실행 결과**만 반영한다(이전 run의 stale
+  FAIL이 최종을 오판하지 않음).
+- 최신 run 안에서 **최종 라운드(최신 timestamp)의 verdict**를 결과로, **그 run의 어느 라운드든 폴백**이면 폴백으로 집계.
 - `--milestone` 미지정 시 기록 중 **가장 최근 마일스톤**으로 한정.
 
 ## 라이브 검증

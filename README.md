@@ -223,6 +223,12 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.25.2]
+- **`porpoise report` 집계 버그 수정 (M27)**: 같은 task를 **재실행하면** 이전 run의 오래된(stale) 레코드가 `sessions/`에 섞여, "최종 라운드 = max redispatch" 기준이 stale FAIL(R2)을 fresh PASS(R0)보다 우선시해 **최종 verdict를 오판**하던 버그를 수정. `aggregate`를 **최신 run 기준**(timestamp 정렬 후 마지막 R0~끝)으로 바꿔 `verdict`·`시도`·`재투입`이 가장 최근 실행만 반영
+- **검증**: 회귀 테스트 3개 추가(재실행·다중라운드·정렬 불변식), 동일 sessions에서 report가 M1-T02를 stale FAIL→**정확한 PASS**로 표시함을 라이브 재확인
+- M26 검증(report-live 재구동)에서 PASS·MERGED된 task가 report엔 FAIL로 뜨며 드러난 버그
+- **테스트**: 316개 (313 → 316, +3개)
+
 ### [v0.25.1]
 - **변경 감지 버그 수정 (M26)**: 에이전트가 격리 worktree 안에서 **자기 작업을 커밋하면** conductor가 빈 diff로 인식해 정상 작업을 "변경 없음"으로 폐기·halt 하던 비결정적 신뢰성 버그를 수정. `capture_diff`를 현재 HEAD가 아니라 **worktree 분기 base 커밋 기준**(`git diff --cached <base>`)으로 계산하여 커밋 여부와 무관하게 변경을 포착
 - **통합 단계 보강**: 위 수정으로 에이전트-커밋 task가 PASS→통합에 진입하게 되면서, clean 작업트리에서 `git commit`이 "nothing to commit"으로 실패하던 2차 결함도 수정 — 스테이징 변경이 없으면 커밋을 건너뛰고 이미 브랜치에 있는 에이전트 커밋을 병합

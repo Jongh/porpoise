@@ -117,24 +117,24 @@ pub fn aggregate(records: &[AuditRecord]) -> Vec<TaskRunSummary> {
     }
 
     let mut out = Vec::new();
-    for (task_id, recs) in by_task {
-        // 최종 라운드: redispatch 최대, 동률이면 timestamp 최대.
-        let final_rec = recs
-            .iter()
-            .max_by(|a, b| {
-                a.redispatch
-                    .cmp(&b.redispatch)
-                    .then_with(|| a.timestamp.cmp(&b.timestamp))
-            })
-            .expect("by_task 그룹은 비어 있지 않음");
-        let fallback_used = recs.iter().any(|r| r.fallback_used);
-        let max_redispatch = recs.iter().map(|r| r.redispatch).max().unwrap_or(0);
+    for (task_id, mut recs) in by_task {
+        // 재실행-인지 집계(M27): 같은 task를 다시 실행하면 이전 run의 stale 레코드가 섞인다.
+        // timestamp 순으로 정렬한 뒤, 마지막 redispatch==0(각 dispatch는 R0에서 시작 = run 경계)
+        // 부터 끝까지를 "최신 run"으로 보고 그 run만 집계한다. R0가 없으면 전체를 한 run으로 폴백.
+        recs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        let start = recs.iter().rposition(|r| r.redispatch == 0).unwrap_or(0);
+        let latest_run = &recs[start..];
+
+        // 최신 run의 마지막(최신 timestamp) 레코드가 최종 결과.
+        let final_rec = latest_run.last().expect("by_task 그룹은 비어 있지 않음");
+        let fallback_used = latest_run.iter().any(|r| r.fallback_used);
+        let max_redispatch = latest_run.iter().map(|r| r.redispatch).max().unwrap_or(0);
         let verify_all_passed = !final_rec.verify_commands.is_empty()
             && final_rec.verify_commands.iter().all(|c| c.exit_code == 0);
 
         out.push(TaskRunSummary {
             task_id,
-            attempts: recs.len() as u32,
+            attempts: latest_run.len() as u32,
             max_redispatch,
             final_verdict: final_rec.passed(),
             fallback_used,
@@ -425,6 +425,55 @@ mod tests {
         assert_eq!(out[0].attempts, 2);
         assert_eq!(out[0].max_redispatch, 1);
         assert!(out[0].final_verdict, "최종 라운드(R1) PASS여야 함");
+    }
+
+    #[test]
+    fn aggregate_uses_latest_run_on_rerun() {
+        // M27 회귀: 이전 run(R0/R1/R2 FAIL) + 이번 run(R0 PASS)이 섞이면,
+        // 최신 run만 반영해 final=PASS, attempts=1, 재투입=0 이어야 한다.
+        let recs = vec![
+            rec("M1-T02", 0, "2026-06-09T13:19:00Z", "FAIL", false),
+            rec("M1-T02", 1, "2026-06-09T13:20:00Z", "FAIL", false),
+            rec("M1-T02", 2, "2026-06-09T13:22:00Z", "FAIL", false),
+            rec("M1-T02", 0, "2026-06-09T13:40:00Z", "PASS", false), // 이번 run
+        ];
+        let out = aggregate(&recs);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].final_verdict, "최신 run의 PASS가 최종이어야 함");
+        assert_eq!(out[0].attempts, 1, "최신 run만 카운트");
+        assert_eq!(out[0].max_redispatch, 0, "최신 run은 R0뿐");
+    }
+
+    #[test]
+    fn aggregate_latest_run_can_be_multiround() {
+        // 최신 run이 다중 라운드면(R0 FAIL → R1 PASS) 그 run 전체를 집계한다.
+        let recs = vec![
+            rec("M1-T01", 0, "2026-06-09T10:00:00Z", "PASS", false), // 이전 run
+            rec("M1-T01", 0, "2026-06-09T11:00:00Z", "FAIL", false), // 이번 run R0
+            rec("M1-T01", 1, "2026-06-09T11:05:00Z", "PASS", false), // 이번 run R1
+        ];
+        let out = aggregate(&recs);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].final_verdict, "이번 run 최종(R1) PASS");
+        assert_eq!(out[0].attempts, 2, "이번 run의 두 라운드");
+        assert_eq!(out[0].max_redispatch, 1);
+    }
+
+    #[test]
+    fn aggregate_sorts_unordered_input() {
+        // load_records는 read_dir 순서(정렬 미보장)로 읽으므로 aggregate의 timestamp 정렬이
+        // load-bearing이다. 입력이 시각 역순이어도 최신 run(이번 R0 PASS)을 골라야 한다.
+        let recs = vec![
+            rec("M1-T02", 0, "2026-06-09T13:40:00Z", "PASS", false), // 이번 run (가장 최신)
+            rec("M1-T02", 2, "2026-06-09T13:22:00Z", "FAIL", false), // 이전 run
+            rec("M1-T02", 0, "2026-06-09T13:19:00Z", "FAIL", false), // 이전 run
+            rec("M1-T02", 1, "2026-06-09T13:20:00Z", "FAIL", false), // 이전 run
+        ];
+        let out = aggregate(&recs);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].final_verdict, "정렬 후 최신 run의 PASS가 최종이어야 함");
+        assert_eq!(out[0].attempts, 1);
+        assert_eq!(out[0].max_redispatch, 0);
     }
 
     #[test]
