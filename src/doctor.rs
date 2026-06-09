@@ -230,15 +230,21 @@ fn collect_checks(project_path: &Path) -> Vec<CheckResult> {
                 } else {
                     String::new()
                 };
+                // M28: 예산 상한 설정 시 표시
+                let budget_str = workspace
+                    .conductor_budget_usd()
+                    .map(|b| format!(", 예산: ${:.4}", b))
+                    .unwrap_or_default();
                 results.push(CheckResult {
                     label: "conductor".to_string(),
                     ok: true,
                     message: format!(
-                        "활성 ({}, 재투입 한도: {}, 검증자: {}{})",
+                        "활성 ({}, 재투입 한도: {}, 검증자: {}{}{})",
                         basis,
                         workspace.conductor_max_redispatch(),
                         verifier,
-                        par_str
+                        par_str,
+                        budget_str
                     ),
                     hint: None,
                 });

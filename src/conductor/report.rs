@@ -28,6 +28,13 @@ pub struct AuditRecord {
     pub diff_lines: u64,
     #[serde(default)]
     pub verify_commands: Vec<VerifyCommandRec>,
+    // M28: 비용·토큰 (conductor-4). 구 기록(conductor-3)엔 없으므로 default None.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
 }
 
 /// 감사 기록의 verify 명령 결과 (집계엔 exit_code만 필요 — 나머지 키는 serde가 무시).
@@ -62,6 +69,11 @@ pub struct TaskRunSummary {
     pub last_timestamp: String,
     /// 최종 라운드의 verify 명령이 (1개 이상 있고) 모두 exit 0이면 true.
     pub verify_all_passed: bool,
+    /// M28: 최신 run의 누적 비용(USD). 비용 미가용이면 None.
+    pub cost_usd: Option<f64>,
+    /// M28: 최신 run의 누적 입력/출력 토큰. 미가용이면 None.
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
 }
 
 /// 한 마일스톤(또는 전체)의 실행 롤업.
@@ -97,6 +109,17 @@ impl MilestoneRunReport {
     pub fn fallback_count(&self) -> usize {
         self.tasks.iter().filter(|t| t.fallback_used).count()
     }
+    /// M28: 마일스톤 총비용(USD). 비용이 하나도 없으면 None.
+    pub fn total_cost(&self) -> Option<f64> {
+        sum_opt_f64(self.tasks.iter().map(|t| t.cost_usd))
+    }
+    /// M28: 총 입력/출력 토큰.
+    pub fn total_input_tokens(&self) -> Option<u64> {
+        sum_opt_u64(self.tasks.iter().map(|t| t.input_tokens))
+    }
+    pub fn total_output_tokens(&self) -> Option<u64> {
+        sum_opt_u64(self.tasks.iter().map(|t| t.output_tokens))
+    }
 }
 
 /// task_id("M25-T01")에서 마일스톤 번호(25)를 추출.
@@ -104,6 +127,26 @@ pub fn milestone_of(task_id: &str) -> Option<u32> {
     let rest = task_id.strip_prefix('M')?;
     let dash = rest.find('-')?;
     rest[..dash].parse().ok()
+}
+
+/// Option<f64> 이터레이터를 합산한다. 값이 하나도 없으면 None(미가용), 있으면 Some(합).
+fn sum_opt_f64(it: impl Iterator<Item = Option<f64>>) -> Option<f64> {
+    let vals: Vec<f64> = it.flatten().collect();
+    if vals.is_empty() {
+        None
+    } else {
+        Some(vals.iter().sum())
+    }
+}
+
+/// Option<u64> 이터레이터를 합산한다 (값이 없으면 None).
+fn sum_opt_u64(it: impl Iterator<Item = Option<u64>>) -> Option<u64> {
+    let vals: Vec<u64> = it.flatten().collect();
+    if vals.is_empty() {
+        None
+    } else {
+        Some(vals.iter().sum())
+    }
 }
 
 /// 레코드 목록을 태스크별 요약으로 집계한다 (순수 함수, task_id 사전순 정렬).
@@ -131,6 +174,10 @@ pub fn aggregate(records: &[AuditRecord]) -> Vec<TaskRunSummary> {
         let max_redispatch = latest_run.iter().map(|r| r.redispatch).max().unwrap_or(0);
         let verify_all_passed = !final_rec.verify_commands.is_empty()
             && final_rec.verify_commands.iter().all(|c| c.exit_code == 0);
+        // M28: 최신 run의 비용·토큰 합산 (전부 None이면 None)
+        let cost_usd = sum_opt_f64(latest_run.iter().map(|r| r.cost_usd));
+        let input_tokens = sum_opt_u64(latest_run.iter().map(|r| r.input_tokens));
+        let output_tokens = sum_opt_u64(latest_run.iter().map(|r| r.output_tokens));
 
         out.push(TaskRunSummary {
             task_id,
@@ -141,6 +188,9 @@ pub fn aggregate(records: &[AuditRecord]) -> Vec<TaskRunSummary> {
             final_diff_lines: final_rec.diff_lines,
             last_timestamp: final_rec.timestamp.clone(),
             verify_all_passed,
+            cost_usd,
+            input_tokens,
+            output_tokens,
         });
     }
     out
@@ -250,12 +300,23 @@ pub fn render_console(report: &MilestoneRunReport) {
         report.total_redispatches(),
         report.fallback_count()
     );
+    // M28: 비용·토큰 (가용 시)
+    if let Some(cost) = report.total_cost() {
+        let tok = match (report.total_input_tokens(), report.total_output_tokens()) {
+            (Some(i), Some(o)) => format!(" · 토큰 in {} / out {}", i, o),
+            _ => String::new(),
+        };
+        println!("총비용 {}{}", format!("${:.4}", cost).bold(), tok);
+    }
     println!("{}", sep);
 
     for t in &report.tasks {
         let mut detail = format!("시도 {} · 재투입 {}", t.attempts, t.max_redispatch);
         if t.fallback_used {
             detail = format!("{} · 폴백", detail);
+        }
+        if let Some(c) = t.cost_usd {
+            detail = format!("{} · ${:.4}", detail, c);
         }
         println!(
             "  {} {}: {}",
@@ -291,25 +352,32 @@ pub fn render_markdown(report: &MilestoneRunReport) -> String {
     s.push_str(&format!("- 성공률: {:.1}%\n", report.success_rate()));
     s.push_str(&format!("- 재투입 합계: {}\n", report.total_redispatches()));
     s.push_str(&format!("- 폴백: {}\n", report.fallback_count()));
+    if let Some(cost) = report.total_cost() {
+        s.push_str(&format!("- 총비용: ${:.4}\n", cost));
+        if let (Some(i), Some(o)) = (report.total_input_tokens(), report.total_output_tokens()) {
+            s.push_str(&format!("- 총토큰: 입력 {} / 출력 {}\n", i, o));
+        }
+    }
     if report.parse_errors > 0 {
         s.push_str(&format!("- 손상된 기록: {}건 건너뜀\n", report.parse_errors));
     }
     s.push('\n');
 
-    s.push_str("| Task | Verdict | 시도 | 재투입 | 폴백 | 검증명령 | diff | 마지막 라운드 |\n");
-    s.push_str("|------|---------|------|--------|------|----------|------|----------------|\n");
+    s.push_str("| Task | Verdict | 시도 | 재투입 | 폴백 | 검증명령 | 비용 | diff | 마지막 라운드 |\n");
+    s.push_str("|------|---------|------|--------|------|----------|------|------|----------------|\n");
     for t in &report.tasks {
         let verdict = if t.final_verdict { "PASS" } else { "FAIL" };
         let fallback = if t.fallback_used { "예" } else { "" };
         let verify = if t.verify_all_passed { "통과" } else { "" };
+        let cost = t.cost_usd.map(|c| format!("${:.4}", c)).unwrap_or_else(|| "-".to_string());
         let ts = if t.last_timestamp.is_empty() {
             "-"
         } else {
             t.last_timestamp.as_str()
         };
         s.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            t.task_id, verdict, t.attempts, t.max_redispatch, fallback, verify, t.final_diff_lines, ts
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            t.task_id, verdict, t.attempts, t.max_redispatch, fallback, verify, cost, t.final_diff_lines, ts
         ));
     }
     s
@@ -391,7 +459,61 @@ mod tests {
             fallback_used: fallback,
             diff_lines: 0,
             verify_commands: vec![],
+            cost_usd: None,
+            input_tokens: None,
+            output_tokens: None,
         }
+    }
+
+    /// 비용 포함 레코드.
+    fn rec_cost(task: &str, redispatch: u32, ts: &str, verdict: &str, cost: f64) -> AuditRecord {
+        AuditRecord {
+            cost_usd: Some(cost),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            ..rec(task, redispatch, ts, verdict, false)
+        }
+    }
+
+    #[test]
+    fn aggregate_sums_cost_over_latest_run() {
+        // 최신 run(R0 FAIL + R1 PASS)의 비용만 합산. 이전 run 비용은 제외.
+        let recs = vec![
+            rec_cost("M1-T01", 0, "2026-06-09T10:00:00Z", "FAIL", 9.99), // 이전 run (제외)
+            rec_cost("M1-T01", 0, "2026-06-09T11:00:00Z", "FAIL", 0.02), // 이번 run R0
+            rec_cost("M1-T01", 1, "2026-06-09T11:05:00Z", "PASS", 0.03), // 이번 run R1
+        ];
+        let out = aggregate(&recs);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].final_verdict);
+        // 부동소수점 — epsilon 비교 (0.02+0.03, 이전 run 9.99 제외)
+        assert!(
+            (out[0].cost_usd.unwrap() - 0.05).abs() < 1e-9,
+            "최신 run 비용만 합산 (0.02+0.03): {:?}",
+            out[0].cost_usd
+        );
+        assert_eq!(out[0].input_tokens, Some(200));
+    }
+
+    #[test]
+    fn aggregate_cost_none_when_absent() {
+        // 구 기록(비용 없음) → None
+        let out = aggregate(&[rec("M1-T01", 0, "t", "PASS", false)]);
+        assert_eq!(out[0].cost_usd, None);
+    }
+
+    #[test]
+    fn report_total_cost_rollup() {
+        let report = MilestoneRunReport {
+            milestone: Some(1),
+            tasks: aggregate(&[
+                rec_cost("M1-T01", 0, "t", "PASS", 0.10),
+                rec_cost("M1-T02", 0, "t", "PASS", 0.25),
+            ]),
+            parse_errors: 0,
+        };
+        assert!((report.total_cost().unwrap() - 0.35).abs() < 1e-9);
+        assert_eq!(report.total_input_tokens(), Some(200));
     }
 
     #[test]

@@ -102,7 +102,7 @@ impl Worktree {
         run_git(&self.repo_root, &["branch", "-D", &self.branch]);
     }
 
-    /// 격리 worktree 안에서 에이전트를 풀 에이전틱 모드로 실행하고 출력을 반환한다.
+    /// 격리 worktree 안에서 에이전트를 풀 에이전틱 모드로 실행하고 출력·비용을 반환한다(M28).
     /// `stream=false`면 출력을 캡처만 한다(병렬 실행 인터리브 방지, M23).
     pub fn run_agent(
         &self,
@@ -110,9 +110,9 @@ impl Worktree {
         brief: &Brief,
         model: Option<&str>,
         stream: bool,
-    ) -> Result<String> {
+    ) -> Result<crate::claude::runner::AgentRun> {
         runner
-            .run_agentic(&brief.render(), &self.path, model, stream)
+            .run_agentic_metered(&brief.render(), &self.path, model, stream)
             .context("에이전트 dispatch 실행 실패")
     }
 }

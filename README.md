@@ -223,6 +223,14 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.26.0]
+- **비용 관측 + 예산 거버넌스 (M28)**: conductor가 dispatch하는 에이전트의 **비용(USD)·토큰을 캡처**한다. Claude Code를 `--output-format stream-json`으로 실행해 최종 `result` 이벤트의 `total_cost_usd`·`usage`를 파싱(스트리밍 표시 유지). CLI 미지원 시 평문 폴백 + 비용 `None`으로 graceful 저하
+- **`porpoise report` 비용 집계**: 태스크별 비용 + 마일스톤 **총비용·총토큰** 롤업(재실행-인지 M27 일관 — 최신 run 비용만). `status`/`doctor`에도 비용·예산 표시
+- **예산 상한 (`[conductor] budget_usd`)**: 누적 비용이 상한에 도달하면 다음 dispatch(순차)·배치(병렬) 전에 중단. 미설정·0 이하이면 무제한(기존 동작). 진행 중 task/배치는 마치고 정지
+- **감사 기록 conductor-4**: `cost_usd`·`input_tokens`·`output_tokens` 추가(구 기록은 `None`으로 하위호환)
+- **라이브 검증**: 실 CLI로 3개 task 실행 → 비용 캡처(세션 cost_usd 실측)·누적 추적·report 롤업(총 $0.3607 등 ground truth 일치) 확인. 하니스 `scripts/conductor-cost-validate.ps1`·런북 `docs/conductor-cost-runbook.md`
+- **테스트**: 325개 (316 → 325, +9개)
+
 ### [v0.25.2]
 - **`porpoise report` 집계 버그 수정 (M27)**: 같은 task를 **재실행하면** 이전 run의 오래된(stale) 레코드가 `sessions/`에 섞여, "최종 라운드 = max redispatch" 기준이 stale FAIL(R2)을 fresh PASS(R0)보다 우선시해 **최종 verdict를 오판**하던 버그를 수정. `aggregate`를 **최신 run 기준**(timestamp 정렬 후 마지막 R0~끝)으로 바꿔 `verdict`·`시도`·`재투입`이 가장 최근 실행만 반영
 - **검증**: 회귀 테스트 3개 추가(재실행·다중라운드·정렬 불변식), 동일 sessions에서 report가 M1-T02를 stale FAIL→**정확한 PASS**로 표시함을 라이브 재확인

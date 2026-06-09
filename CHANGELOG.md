@@ -4,6 +4,14 @@
 
 ---
 
+### [v0.26.0]
+- **비용 관측 + 예산 거버넌스 (M28)**: conductor가 dispatch하는 코딩 에이전트의 **비용(USD)·토큰을 캡처·집계**하고, **예산 상한** 도달 시 dispatch를 중단한다. M25 리포트 인프라(관측) 위에 비용 차원을 더하는 운영/거버넌스 단계
+- **비용 캡처**: `runner.rs`에 `AgentRun` + `run_agentic_metered` 신설 — Claude Code를 `--output-format stream-json`으로 실행해 최종 `result` 이벤트의 `total_cost_usd`·`usage`(입력/출력 토큰)를 순수 함수 `parse_stream_event`로 파싱. **스트리밍 표시 유지**. CLI 미지원·비-JSON 시 평문 폴백 + 비용 `None`(graceful 저하). `run_agentic`(검증자 경로)·레거시 `execute_claude`는 불변(blast radius 최소화)
+- **비용 집계**: 감사 기록 **conductor-4**(`cost_usd`·`input_tokens`·`output_tokens`, 구 기록 `None` 하위호환). `report`가 태스크별 비용 + 마일스톤 총비용·총토큰을 **최신 run 기준**(M27 일관)으로 롤업, 콘솔·Markdown에 비용 컬럼 추가
+- **예산 거버넌스**: `[conductor] budget_usd`(선택) 설정. `budget_exceeded` 순수 함수로, 누적 비용이 상한 도달 시 순차·병렬 양쪽에서 다음 dispatch/배치 전 중단(진행 중인 것은 마치고 정지). 미설정·0 이하면 무제한. `status`/`doctor`에 비용·예산 표시
+- **라이브 검증**: 실 CLI로 3개 독립 task 실행 → 비용 캡처(세션 `cost_usd` 실측 0.1171/0.1276/0.1159)·누적 추적(콘솔 "누적 $0.3607")·report 롤업(총 $0.3607 · 토큰 5931/2434, ground truth 정확 일치) 확인. 하니스 `scripts/conductor-cost-validate.ps1`·런북 `docs/conductor-cost-runbook.md` 추가
+- **테스트**: 325개 (316 → 325, +9개)
+
 ### [v0.25.2]
 - **`porpoise report` 집계 버그 수정 (M27)**: 같은 task를 **재실행하면** 이전 run의 오래된(stale) 레코드가 `sessions/`에 함께 쌓여, 기존 "최종 라운드 = max redispatch(동률 시 timestamp)" 기준이 **stale FAIL(R2)을 fresh PASS(R0)보다 우선**시해 최종 verdict를 오판하고 `attempts`/`재투입`도 부풀리던 버그를 수정
 - **최신 run 기준 집계**: `aggregate`를 timestamp 정렬 후 **마지막 `R0`(redispatch==0 = run 시작)부터 끝까지를 최신 run**으로 보고, 그 run만 집계하도록 변경. `verdict`·`시도`·`재투입`·`fallback`이 가장 최근 실행만 반영. R0가 없으면(세션 정리 등) 전체를 한 run으로 폴백

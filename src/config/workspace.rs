@@ -93,6 +93,9 @@ pub struct WorkspaceConductor {
     pub verdict_fallback: Option<String>,
     /// 동시에 dispatch·verify할 task 수 (기본 1 = 순차). >1이면 병렬 함대(독립 task 전제, M23).
     pub max_parallel: Option<u32>,
+    /// 누적 비용(USD) 상한 (M28). 설정 시 누적 비용이 도달하면 다음 dispatch 전 중단.
+    /// 생략·0 이하이면 무제한(기존 동작).
+    pub budget_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -457,6 +460,14 @@ reviewer_extra = ""
             .as_ref()
             .and_then(|c| c.verifier_model.as_deref())
             .filter(|s| !s.is_empty())
+    }
+
+    /// 누적 비용(USD) 상한 (M28). 미설정·0 이하이면 None(무제한).
+    pub fn conductor_budget_usd(&self) -> Option<f64> {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.budget_usd)
+            .filter(|b| *b > 0.0)
     }
 
     pub fn session_keep_completed(&self) -> bool {

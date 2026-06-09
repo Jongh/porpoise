@@ -109,21 +109,34 @@ pub fn run_status(project_path: &Path) {
 
     // M25: 최근 실행 요약 (감사 기록 집계 — 기록 없으면 생략)
     let report = crate::conductor::report::build_report(project_path, None);
+    let workspace = WorkspaceConfig::load(project_path).unwrap_or_default();
     if !report.tasks.is_empty() {
         let ms = report
             .milestone
             .map(|m| format!("M{}", m))
             .unwrap_or_else(|| "전체".to_string());
         println!("{}", "─────────────────────────────────────".dimmed());
+        let cost_note = report
+            .total_cost()
+            .map(|c| format!(" · 비용 ${:.4}", c))
+            .unwrap_or_default();
         println!(
-            "최근 실행 ({}): PASS {}/{} · 성공률 {} · 재투입 {} · 폴백 {}",
+            "최근 실행 ({}): PASS {}/{} · 성공률 {} · 재투입 {} · 폴백 {}{}",
             ms.cyan(),
             report.passed(),
             report.total(),
             format!("{:.0}%", report.success_rate()).bold(),
             report.total_redispatches(),
-            report.fallback_count()
+            report.fallback_count(),
+            cost_note
         );
+        // M28: 예산 상한 설정 시 표시
+        if let Some(budget) = workspace.conductor_budget_usd() {
+            println!(
+                "{}",
+                format!("  예산 한도: ${:.4}", budget).dimmed()
+            );
+        }
         println!("{}", "  ('porpoise report'로 상세 보기)".dimmed());
     }
     println!();

@@ -30,7 +30,7 @@ struct TaskRun {
     outcome: VerifyOutcome,
     diff: String,
     command_results: Vec<ExecutionResult>,
-    agent_out: String,
+    agent_run: crate::claude::runner::AgentRun,
 }
 
 /// 다음 배치로 처리할 task 목록을 고른다 (pending 앞에서 최대 max개).
@@ -75,6 +75,10 @@ pub fn run_parallel(
     let mut feedbacks: HashMap<String, String> = HashMap::new();
     let mut history: Vec<String> = Vec::new();
 
+    // M28: 예산 거버넌스 — 누적 비용이 상한 도달하면 다음 배치 전 중단.
+    let budget = workspace.conductor_budget_usd();
+    let mut total_cost = 0.0f64;
+
     loop {
         let tasks = parse_tasks_from_project_md(path);
         let completed_ids: HashSet<String> =
@@ -96,6 +100,21 @@ pub fn run_parallel(
             );
             break;
         }
+        // M28: 다음 배치 전 예산 가드 (진행 중 배치는 마치고 정지)
+        if super::budget_exceeded(total_cost, budget) {
+            println!(
+                "{}",
+                format!(
+                    "\n⛔ 예산 상한 도달 — 누적 ${:.4} / 한도 ${:.4}. 다음 배치를 시작하지 않고 중단합니다.",
+                    total_cost,
+                    budget.unwrap_or(0.0)
+                )
+                .yellow()
+                .bold()
+            );
+            break;
+        }
+
         let batch = select_batch(&ready, max_parallel as usize);
         let ids = batch.iter().map(|t| t.id.as_str()).collect::<Vec<_>>().join(", ");
         println!(
@@ -134,8 +153,9 @@ pub fn run_parallel(
                     print_task_result(&run);
                     super::write_audit_record(
                         path, &run.task_id, attempt, &run.diff, &run.command_results,
-                        &run.outcome, &run.agent_out, logger,
+                        &run.outcome, &run.agent_run.output, &run.agent_run, logger,
                     );
+                    total_cost += run.agent_run.cost_usd.unwrap_or(0.0);
 
                     if run.outcome.verdict.pass {
                         // 커밋 → 병합 → 정리 순서를 integrate_parallel이 보장 (정리가 브랜치를 삭제하므로 병합이 먼저)
@@ -254,7 +274,7 @@ fn dispatch_batch_parallel(
                     if let Some(fb) = feedbacks.get(&task.id) {
                         brief = brief.with_feedback(fb);
                     }
-                    let agent_out = wt.run_agent(runner, &brief, dispatch_model, false)?;
+                    let agent_run = wt.run_agent(runner, &brief, dispatch_model, false)?;
                     let diff = wt.capture_diff();
                     let command_results = if verify_cmds.is_empty() {
                         vec![]
@@ -271,7 +291,7 @@ fn dispatch_batch_parallel(
                         outcome,
                         diff,
                         command_results,
-                        agent_out,
+                        agent_run,
                     })
                 })
             })

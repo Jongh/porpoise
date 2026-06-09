@@ -123,6 +123,10 @@ pub fn run_conductor(
 
     let mut history: Vec<String> = Vec::new();
 
+    // M28: 예산 거버넌스 — 누적 비용이 상한에 도달하면 다음 task dispatch 전 중단.
+    let budget = workspace.conductor_budget_usd();
+    let mut total_cost = 0.0f64;
+
     loop {
         let tasks = parse_tasks_from_project_md(path);
         let completed_ids: std::collections::HashSet<String> =
@@ -147,6 +151,22 @@ pub fn run_conductor(
             }
         };
 
+        // M28: 다음 task 시작 전 예산 가드 (진행 중 task는 마치고 정지)
+        if budget_exceeded(total_cost, budget) {
+            println!(
+                "{}",
+                format!(
+                    "\n⛔ 예산 상한 도달 — 누적 ${:.4} / 한도 ${:.4}. 다음 task를 시작하지 않고 중단합니다.",
+                    total_cost,
+                    budget.unwrap_or(0.0)
+                )
+                .yellow()
+                .bold()
+            );
+            println!("{}", "  ([conductor] budget_usd를 올리거나 비우면 계속할 수 있습니다.)".dimmed());
+            break;
+        }
+
         println!(
             "{}",
             format!("\n[ {} ] ─── {} ─── [conductor]", task.id, task.title).bold()
@@ -168,7 +188,7 @@ pub fn run_conductor(
             break;
         }
 
-        let outcome = conduct_task(
+        let (outcome, task_cost) = conduct_task(
             path,
             &task.id,
             &task.title,
@@ -180,12 +200,18 @@ pub fn run_conductor(
             max_redispatch,
             logger,
         )?;
+        total_cost += task_cost;
 
         history.push(format!("[{}] {} → {}", task.id, task.title, outcome.label()));
 
         match outcome {
             TaskOutcome::Merged => {
-                println!("  {} task 완료 및 병합", "✓".green());
+                let cost_note = if task_cost > 0.0 {
+                    format!(" (비용 ${:.4}, 누적 ${:.4})", task_cost, total_cost)
+                } else {
+                    String::new()
+                };
+                println!("  {} task 완료 및 병합{}", "✓".green(), cost_note.dimmed());
             }
             TaskOutcome::Halted { feedback } => {
                 println!("{}", "  ⚠ 검증 실패 — 재투입 한도 소진. 사용자 개입이 필요합니다.".yellow().bold());
@@ -216,7 +242,7 @@ fn conduct_task(
     dod: &[String],
     max_redispatch: u32,
     logger: &Logger,
-) -> Result<TaskOutcome> {
+) -> Result<(TaskOutcome, f64)> {
     save_phase(path, task_id, "brief", 0, logger);
     let brief = brief::build_brief(path, task_id, task_title, workspace);
 
@@ -252,13 +278,14 @@ fn conduct_in_worktree(
     dod: &[String],
     max_redispatch: u32,
     logger: &Logger,
-) -> Result<TaskOutcome> {
+) -> Result<(TaskOutcome, f64)> {
     let verify_cmds = workspace.default_verify_commands();
     let allowed = workspace.allowed_command_prefixes();
     let timeout = workspace.verify_timeout_secs();
     let fallback_halt = workspace.conductor_verdict_fallback_halt();
 
     let mut redispatch = 0u32;
+    let mut task_cost = 0.0f64; // M28: 이 task가 쓴 누적 비용(재투입 합산)
 
     loop {
         // ── Dispatch ──────────────────────────────────────────────────────
@@ -268,8 +295,20 @@ fn conduct_in_worktree(
             "→".cyan(),
             if redispatch > 0 { format!(" (재투입 {})", redispatch) } else { String::new() }
         );
-        let agent_out = wt.run_agent(runner, &brief, dispatch_model, true)?;
-        logger.info("conductor", &format!("dispatch 출력 {} bytes", agent_out.len()));
+        let agent_run = wt.run_agent(runner, &brief, dispatch_model, true)?;
+        task_cost += agent_run.cost_usd.unwrap_or(0.0);
+        let agent_out = agent_run.output.clone();
+        logger.info(
+            "conductor",
+            &format!(
+                "dispatch 출력 {} bytes{}",
+                agent_out.len(),
+                agent_run
+                    .cost_usd
+                    .map(|c| format!(", 비용 ${:.4}", c))
+                    .unwrap_or_default()
+            ),
+        );
 
         let diff = wt.capture_diff();
 
@@ -290,7 +329,8 @@ fn conduct_in_worktree(
         )?;
 
         write_audit_record(
-            path, task_id, redispatch, &diff, &command_results, &outcome, &agent_out, logger,
+            path, task_id, redispatch, &diff, &command_results, &outcome, &agent_out, &agent_run,
+            logger,
         );
 
         // ── Integrate 결정 ────────────────────────────────────────────────
@@ -316,7 +356,7 @@ fn conduct_in_worktree(
                 let commit_msg = format!("[{}] {}", task_id, task_title);
                 integrate::finalize(wt, path, &commit_msg)?;
                 crate::orchestrator::mark_tasks_complete(path, &[task_id.to_string()], logger)?;
-                return Ok(TaskOutcome::Merged);
+                return Ok((TaskOutcome::Merged, task_cost));
             }
             IntegrateDecision::Redispatch { feedback } => {
                 println!("  {} Verify FAIL — 피드백 재투입", "↻".yellow());
@@ -327,7 +367,7 @@ fn conduct_in_worktree(
             IntegrateDecision::Halt { feedback } => {
                 println!("  {} Verify FAIL — 한도 소진", "✗".red());
                 logger.warn("conductor", &format!("task {} 중단", task_id));
-                return Ok(TaskOutcome::Halted { feedback });
+                return Ok((TaskOutcome::Halted { feedback }, task_cost));
             }
         }
     }
@@ -433,6 +473,14 @@ fn maybe_show_transition_notice(path: &Path, workspace: &WorkspaceConfig) {
 ///
 /// M21: 검증자 원문·dispatch 출력을 포함하고(사후분석), 파일명에 타임스탬프를 넣어
 /// 재투입·재실행 간 덮어쓰기로 이력이 소실되지 않게 한다.
+/// 예산 상한 도달 여부 (순수 함수). 예산 미설정(None)이면 항상 false(무제한).
+pub fn budget_exceeded(spent_usd: f64, budget_usd: Option<f64>) -> bool {
+    match budget_usd {
+        Some(b) => spent_usd >= b,
+        None => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_audit_record(
     path: &Path,
@@ -442,6 +490,7 @@ fn write_audit_record(
     command_results: &[crate::session::v0_7::ExecutionResult],
     outcome: &verify::VerifyOutcome,
     dispatch_output: &str,
+    agent_run: &crate::claude::runner::AgentRun,
     logger: &Logger,
 ) {
     use chrono::Local;
@@ -452,7 +501,8 @@ fn write_audit_record(
     let now = Local::now();
     let verdict = &outcome.verdict;
     let record = serde_json::json!({
-        "schema_version": "conductor-3",
+        // M28: 비용·토큰 필드 추가 (conductor-4). 구 파서는 없는 필드를 None/0으로 처리(하위호환).
+        "schema_version": "conductor-4",
         "task_id": task_id,
         "redispatch": redispatch,
         "timestamp": now.to_rfc3339(),
@@ -466,6 +516,10 @@ fn write_audit_record(
         "feedback": verdict.feedback,
         // M22: 검증자 판정 파싱 실패로 객관 증거 폴백이 발동했는지 (false-positive 추적용)
         "fallback_used": outcome.fallback_used,
+        // M28: 에이전트 실행 비용·토큰 (CLI 미지원 시 null)
+        "cost_usd": agent_run.cost_usd,
+        "input_tokens": agent_run.input_tokens,
+        "output_tokens": agent_run.output_tokens,
         "verifier_raw": truncate_chars(&outcome.verifier_raw, 4000),
         "dispatch_output": truncate_chars(dispatch_output, 4000),
     });
@@ -541,6 +595,17 @@ mod tests {
     }
 
     #[test]
+    fn budget_exceeded_logic() {
+        // 미설정 → 무제한
+        assert!(!budget_exceeded(100.0, None));
+        // 한도 미만 → 계속
+        assert!(!budget_exceeded(0.5, Some(1.0)));
+        // 한도 도달/초과 → 중단
+        assert!(budget_exceeded(1.0, Some(1.0)));
+        assert!(budget_exceeded(1.5, Some(1.0)));
+    }
+
+    #[test]
     fn truncate_chars_short_unchanged() {
         assert_eq!(truncate_chars("hello", 10), "hello");
         // 정확히 max면 그대로
@@ -592,8 +657,16 @@ mod tests {
             fallback_used: false,
         };
         let cmds = vec![cmd_ok()];
+        let agent_run = crate::claude::runner::AgentRun {
+            output: String::new(),
+            cost_usd: Some(0.0321),
+            input_tokens: Some(1200),
+            output_tokens: Some(340),
+        };
 
-        write_audit_record(path, "M1-T01", 0, "diff\nline2", &cmds, &outcome, "dispatch 출력", &logger);
+        write_audit_record(
+            path, "M1-T01", 0, "diff\nline2", &cmds, &outcome, "dispatch 출력", &agent_run, &logger,
+        );
 
         let sessions = path.join(".porpoise").join("sessions");
         let files: Vec<_> = std::fs::read_dir(&sessions).unwrap().flatten().collect();
@@ -610,8 +683,12 @@ mod tests {
         assert_eq!(v["dispatch_output"], "dispatch 출력");
         assert_eq!(v["verify_commands"][0]["command"], "cargo");
         assert_eq!(v["verify_commands"][0]["exit_code"], 0);
-        assert_eq!(v["schema_version"], "conductor-3");
+        assert_eq!(v["schema_version"], "conductor-4");
         assert_eq!(v["fallback_used"], false);
+        // M28: 비용·토큰 기록
+        assert_eq!(v["cost_usd"], 0.0321);
+        assert_eq!(v["input_tokens"], 1200);
+        assert_eq!(v["output_tokens"], 340);
         // 검증자 원문이 잘림 표시와 함께 포함
         assert!(
             v["verifier_raw"].as_str().unwrap().contains("chars 생략"),
@@ -631,7 +708,10 @@ mod tests {
             verifier_raw: "prose".to_string(),
             fallback_used: true,
         };
-        write_audit_record(path, "M2-T01", 0, "d", &[cmd_ok()], &outcome, "", &logger);
+        write_audit_record(
+            path, "M2-T01", 0, "d", &[cmd_ok()], &outcome, "",
+            &crate::claude::runner::AgentRun::default(), &logger,
+        );
 
         let sessions = path.join(".porpoise").join("sessions");
         let f = std::fs::read_dir(&sessions).unwrap().flatten().next().unwrap();
@@ -650,8 +730,9 @@ mod tests {
         let outcome = VerifyOutcome { verdict: Verdict::pass(), verifier_raw: String::new(), fallback_used: false };
 
         // 서로 다른 redispatch 인덱스는 파일명이 구분되어 이력이 보존됨
-        write_audit_record(path, "M1-T01", 0, "d", &[], &outcome, "", &logger);
-        write_audit_record(path, "M1-T01", 1, "d", &[], &outcome, "", &logger);
+        let ar = crate::claude::runner::AgentRun::default();
+        write_audit_record(path, "M1-T01", 0, "d", &[], &outcome, "", &ar, &logger);
+        write_audit_record(path, "M1-T01", 1, "d", &[], &outcome, "", &ar, &logger);
 
         let sessions = path.join(".porpoise").join("sessions");
         let names: Vec<String> = std::fs::read_dir(&sessions)
