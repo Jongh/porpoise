@@ -223,6 +223,12 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.26.2]
+- **런타임 디렉터리 보장 위치 수정 (M29 보완)**: v0.26.1의 디렉터리 보장이 `run_conductor` 내부에 있어, 프로젝트 포맷 판별(`is_new_format`, `.porpoise/sessions` 존재로 판별) **이후**라 도달하지 못했다. fresh 체크아웃(`.porpoise/` gitignore로 sessions 비어 있음)에서 정식 프로젝트가 "sessions 폴더가 없습니다"로 미인식되던 문제를 해소 — 보장을 orchestrator 진입부(판별 **이전**)로 이동
+- **legacy 안전**: `project.md` 존재 + 비-legacy(`messages/` 없음)일 때만 보장 → 레거시 마이그레이션 안내 경로 보존
+- **라이브 검증(M29 종단)**: 런타임 디렉터리 미생성 + untracked Cargo.lock 상태의 fresh 프로젝트에서 conductor가 정상 진입·디렉터리 자동 생성, untracked 병합 충돌을 백업+재시도로 복구하여 MERGED 확인
+- **테스트**: 331개 (328 → 331, +3개)
+
 ### [v0.26.1]
 - **conductor robustness 수정 (M29)**: M28 비용 라이브 검증에서 드러난 두 갭 수정
 - **병합 untracked 충돌 견고화**: 에이전트가 worktree에서 생성한 파일(예: `cargo`가 만든 `Cargo.lock`)이 메인의 **untracked 동명 파일**과 충돌해 병합이 하드 실패하던 문제 해소. "untracked overwrite" 유형이면 충돌 파일을 `.porpoise/merge-backup/<ts>/`로 **이동(손실 없음)** 후 재시도하고 위치를 안내. 내용 충돌·기타 실패는 기존 동작(abort) 유지. 순차·병렬 경로 모두 적용

@@ -4,6 +4,12 @@
 
 ---
 
+### [v0.26.2]
+- **런타임 디렉터리 보장 위치 수정 (M29 보완)**: v0.26.1에 추가한 `ensure_runtime_dirs`가 `run_conductor` 내부에 있어, orchestrator의 프로젝트 포맷 판별(`is_new_format` — `.porpoise/sessions` 디렉터리 존재 여부로 판별) **이후**라 실제로 도달하지 못했다. `.porpoise/`가 gitignore된 fresh 체크아웃(sessions 비어 있음)에서 정식 프로젝트가 conductor 분기를 통째로 건너뛰고 "sessions/ 폴더가 없습니다"로 미인식되던 문제를 해소
+- **수정**: 보장 로직을 orchestrator 진입부(판별·세션 정리 **이전**)로 이동. `ensure_project_runtime_dirs_if_applicable` 신설 — `.porpoise/project.md` 존재 + 비-legacy(`messages/` 없음)일 때만 `sessions/worktrees/reports` 보장. legacy 프로젝트는 건드리지 않아 마이그레이션 안내 경로 보존
+- **라이브 검증(M29 종단)**: 런타임 디렉터리 미생성 + 메인 untracked Cargo.lock 상태의 fresh 프로젝트에서 ① conductor 정상 진입·디렉터리 자동 생성 ② untracked 병합 충돌을 `.porpoise/merge-backup/`로 백업 후 재시도하여 MERGED — 두 robustness 수정 모두 종단 입증
+- **테스트**: 331개 (328 → 331, +3개 — new-format 보장→인식·legacy 스킵·비-porpoise 스킵)
+
 ### [v0.26.1]
 - **conductor robustness 수정 (M29)**: M28 비용 라이브 검증(cost-live)에서 드러난 두 운영 신뢰성 갭 수정
 - **병합 untracked 충돌 견고화**: 에이전트가 worktree에서 `cargo test` 등으로 생성한 파일(`Cargo.lock`)이 `git add -A`로 task 커밋에 포함되고, 통합 시 메인의 **untracked 동명 파일**과 충돌해 `git merge`가 하드 실패("untracked working tree files would be overwritten")하던 문제 해소. `integrate.rs`에 `merge_with_untracked_recovery` 추가 — 해당 유형이면 충돌 파일을 `.porpoise/merge-backup/<ts>/`로 **이동(삭제 아님, 데이터 손실 0)** 후 병합을 재시도하고 백업 위치를 콘솔에 안내. 내용 충돌·기타 실패는 기존 처리(abort/Conflicted) 그대로 유지. 순차(`merge_worktree`)·병렬(`try_merge_worktree`) 경로 공통 적용

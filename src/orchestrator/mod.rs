@@ -125,6 +125,11 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
 
     let effective_model = args.model.clone().or_else(|| config.model().map(str::to_string));
 
+    // M29: .porpoise/ 런타임 디렉터리(sessions 등)는 gitignore 대상이라 fresh 체크아웃엔 없을 수
+    // 있다. is_new_format()이 sessions/ 존재로 프로젝트를 판별하므로, 정식 프로젝트면 판별·세션
+    // 기록 전에 런타임 디렉터리를 보장한다.
+    ensure_project_runtime_dirs_if_applicable(path, &logger);
+
     // Session cleanup based on workspace.toml [sessions] policy
     crate::session::cleanup_sessions(path, &workspace);
 
@@ -226,6 +231,19 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// M29: 정식 새-포맷 프로젝트(`.porpoise/project.md` 존재 + 비-legacy)면 런타임 디렉터리
+/// (sessions/worktrees/reports)를 보장한다.
+///
+/// `is_new_format()`이 gitignore되는 `sessions/` 존재로 프로젝트를 판별하므로, fresh 체크아웃에서
+/// 런타임 디렉터리가 비어 있으면 정식 프로젝트가 미인식되는 문제를 막는다. legacy 프로젝트
+/// (`messages/` 존재)는 건드리지 않아 마이그레이션 안내 경로를 보존한다.
+pub(crate) fn ensure_project_runtime_dirs_if_applicable(path: &Path, logger: &Logger) {
+    let porpoise_dir = path.join(".porpoise");
+    if porpoise_dir.join("project.md").exists() && !porpoise_dir.join("messages").exists() {
+        crate::conductor::ensure_runtime_dirs(path, logger);
+    }
 }
 
 pub(super) fn save_current_checkpoint(
@@ -606,5 +624,65 @@ pub(crate) fn ensure_porpoise_gitignored(project_root: &std::path::Path) {
         eprintln!("  ⚠  .gitignore 업데이트 실패: {}", e);
     } else {
         println!("  {} .gitignore에 .porpoise/ 추가됨 (세션 데이터 커밋 방지)", "ℹ".cyan());
+    }
+}
+
+#[cfg(test)]
+mod m29_tests {
+    use super::*;
+
+    fn mk(path: &std::path::Path, files: &[&str]) {
+        std::fs::create_dir_all(path.join(".porpoise")).unwrap();
+        for f in files {
+            let p = path.join(".porpoise").join(f);
+            std::fs::write(p, "x").unwrap();
+        }
+    }
+
+    #[test]
+    fn ensures_dirs_for_new_format_project_missing_sessions() {
+        // M29: project.md 있고 sessions/ 없는 fresh 체크아웃 → 보장 후 is_new_format true
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        mk(path, &["project.md"]);
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+
+        assert!(!crate::session::is_new_format(path), "보장 전엔 sessions 없음");
+        ensure_project_runtime_dirs_if_applicable(path, &logger);
+        assert!(
+            crate::session::is_new_format(path),
+            "보장 후 sessions/ 생성 → 정식 프로젝트로 인식"
+        );
+        for d in ["sessions", "worktrees", "reports"] {
+            assert!(path.join(".porpoise").join(d).is_dir());
+        }
+    }
+
+    #[test]
+    fn skips_legacy_project_with_messages() {
+        // legacy(messages/ 존재)는 건드리지 않음 → 마이그레이션 안내 경로 보존
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        mk(path, &["project.md"]);
+        std::fs::create_dir_all(path.join(".porpoise").join("messages")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+
+        ensure_project_runtime_dirs_if_applicable(path, &logger);
+        assert!(
+            !path.join(".porpoise").join("sessions").is_dir(),
+            "legacy 프로젝트엔 sessions를 만들지 않아야 함"
+        );
+    }
+
+    #[test]
+    fn skips_non_project_dir() {
+        // project.md 없으면 무동작 (비-porpoise 디렉터리 보호)
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        std::fs::create_dir_all(path.join(".porpoise")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+
+        ensure_project_runtime_dirs_if_applicable(path, &logger);
+        assert!(!path.join(".porpoise").join("sessions").is_dir());
     }
 }
