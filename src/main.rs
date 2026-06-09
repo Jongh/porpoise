@@ -55,6 +55,18 @@ pub enum Commands {
     Doctor,
     /// Show current orchestration status (milestone, task, stage, session count)
     Status,
+    /// Aggregate conductor audit records into a fleet execution report
+    Report {
+        /// Limit to a specific milestone number (e.g. 25)
+        #[arg(long)]
+        milestone: Option<u32>,
+        /// Also export the report as Markdown
+        #[arg(long)]
+        markdown: bool,
+        /// Output path for the Markdown report (default: .porpoise/reports/run-M{N}.md)
+        #[arg(long)]
+        out: Option<String>,
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -128,6 +140,18 @@ fn run() -> Result<()> {
             Commands::Status => {
                 status::run_status(&current_dir);
                 return Ok(());
+            }
+            Commands::Report {
+                milestone,
+                markdown,
+                out,
+            } => {
+                return conductor::report::run_report(
+                    &current_dir,
+                    *milestone,
+                    *markdown,
+                    out.as_deref(),
+                );
             }
         }
     }

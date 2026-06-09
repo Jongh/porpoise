@@ -15,6 +15,7 @@ pub mod dispatch;
 pub mod git;
 pub mod integrate;
 pub mod parallel;
+pub mod report;
 pub mod schedule;
 pub mod verify;
 

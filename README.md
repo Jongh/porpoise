@@ -223,6 +223,14 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.25.0]
+- **함대 실행 리포트 — `porpoise report` (M25)**: conductor가 매 라운드 `sessions/`에 쓰기만 하고 아무도 읽지 않던 감사 기록(conductor-3)을 **마일스톤 실행 요약**으로 집계·가시화. 태스크별 verdict·시도·재투입·폴백 + 마일스톤 롤업(성공률·재투입 합계·폴백 비율)
+- **`--milestone N` / `--markdown` / `--out`**: 특정 마일스톤 한정, Markdown 리포트 내보내기(`.porpoise/reports/run-M{N}.md`로 축적 — 릴리즈 노트·회고 근거). `--out` 지정 시 자동 내보내기
+- **`porpoise status` 통합**: 최근 실행 1줄 요약(성공률·재투입·폴백) 표시
+- **견고성**: 손상·BOM 포함 JSON을 우아하게 스킵(serde가 거부하는 UTF-8 BOM 제거), 빈 입력 무패닉. 파싱/집계는 순수 함수로 분리(M24 패턴 계승)
+- **라이브(합성) 검증**: 알려진 감사 기록 주입 → `report` 출력이 ground truth와 정확히 일치(다중 라운드→최종 verdict, 폴백 집계 포함). 하니스 `scripts/conductor-report-validate.ps1`·런북 `docs/conductor-report-runbook.md` 추가
+- **테스트**: 310개 (299 → 310, +11개)
+
 ### [v0.24.0]
 - **계획 두뇌 — 의존성 그래프 스케줄링 (M24)**: task가 `(deps: M1-T01, M1-T02)` 형식으로 선행 task를 선언하면, conductor가 **ready(모든 선행 완료) task만** 배치한다. 선행이 끝나면 다음 라운드에서 의존 task가 ready로 전이 — DAG 기반 위상 실행
 - **순환·dangling 검증**: 시작 전 의존성 그래프를 검사해 **순환(cycle)이면 거부**(무한 대기 방지), 존재하지 않는 의존성(dangling)은 **경고 후 무시**(오타가 task를 영구 차단하지 않음). `porpoise doctor`에 의존성 그래프 검증 항목 추가
