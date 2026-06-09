@@ -89,6 +89,10 @@ pub fn run_conductor(
     // worktree·런타임 데이터가 메인 작업 트리를 오염시키지 않도록 .porpoise/ gitignore 보장 (M21)
     crate::orchestrator::ensure_porpoise_gitignored(path);
 
+    // M29: 런타임 디렉터리 보장 — .porpoise/ 하위가 gitignore되어 비어 있는 fresh 체크아웃에서
+    // 시작이 실패하지 않도록 sessions/worktrees/reports를 미리 생성한다. (순차·병렬 공통 지점)
+    ensure_runtime_dirs(path, logger);
+
     // M22: 기본 ON 전환 — 기존 사용자에게 1회 안내 (mode 미설정 시에만)
     maybe_show_transition_notice(path, workspace);
 
@@ -473,6 +477,18 @@ fn maybe_show_transition_notice(path: &Path, workspace: &WorkspaceConfig) {
 ///
 /// M21: 검증자 원문·dispatch 출력을 포함하고(사후분석), 파일명에 타임스탬프를 넣어
 /// 재투입·재실행 간 덮어쓰기로 이력이 소실되지 않게 한다.
+/// conductor 런타임 디렉터리(`.porpoise/{sessions,worktrees,reports}`)를 보장한다 (M29).
+/// `.porpoise/` 하위가 gitignore되어 비어 있는 fresh 체크아웃에서 시작 실패를 방지한다.
+pub fn ensure_runtime_dirs(path: &Path, logger: &Logger) {
+    let base = path.join(".porpoise");
+    for sub in ["sessions", "worktrees", "reports"] {
+        let dir = base.join(sub);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            logger.warn("conductor", &format!("런타임 디렉터리 생성 실패 ({}): {}", sub, e));
+        }
+    }
+}
+
 /// 예산 상한 도달 여부 (순수 함수). 예산 미설정(None)이면 항상 false(무제한).
 pub fn budget_exceeded(spent_usd: f64, budget_usd: Option<f64>) -> bool {
     match budget_usd {
@@ -592,6 +608,27 @@ mod tests {
     fn route_non_git_explicit_conductor_stays_conductor() {
         // 명시적 conductor + 비-git → conductor 진입(run_conductor가 git 필요를 안내)
         assert_eq!(route_decision(true, true, false, false), Routing::Conductor);
+    }
+
+    #[test]
+    fn ensure_runtime_dirs_creates_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        std::fs::create_dir_all(path.join(".porpoise")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+
+        // 런타임 디렉터리가 없는 상태에서 보장 호출
+        ensure_runtime_dirs(path, &logger);
+
+        for sub in ["sessions", "worktrees", "reports"] {
+            assert!(
+                path.join(".porpoise").join(sub).is_dir(),
+                "{} 디렉터리가 생성되어야 함",
+                sub
+            );
+        }
+        // 이미 존재해도 무동작(에러 없음)
+        ensure_runtime_dirs(path, &logger);
     }
 
     #[test]

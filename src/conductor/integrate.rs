@@ -1,10 +1,10 @@
 //! Integrate — PASS 시 worktree 병합·task 완료 처리, FAIL 시 재투입/중단 결정.
 
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::conductor::dispatch::Worktree;
-use crate::conductor::git::run_git;
+use crate::conductor::git::{run_git, GitOutput};
 use crate::conductor::verify::Verdict;
 
 /// Verify 결과와 재투입 횟수로 결정되는 다음 동작.
@@ -47,12 +47,95 @@ pub fn finalize(wt: &Worktree, repo_root: &Path, commit_msg: &str) -> Result<()>
 /// 충돌이 발생하면 병합을 중단(abort)하고 에러를 반환한다. 병렬 함대의 충돌 인지 병합은
 /// `try_merge_worktree`를 사용한다.
 pub fn merge_worktree(repo_root: &Path, branch: &str) -> Result<()> {
-    let out = run_git(repo_root, &["merge", "--no-edit", branch]);
+    let out = merge_with_untracked_recovery(repo_root, branch);
     if !out.success {
         run_git(repo_root, &["merge", "--abort"]);
         anyhow::bail!("worktree 병합 실패 ({}): {}", branch, out.stderr.trim());
     }
     Ok(())
+}
+
+/// 병합을 시도하되, 메인의 **untracked 파일이 덮어쓰기로 충돌**하면(에이전트가 worktree에서
+/// 생성·커밋한 산출물과 동명) 그 파일을 백업으로 옮기고 **한 번 재시도**한다 (M29).
+///
+/// untracked 덮어쓰기 유형이 아니면(내용 충돌 등) 원래 실패를 그대로 반환해 기존 처리(abort)에
+/// 맡긴다. 데이터 손실이 없도록 파일은 삭제가 아니라 `.porpoise/merge-backup/<ts>/`로 이동한다.
+fn merge_with_untracked_recovery(repo_root: &Path, branch: &str) -> GitOutput {
+    let out = run_git(repo_root, &["merge", "--no-edit", branch]);
+    if out.success {
+        return out;
+    }
+    let files = match parse_untracked_overwrite(&out.stderr) {
+        Some(f) => f,
+        None => return out, // untracked 덮어쓰기 케이스 아님 → 기존 처리
+    };
+    match backup_untracked(repo_root, &files) {
+        Ok(backup) => {
+            println!(
+                "  ⚠ 병합 충돌(untracked) — {}개 파일을 {}로 백업 후 재시도",
+                files.len(),
+                backup.display()
+            );
+            run_git(repo_root, &["merge", "--no-edit", branch])
+        }
+        Err(_) => out, // 백업 실패 → 원래 실패 반환(안전)
+    }
+}
+
+/// 병합 실패 stderr에서 "untracked working tree files would be overwritten" 충돌 파일 목록을
+/// 추출한다. 해당 유형이 아니면 None.
+fn parse_untracked_overwrite(stderr: &str) -> Option<Vec<String>> {
+    if !stderr.contains("untracked working tree files would be overwritten") {
+        return None;
+    }
+    let mut files = Vec::new();
+    let mut in_list = false;
+    for line in stderr.lines() {
+        if line.contains("would be overwritten by merge") {
+            in_list = true;
+            continue;
+        }
+        if line.contains("Please move or remove") || line.trim() == "Aborting" {
+            break;
+        }
+        if in_list {
+            let f = line.trim();
+            if !f.is_empty() {
+                files.push(f.to_string());
+            }
+        }
+    }
+    if files.is_empty() {
+        None
+    } else {
+        Some(files)
+    }
+}
+
+/// 충돌하는 untracked 파일을 `.porpoise/merge-backup/<ts>/`로 (상대경로 보존하여) 옮긴다.
+/// 반환: 백업 디렉터리 경로.
+fn backup_untracked(repo_root: &Path, files: &[String]) -> Result<PathBuf> {
+    use chrono::Local;
+    let ts = Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let backup = repo_root.join(".porpoise").join("merge-backup").join(&ts);
+    for f in files {
+        let src = repo_root.join(f);
+        if !src.exists() {
+            continue;
+        }
+        let dst = backup.join(f);
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("백업 디렉터리 생성 실패: {}", parent.display()))?;
+        }
+        // rename이 교차 디바이스 등으로 실패하면 copy+remove로 폴백
+        if std::fs::rename(&src, &dst).is_err() {
+            std::fs::copy(&src, &dst)
+                .with_context(|| format!("백업 복사 실패: {}", src.display()))?;
+            std::fs::remove_file(&src).ok();
+        }
+    }
+    Ok(backup)
 }
 
 /// 병렬 함대에서 PASS된 task 하나를 통합한다: 커밋 → 충돌 인지 병합 → worktree 정리.
@@ -83,7 +166,7 @@ pub enum MergeOutcome {
 /// 충돌한다. 충돌이면 `git merge --abort`로 되돌리고 `Conflicted`를 반환한다(에러 아님) —
 /// 호출자가 해당 task를 재투입한다. 병합 외 사유로 실패하면(브랜치 부재 등) 에러를 전파한다.
 pub fn try_merge_worktree(repo_root: &Path, branch: &str) -> Result<MergeOutcome> {
-    let out = run_git(repo_root, &["merge", "--no-edit", branch]);
+    let out = merge_with_untracked_recovery(repo_root, branch);
     if out.success {
         return Ok(MergeOutcome::Merged);
     }
@@ -210,6 +293,52 @@ mod tests {
 
         wt.remove();
         assert!(run_git(root, &["branch", "--list", &branch]).stdout.trim().is_empty());
+    }
+
+    #[test]
+    fn parse_untracked_overwrite_extracts_files() {
+        let stderr = "error: The following untracked working tree files would be overwritten by merge:\n\tCargo.lock\n\tsrc/gen.rs\nPlease move or remove them before you merge.\nAborting\n";
+        let files = parse_untracked_overwrite(stderr).unwrap();
+        assert_eq!(files, vec!["Cargo.lock".to_string(), "src/gen.rs".to_string()]);
+        // 내용 충돌 등 다른 유형은 None
+        assert!(parse_untracked_overwrite("CONFLICT (content): Merge conflict in x").is_none());
+    }
+
+    #[test]
+    fn merge_recovers_from_untracked_overwrite() {
+        // M29 회귀: 메인에 untracked 동명 파일이 있고 task 브랜치가 같은 파일을 추가하면,
+        // 과거엔 병합이 하드 실패했다. 이제 백업 후 재시도로 성공해야 한다.
+        let tmp = init_repo();
+        let root = tmp.path();
+
+        let wt = Worktree::create(root, "M29-T02").expect("worktree");
+        std::fs::write(wt.path.join("gen.txt"), "from agent\n").unwrap();
+        wt.commit("[M29-T02] gen.txt").expect("commit");
+        let branch = wt.branch.clone();
+
+        // 메인에 추적되지 않는 동명 파일 (병합이 덮어쓰려 함)
+        std::fs::write(root.join("gen.txt"), "stale untracked\n").unwrap();
+
+        // 하드 실패가 아니라 백업+재시도로 성공해야 함
+        merge_worktree(root, &branch).expect("untracked 백업 후 병합 성공해야 함");
+
+        // 메인은 에이전트 내용으로 병합됨
+        let content = std::fs::read_to_string(root.join("gen.txt")).unwrap();
+        assert!(content.contains("from agent"), "에이전트 내용 병합: {:?}", content);
+
+        // 기존 untracked 내용은 백업으로 보존(데이터 손실 없음)
+        let backup_root = root.join(".porpoise").join("merge-backup");
+        assert!(backup_root.exists(), "백업 디렉터리 생성됨");
+        let mut found = false;
+        for ts_dir in std::fs::read_dir(&backup_root).unwrap().flatten() {
+            let bf = ts_dir.path().join("gen.txt");
+            if bf.exists() {
+                assert!(std::fs::read_to_string(&bf).unwrap().contains("stale untracked"));
+                found = true;
+            }
+        }
+        assert!(found, "백업된 untracked 파일이 있어야 함");
+        wt.remove();
     }
 
     #[test]

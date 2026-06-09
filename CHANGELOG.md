@@ -4,6 +4,13 @@
 
 ---
 
+### [v0.26.1]
+- **conductor robustness 수정 (M29)**: M28 비용 라이브 검증(cost-live)에서 드러난 두 운영 신뢰성 갭 수정
+- **병합 untracked 충돌 견고화**: 에이전트가 worktree에서 `cargo test` 등으로 생성한 파일(`Cargo.lock`)이 `git add -A`로 task 커밋에 포함되고, 통합 시 메인의 **untracked 동명 파일**과 충돌해 `git merge`가 하드 실패("untracked working tree files would be overwritten")하던 문제 해소. `integrate.rs`에 `merge_with_untracked_recovery` 추가 — 해당 유형이면 충돌 파일을 `.porpoise/merge-backup/<ts>/`로 **이동(삭제 아님, 데이터 손실 0)** 후 병합을 재시도하고 백업 위치를 콘솔에 안내. 내용 충돌·기타 실패는 기존 처리(abort/Conflicted) 그대로 유지. 순차(`merge_worktree`)·병렬(`try_merge_worktree`) 경로 공통 적용
+- **런타임 디렉터리 보장**: `.porpoise/{sessions,worktrees,reports}`는 gitignore 대상이라 새 체크아웃엔 없어 첫 실행이 실패할 수 있었음. `ensure_runtime_dirs`로 conductor 시작 시(순차·병렬 공통 지점) 자동 생성(멱등)
+- **한계**: untracked 충돌 감지는 영어 git 메시지에 의존(비영어 로케일은 복구 미발동 — 기존 abort로 안전 폴백)
+- **테스트**: 328개 (325 → 328, +3개 — 디렉터리 보장 멱등·에러 파싱·실제 git untracked 복구 회귀)
+
 ### [v0.26.0]
 - **비용 관측 + 예산 거버넌스 (M28)**: conductor가 dispatch하는 코딩 에이전트의 **비용(USD)·토큰을 캡처·집계**하고, **예산 상한** 도달 시 dispatch를 중단한다. M25 리포트 인프라(관측) 위에 비용 차원을 더하는 운영/거버넌스 단계
 - **비용 캡처**: `runner.rs`에 `AgentRun` + `run_agentic_metered` 신설 — Claude Code를 `--output-format stream-json`으로 실행해 최종 `result` 이벤트의 `total_cost_usd`·`usage`(입력/출력 토큰)를 순수 함수 `parse_stream_event`로 파싱. **스트리밍 표시 유지**. CLI 미지원·비-JSON 시 평문 폴백 + 비용 `None`(graceful 저하). `run_agentic`(검증자 경로)·레거시 `execute_claude`는 불변(blast radius 최소화)

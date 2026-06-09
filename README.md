@@ -223,6 +223,12 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.26.1]
+- **conductor robustness 수정 (M29)**: M28 비용 라이브 검증에서 드러난 두 갭 수정
+- **병합 untracked 충돌 견고화**: 에이전트가 worktree에서 생성한 파일(예: `cargo`가 만든 `Cargo.lock`)이 메인의 **untracked 동명 파일**과 충돌해 병합이 하드 실패하던 문제 해소. "untracked overwrite" 유형이면 충돌 파일을 `.porpoise/merge-backup/<ts>/`로 **이동(손실 없음)** 후 재시도하고 위치를 안내. 내용 충돌·기타 실패는 기존 동작(abort) 유지. 순차·병렬 경로 모두 적용
+- **런타임 디렉터리 보장**: `.porpoise/{sessions,worktrees,reports}`가 gitignore라 비어 있는 fresh 체크아웃에서 첫 실행이 실패하지 않도록 conductor 시작 시 자동 생성
+- **테스트**: 328개 (325 → 328, +3개 — 디렉터리 보장·에러 파싱·실제 git untracked 복구)
+
 ### [v0.26.0]
 - **비용 관측 + 예산 거버넌스 (M28)**: conductor가 dispatch하는 에이전트의 **비용(USD)·토큰을 캡처**한다. Claude Code를 `--output-format stream-json`으로 실행해 최종 `result` 이벤트의 `total_cost_usd`·`usage`를 파싱(스트리밍 표시 유지). CLI 미지원 시 평문 폴백 + 비용 `None`으로 graceful 저하
 - **`porpoise report` 비용 집계**: 태스크별 비용 + 마일스톤 **총비용·총토큰** 롤업(재실행-인지 M27 일관 — 최신 run 비용만). `status`/`doctor`에도 비용·예산 표시
