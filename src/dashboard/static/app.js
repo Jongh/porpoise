@@ -169,6 +169,102 @@
     }
   }
 
+  // ── M31: 라이브 패널 ──────────────────────────────────────────────
+  const PHASES = ["brief", "dispatch", "verify", "integrate"];
+  let wasActive = false;
+
+  function phaseSteps(task) {
+    if (task.phase === "merged")
+      return '<span class="phase-step final-merged">MERGED</span>';
+    if (task.phase === "halted")
+      return '<span class="phase-step final-halted">HALTED</span>';
+    return PHASES.map(
+      (p) => `<span class="phase-step${p === task.phase ? " active" : ""}">${p}</span>`
+    ).join("");
+  }
+
+  function renderLive(payload) {
+    const live = (payload && payload.live) || { run_active: false };
+    const badge = $("#live-badge");
+    const body = $("#live-body");
+    const budgetBox = $("#live-budget");
+
+    if (live.run_active) {
+      badge.textContent = "RUNNING · " + esc(live.mode || "");
+      badge.className = "live-badge running";
+    } else {
+      badge.textContent = "IDLE";
+      badge.className = "live-badge idle";
+    }
+
+    const tasks = live.tasks || [];
+    if (tasks.length === 0) {
+      body.className = "muted";
+      body.textContent = live.run_active ? "함대 준비 중..." : "실행 중인 함대 없음";
+    } else {
+      body.className = "";
+      const head = live.run_active ? "" : '<div class="muted" style="margin-bottom:6px">마지막 실행 요약</div>';
+      body.innerHTML =
+        head +
+        tasks
+          .map(
+            (t) =>
+              `<div class="live-task"><span class="tid">${esc(t.task_id)}</span>` +
+              `<span class="phase-steps">${phaseSteps(t)}</span>` +
+              (t.redispatch > 0 ? `<span class="muted">재투입 ${t.redispatch}</span>` : "") +
+              `</div>`
+          )
+          .join("");
+    }
+
+    // 비용/예산
+    const cost = live.total_cost_usd || 0;
+    if (live.budget_usd) {
+      budgetBox.classList.remove("hidden");
+      const pct = Math.min(100, (cost / live.budget_usd) * 100);
+      const fill = $("#budget-fill");
+      fill.style.width = pct + "%";
+      fill.className = cost >= live.budget_usd ? "over" : "";
+      $("#budget-label").textContent =
+        "비용 " + money(cost) + " / 예산 " + money(live.budget_usd) + " (" + pct.toFixed(0) + "%)";
+    } else if (cost > 0) {
+      budgetBox.classList.remove("hidden");
+      $("#budget-fill").style.width = "0%";
+      $("#budget-label").textContent = "누적 비용 " + money(cost);
+    } else {
+      budgetBox.classList.add("hidden");
+    }
+
+    // 실행 종료 전환(RUNNING→IDLE) 시 리포트·DAG 자동 새로고침
+    if (wasActive && !live.run_active) refresh();
+    wasActive = !!live.run_active;
+  }
+
+  let pollTimer = null;
+  function startLivePolling() {
+    if (pollTimer) return;
+    const poll = async () => {
+      try { renderLive(await getJSON("/api/live")); } catch (e) { /* 서버 종료 등 — 무시 */ }
+    };
+    poll();
+    pollTimer = setInterval(poll, 2000);
+  }
+
+  function startLive() {
+    try {
+      const es = new EventSource("/api/events");
+      es.addEventListener("live", (ev) => {
+        try { renderLive(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+      });
+      es.onerror = () => {
+        // SSE 실패 → 폴링 폴백 (연결은 EventSource가 자동 재시도하므로 병행 무해)
+        startLivePolling();
+      };
+    } catch (e) {
+      startLivePolling(); // EventSource 미지원 환경
+    }
+  }
+
   async function init() {
     try {
       await loadMilestones();
@@ -176,6 +272,7 @@
       console.error(e);
     }
     await refresh();
+    startLive();
     sel.addEventListener("change", refresh);
     $("#refresh").addEventListener("click", refresh);
   }

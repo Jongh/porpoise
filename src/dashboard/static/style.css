@@ -43,3 +43,26 @@ td.mono { font-family: ui-monospace, "Cascadia Code", monospace; }
 .dot.ready { background: var(--ready); }
 .dot.waiting { background: var(--waiting); }
 footer { text-align: center; padding: 24px; font-size: 12px; }
+
+/* M31: 라이브 패널 */
+.live-badge {
+  display: inline-block; margin-left: 8px; padding: 2px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; vertical-align: middle;
+}
+.live-badge.idle { background: rgba(138,147,163,.15); color: var(--muted); }
+.live-badge.running { background: rgba(63,185,80,.15); color: var(--pass); animation: pulse 1.6s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+.live-task { display: flex; gap: 10px; align-items: center; padding: 6px 0; color: var(--ink); }
+.live-task .tid { font-family: ui-monospace, "Cascadia Code", monospace; min-width: 90px; }
+.phase-steps { display: flex; gap: 4px; }
+.phase-step {
+  padding: 2px 8px; border-radius: 4px; font-size: 11px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--line);
+}
+.phase-step.active { background: rgba(74,168,255,.18); color: var(--accent); border-color: var(--accent); font-weight: 700; }
+.phase-step.final-merged { background: rgba(63,185,80,.18); color: var(--pass); border-color: var(--pass); }
+.phase-step.final-halted { background: rgba(248,81,73,.18); color: var(--fail); border-color: var(--fail); }
+.budget-bar { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; margin-top: 10px; overflow: hidden; }
+#budget-fill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
+#budget-fill.over { background: var(--fail); }
+#budget-label { font-size: 12px; margin-top: 4px; }

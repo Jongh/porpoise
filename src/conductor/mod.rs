@@ -14,6 +14,7 @@ pub mod brief;
 pub mod dispatch;
 pub mod git;
 pub mod integrate;
+pub mod live;
 pub mod parallel;
 pub mod report;
 pub mod schedule;
@@ -66,7 +67,28 @@ pub fn route_decision(enabled: bool, is_claude_code: bool, is_git: bool, mode_un
 }
 
 /// 지휘자 루프 진입점. orchestrator::run에서 claude_code 어댑터 + conductor 모드일 때 호출된다.
+///
+/// M31: 에러로 비정상 종료해도 라이브 상태(`run_active`)가 stale true로 남지 않도록,
+/// 본체(`run_conductor_inner`)를 감싸 에러 경로에서 `live::finish`를 보장한다.
 pub fn run_conductor(
+    path: &Path,
+    args: &Args,
+    config: &Config,
+    workspace: &WorkspaceConfig,
+    initial_state: &OrchestratorState,
+    effective_model: Option<&str>,
+    logger: &Logger,
+) -> Result<()> {
+    let result = run_conductor_inner(path, args, config, workspace, initial_state, effective_model, logger);
+    if result.is_err() {
+        // 정상 경로는 본체가 finish를 호출함 — 에러 경로만 여기서 마감 (대시보드 RUNNING 고착 방지)
+        live::finish(path);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_conductor_inner(
     path: &Path,
     args: &Args,
     config: &Config,
@@ -130,6 +152,9 @@ pub fn run_conductor(
     // M28: 예산 거버넌스 — 누적 비용이 상한에 도달하면 다음 task dispatch 전 중단.
     let budget = workspace.conductor_budget_usd();
     let mut total_cost = 0.0f64;
+
+    // M31: 라이브 상태 시작 (대시보드 관측 — 파일 매개, 결합 없음)
+    live::start(path, "sequential", budget);
 
     loop {
         let tasks = parse_tasks_from_project_md(path);
@@ -205,11 +230,13 @@ pub fn run_conductor(
             logger,
         )?;
         total_cost += task_cost;
+        live::set_total_cost(path, total_cost);
 
         history.push(format!("[{}] {} → {}", task.id, task.title, outcome.label()));
 
         match outcome {
             TaskOutcome::Merged => {
+                live::set_task(path, &task.id, "merged", 0);
                 let cost_note = if task_cost > 0.0 {
                     format!(" (비용 ${:.4}, 누적 ${:.4})", task_cost, total_cost)
                 } else {
@@ -218,6 +245,7 @@ pub fn run_conductor(
                 println!("  {} task 완료 및 병합{}", "✓".green(), cost_note.dimmed());
             }
             TaskOutcome::Halted { feedback } => {
+                live::set_task(path, &task.id, "halted", 0);
                 println!("{}", "  ⚠ 검증 실패 — 재투입 한도 소진. 사용자 개입이 필요합니다.".yellow().bold());
                 save_halt_hint(path, &task.id, &feedback, logger);
                 break;
@@ -225,6 +253,7 @@ pub fn run_conductor(
         }
     }
 
+    live::finish(path); // M31: 라이브 상태 종료 (마지막 요약은 보존)
     print_conductor_history(&history);
     println!();
     println!("{}", "지휘자 세션 종료.".dimmed());
@@ -430,6 +459,8 @@ fn save_phase(path: &Path, task_id: &str, phase: &str, retry: u32, logger: &Logg
     if let Err(e) = save_checkpoint(&cp, path) {
         logger.warn("conductor", &format!("checkpoint 저장 실패: {}", e));
     }
+    // M31: 라이브 상태도 갱신 (대시보드 관측용 — 실패해도 실행에 영향 없음)
+    live::set_task(path, task_id, phase, retry);
 }
 
 fn save_halt_hint(path: &Path, task_id: &str, feedback: &str, logger: &Logger) {

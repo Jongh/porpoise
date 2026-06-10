@@ -4,6 +4,7 @@
 //! 브라우저에서 본다. conductor 로직은 건드리지 않는다(파일 쓰기 없음).
 
 pub mod api;
+pub mod sse;
 
 use std::path::Path;
 
@@ -83,6 +84,8 @@ pub fn route(path: &Path, url: &str) -> RouteResponse {
         "/api/milestones" => json_resp(api::milestones_json(path)),
         "/api/report" => json_resp(api::report_json(path, param_milestone(&params))),
         "/api/tasks" => json_resp(api::tasks_json(path)),
+        // M31: 단발 라이브 조회 (SSE 폴백·초기 로드)
+        "/api/live" => json_resp(sse::live_payload(path)),
         _ => not_found(),
     }
 }
@@ -109,17 +112,41 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
         }
     }
 
+    // M31: 요청별 스레드 분리 — 장수명 SSE 연결이 다른 요청을 블록하지 않게 한다.
+    let project = path.to_path_buf();
     for request in server.incoming_requests() {
-        let r = route(path, request.url());
-        let header =
-            tiny_http::Header::from_bytes(&b"Content-Type"[..], r.content_type.as_bytes())
-                .expect("유효한 헤더");
-        let response = tiny_http::Response::from_string(r.body)
-            .with_status_code(r.status)
-            .with_header(header);
-        let _ = request.respond(response);
+        let p = project.clone();
+        std::thread::spawn(move || handle_request(request, &p));
     }
     Ok(())
+}
+
+/// 요청 하나를 처리한다 (요청 전용 스레드에서 실행).
+fn handle_request(request: tiny_http::Request, project: &Path) {
+    let url = request.url().to_string();
+    if url.starts_with("/api/events") {
+        // SSE: 무한 스트림 — Content-Length 없이 청크로 흘려보낸다.
+        let stream = sse::SseStream::new(project);
+        let headers = [
+            ("Content-Type", "text/event-stream; charset=utf-8"),
+            ("Cache-Control", "no-cache"),
+        ]
+        .iter()
+        .map(|(k, v)| {
+            tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("유효한 헤더")
+        })
+        .collect();
+        let response = tiny_http::Response::new(tiny_http::StatusCode(200), headers, stream, None, None);
+        let _ = request.respond(response); // 클라이언트가 끊으면 write 실패로 종료
+        return;
+    }
+    let r = route(project, &url);
+    let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], r.content_type.as_bytes())
+        .expect("유효한 헤더");
+    let response = tiny_http::Response::from_string(r.body)
+        .with_status_code(r.status)
+        .with_header(header);
+    let _ = request.respond(response);
 }
 
 #[cfg(test)]

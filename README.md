@@ -223,6 +223,14 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.28.0]
+- **대시보드 라이브 스트리밍 (M31, Phase 2)**: **진행 중인 conductor 실행**을 대시보드가 실시간으로 비춘다 — task별 현재 단계(brief→dispatch→verify→integrate, MERGED/HALTED), 재투입, **누적 비용/예산 진행 바**(초과 시 빨강). 실행 종료 시 리포트·DAG **자동 새로고침**, idle엔 마지막 실행 요약
+- **결합 없는 구조**: conductor가 단계 전환마다 `.porpoise/live.json`(live-1)을 **원자적**(temp→rename)으로 기록 — 대시보드의 존재를 모르고, 기록 실패는 실행에 무영향. 비정상 종료(에러)에도 wrapper가 `run_active`를 마감해 stale RUNNING 방지
+- **SSE push**: `GET /api/events` — 변화 감지(500ms 폴링) 시 push, keep-alive, **요청별 스레드 분리**로 장수명 연결이 다른 요청을 블록하지 않음. `GET /api/live` 단발 조회(프론트 폴링 폴백)
+- **tiny_http 버퍼링 해결**: 청크 인코더 8192B + 소켓 1KB 이중 버퍼로 SSE가 전송되지 않던 문제를 소스 추적으로 확정, SSE 스펙 호환 주석 패딩으로 즉시 전송 보장
+- **라이브 검증**: 실제 conductor 3 task 실행 + 브라우저 동시 관찰 — IDLE→RUNNING, 단계 배지 실시간 이동, 예산 바 0%→23%→38%, 종료 자동 새로고침까지 시각 입증. 트레이스 워처·SSE 생애주기 하니스(`scripts/dashboard-live-validate.ps1`) 추가
+- **테스트**: 348개 (338 → 348, +10개)
+
 ### [v0.27.0]
 - **로컬 웹 대시보드 — `porpoise dashboard` (M30, Phase 1)**: conductor가 콘솔로만 보여주던 데이터(실행 리포트·비용/토큰·의존성 그래프)를 **브라우저에서 가시화**. `--port`(기본 7878)·`--no-open` 옵션, `webbrowser`로 자동 오픈. **read-only 관측 전용** — `.porpoise/`에 쓰지 않고 conductor 로직 무변경
 - **화면**: 롤업 카드(성공률·재투입·폴백·총비용), 태스크별 비용 막대 차트(PASS 녹색/FAIL 빨강), 실행 리포트 표, **의존성 DAG**(깊이 열 배치, done/ready/waiting 색상). 마일스톤 셀렉터·새로고침

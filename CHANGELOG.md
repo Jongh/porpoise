@@ -4,6 +4,15 @@
 
 ---
 
+### [v0.28.0]
+- **대시보드 라이브 스트리밍 (M31, Phase 2)**: "지휘 통제실" 2단계. M30이 끝난 실행의 정적 조회였다면, 이제 **진행 중인 conductor 실행**을 실시간으로 비춘다 — 라이브 패널에 RUNNING/IDLE 배지, task별 현재 단계(brief→dispatch→verify→integrate 진행 배지, MERGED/HALTED 최종), 재투입 횟수, **누적 비용/예산 진행 바**(`budget_usd` 설정 시, 초과면 빨강). 실행 종료(RUNNING→IDLE) 시 리포트·DAG **자동 새로고침**, idle엔 마지막 실행 요약 표시
+- **결합 없는 구조**: conductor(CLI)와 dashboard(서버)는 **파일을 매개로만** 통신. `src/conductor/live.rs` 신설 — conductor가 단계 전환·비용 갱신·종료마다 `.porpoise/live.json`(스키마 live-1)을 **원자적**(temp→rename)으로 기록(`save_phase` 끼워넣기로 침습 최소, 순차·병렬 공통). 기록 실패는 실행에 무영향. 에러로 비정상 종료해도 wrapper(`run_conductor`→`run_conductor_inner`)가 `live::finish`를 보장해 대시보드 stale RUNNING 고착 방지
+- **SSE push**: `src/dashboard/sse.rs` 신설 — `GET /api/events`(SSE): live.json+sessions 변화를 500ms 폴링으로 감지해 push, 연결 직후 현재 상태 1회 전송, 10초 keep-alive. **요청별 스레드 분리**(M30 단일 루프 → spawn)로 장수명 SSE 연결이 다른 요청을 블록하지 않음. `GET /api/live` 단발 조회 — 프론트는 EventSource 실패 시 2초 폴링 폴백
+- **tiny_http 버퍼링 근본 해결**: SSE가 전혀 전송되지 않는 문제를 소스 추적으로 확정 — `chunked_transfer::Encoder`의 8192B 내부 버퍼(flush_after_write=false) + 소켓 1KB `BufWriter`의 이중 버퍼링. SSE 스펙상 무시되는 주석(`:`) 패딩으로 두 버퍼를 강제 통과시켜 즉시 전송 보장(로컬 전용·단계 전환 빈도라 오버헤드 무의미)
+- **병렬 모드**: 배치 수준 기록(배치 전체 dispatch → 통합 시 task별 merged) — 스레드 경쟁을 피하는 설계(문서화된 한계)
+- **라이브 검증**: 실제 conductor 3 task + 브라우저 동시 관찰 — IDLE→RUNNING·sequential, 단계 배지 실시간 이동(dispatch 하이라이트 등), MERGED 전환, 예산 바 0%→23%→38%($0.3800/$1.00), 종료 시 자동 새로고침까지 시각 입증. live.json 전이 16건 트레이스(`watch-live.ps1`)와 3층 비용 정합(트레이스=패널=리포트 $0.3800) 확인. SSE 생애주기 하니스 `scripts/dashboard-live-validate.ps1` 추가
+- **테스트**: 348개 (338 → 348, +10개 — live 5·sse 5)
+
 ### [v0.27.0]
 - **로컬 웹 대시보드 — `porpoise dashboard` (M30, Phase 1)**: porpoise "지휘 통제실"의 1단계. conductor가 콘솔 텍스트로만 보여주던 데이터(실행 리포트·비용/토큰·의존성 그래프·마일스톤)를 로컬 웹에서 가시화한다. `porpoise dashboard [--port 7878] [--no-open]` — `tiny_http` 서버(127.0.0.1 전용) + `webbrowser` 자동 오픈. **read-only 관측 전용**(파일 쓰기 없음, conductor 로직 무변경)
 - **화면**: 롤업 카드(태스크·성공률·PASS/FAIL·재투입·폴백·총비용), 태스크별 비용 막대 차트(PASS 녹색/FAIL 빨강, 비용 없는 conductor-3 태스크는 제외), 실행 리포트 표(verdict·시도·재투입·폴백·비용 — 비용 없음은 "-"), **의존성 DAG**(의존 깊이 열 배치 SVG, done/ready/waiting 색상·엣지). 마일스톤 셀렉터(최신 우선)·수동 새로고침(폴링)

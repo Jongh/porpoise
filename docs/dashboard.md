@@ -42,6 +42,40 @@ Ctrl-C로 종료.
 `scripts/dashboard-smoke.ps1`: 합성 데이터 주입 → `--no-open`으로 서버 기동 → `/api/*`를
 HTTP로 호출해 응답 JSON을 대조(브라우저 불필요).
 
+## 라이브 패널 (M31)
+
+대시보드 상단의 **라이브 패널**이 진행 중인 conductor 실행을 실시간으로 보여준다:
+- **RUNNING/IDLE 배지** + 모드(sequential/parallel)
+- task별 현재 단계(brief→dispatch→verify→integrate 진행 배지, MERGED/HALTED 최종 표시)·재투입 횟수
+- **누적 비용 / 예산 진행 바**(`budget_usd` 설정 시 — 초과면 빨강)
+- 실행 종료(RUNNING→IDLE) 시 리포트·DAG 자동 새로고침. idle엔 마지막 실행 요약 표시
+
+### 동작 구조 (프로세스 결합 없음)
+```
+conductor ─쓰기→ .porpoise/live.json ←변화 감지(500ms 폴링)─ dashboard ─SSE push→ 브라우저
+```
+- conductor가 단계 전환마다 `live.json`(스키마 live-1)을 **원자적**(temp→rename)으로 갱신.
+  기록 실패는 실행에 영향 없음. conductor는 대시보드의 존재를 모른다.
+- `GET /api/events` (SSE): 연결 직후 현재 상태 1회 push, 이후 변화 시마다 push, 10초 keep-alive.
+  요청별 스레드로 처리되어 장수명 연결이 다른 요청을 블록하지 않는다.
+- `GET /api/live` (단발): SSE 실패 시 프론트가 2초 폴링으로 폴백.
+- 병렬 모드는 **배치 수준** 기록(배치 전체 dispatch → 통합 시 task별 merged) — 배치 내 개별
+  단계 전환은 스레드 경쟁을 피하기 위해 기록하지 않는다(Phase 2 한계).
+
+### live.json (live-1)
+```json
+{
+  "schema_version": "live-1", "run_active": true,
+  "started_at": "...", "updated_at": "...", "mode": "sequential",
+  "total_cost_usd": 0.12, "budget_usd": 1.0,
+  "tasks": [{ "task_id": "M1-T01", "phase": "verify", "redispatch": 0 }]
+}
+```
+
+### 검증
+`scripts/dashboard-live-validate.ps1`: 대시보드 기동 → live.json을 시나리오로 재생
+(시작→dispatch→verify→merged→종료) → SSE 스트림을 구독해 이벤트 수신·내용을 대조
+(claude 불필요).
+
 ## 후속 Phase
-- **M31**: 라이브 스트리밍(SSE) — 진행 중 실행·비용 번다운 실시간
 - **M32**: 제어 UI — 승인·halt·재투입·마일스톤 편집

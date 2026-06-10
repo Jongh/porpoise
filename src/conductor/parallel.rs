@@ -79,6 +79,9 @@ pub fn run_parallel(
     let budget = workspace.conductor_budget_usd();
     let mut total_cost = 0.0f64;
 
+    // M31: 라이브 상태 시작 (병렬 모드)
+    super::live::start(path, "parallel", budget);
+
     loop {
         let tasks = parse_tasks_from_project_md(path);
         let completed_ids: HashSet<String> =
@@ -138,6 +141,9 @@ pub fn run_parallel(
         }
 
         // ── Phase 2 (병렬): dispatch + verify ───────────────────────────────
+        // M31: 배치 전체를 dispatch 단계로 기록 (스레드 경쟁 회피 — 배치 수준 기록)
+        let batch_ids: Vec<String> = batch.iter().map(|t| t.id.clone()).collect();
+        super::live::set_batch(path, &batch_ids, "dispatch");
         println!("  {} {}개 task 동시 dispatch·verify 중... (출력은 완료 후 그룹 표시)", "→".cyan(), batch.len());
         let runs = dispatch_batch_parallel(
             &worktrees, &batch, path, workspace, runner, dispatch_model, verifier_model,
@@ -156,6 +162,7 @@ pub fn run_parallel(
                         &run.outcome, &run.agent_run.output, &run.agent_run, logger,
                     );
                     total_cost += run.agent_run.cost_usd.unwrap_or(0.0);
+                    super::live::set_total_cost(path, total_cost);
 
                     if run.outcome.verdict.pass {
                         // 커밋 → 병합 → 정리 순서를 integrate_parallel이 보장 (정리가 브랜치를 삭제하므로 병합이 먼저)
@@ -168,6 +175,7 @@ pub fn run_parallel(
                                     logger.warn("conductor", &format!("task 완료 표시 실패: {}", e));
                                 }
                                 println!("  {} [{}] 병합 완료", "✓".green(), run.task_id);
+                                super::live::set_task(path, &run.task_id, "merged", attempt);
                                 history.push(format!("[{}] MERGED", run.task_id));
                                 attempts.remove(&run.task_id);
                                 feedbacks.remove(&run.task_id);
@@ -239,6 +247,7 @@ pub fn run_parallel(
         }
     }
 
+    super::live::finish(path); // M31: 라이브 상태 종료
     super::print_conductor_history(&history);
     println!();
     println!("{}", "병렬 지휘자 세션 종료.".dimmed());
