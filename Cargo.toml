@@ -1,6 +1,6 @@
 [package]
 name = "porpoise"
-version = "0.26.2"
+version = "0.27.0"
 edition = "2021"
 description = "Software development orchestration tool powered by Claude Code"
 authors = ["김종현"]
@@ -24,6 +24,8 @@ indicatif   = "0.17"
 dialoguer   = "0.11"
 which       = "6"
 ureq        = { version = "2", features = ["json"] }
+tiny_http   = "0.12"
+webbrowser  = "1"
 
 [dev-dependencies]
 tempfile = "3"

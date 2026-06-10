@@ -1,0 +1,184 @@
+// Porpoise 대시보드 앱 (M30) — read-only. API 폴링 + 렌더링.
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const sel = $("#milestone");
+
+  async function getJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(url + " → " + r.status);
+    return r.json();
+  }
+
+  function card(label, value) {
+    return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+  }
+
+  function money(v) {
+    return v == null ? "-" : "$" + Number(v).toFixed(4);
+  }
+
+  // 파일 유래 문자열을 innerHTML에 넣기 전 이스케이프 (방어적 — self-XSS 방지)
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  async function loadMilestones() {
+    const data = await getJSON("/api/milestones");
+    sel.innerHTML = "";
+    (data.milestones || []).forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.number;
+      o.textContent = "M" + m.number + (m.title ? " — " + m.title : "");
+      sel.appendChild(o);
+    });
+  }
+
+  async function loadReport(milestone) {
+    const q = milestone ? "?milestone=" + milestone : "";
+    const rep = await getJSON("/api/report" + q);
+
+    // 롤업 카드
+    $("#rollup").innerHTML = [
+      card("태스크", rep.total),
+      card("성공률", (rep.success_rate != null ? rep.success_rate.toFixed(1) : "0") + "%"),
+      card("PASS / FAIL", rep.passed + " / " + rep.failed),
+      card("재투입", rep.total_redispatches),
+      card("폴백", rep.fallback_count),
+      card("총비용", money(rep.total_cost)),
+    ].join("");
+
+    // 표
+    const tbody = $("#report-table tbody");
+    tbody.innerHTML = "";
+    const tasks = rep.tasks || [];
+    if (tasks.length === 0) {
+      $("#report-empty").classList.remove("hidden");
+      $("#report-table").classList.add("hidden");
+    } else {
+      $("#report-empty").classList.add("hidden");
+      $("#report-table").classList.remove("hidden");
+      tasks.forEach((t) => {
+        const verdict = t.final_verdict ? "PASS" : "FAIL";
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          `<td class="mono">${esc(t.task_id)}</td>` +
+          `<td><span class="tag ${verdict}">${verdict}</span></td>` +
+          `<td>${t.attempts}</td><td>${t.max_redispatch}</td>` +
+          `<td>${t.fallback_used ? "예" : ""}</td>` +
+          `<td>${money(t.cost_usd)}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // 비용 차트
+    const costItems = tasks
+      .filter((t) => t.cost_usd != null)
+      .map((t) => ({ label: t.task_id, value: t.cost_usd, color: t.final_verdict ? "#3fb950" : "#f85149" }));
+    Chart.bars($("#cost-chart"), costItems, { format: (v) => "$" + v.toFixed(4) });
+  }
+
+  // 의존성 그래프 — 의존 깊이로 열 배치, SVG 노드+엣지
+  function renderDepGraph(tasks) {
+    const box = $("#dep-graph");
+    box.innerHTML = "";
+    if (!tasks || tasks.length === 0) {
+      box.innerHTML = '<p class="muted">태스크 없음</p>';
+      return;
+    }
+    const ids = new Set(tasks.map((t) => t.id));
+    const byId = {};
+    tasks.forEach((t) => (byId[t.id] = t));
+
+    // 깊이 계산(dangling 의존은 무시)
+    const depth = {};
+    function d(id, seen) {
+      if (depth[id] != null) return depth[id];
+      if (seen.has(id)) return 0;
+      seen.add(id);
+      const deps = (byId[id].dependencies || []).filter((x) => ids.has(x));
+      const v = deps.length === 0 ? 0 : 1 + Math.max(...deps.map((x) => d(x, seen)));
+      depth[id] = v;
+      return v;
+    }
+    tasks.forEach((t) => d(t.id, new Set()));
+
+    const cols = {};
+    tasks.forEach((t) => {
+      const c = depth[t.id];
+      (cols[c] = cols[c] || []).push(t.id);
+    });
+    const colKeys = Object.keys(cols).map(Number).sort((a, b) => a - b);
+
+    const colW = 200, rowH = 56, nodeW = 150, nodeH = 38, padX = 20, padY = 16;
+    const maxRows = Math.max(...colKeys.map((c) => cols[c].length));
+    const W = padX * 2 + colKeys.length * colW;
+    const H = padY * 2 + maxRows * rowH;
+    const pos = {};
+    colKeys.forEach((c, ci) => {
+      cols[c].forEach((id, ri) => {
+        pos[id] = { x: padX + ci * colW, y: padY + ri * rowH };
+      });
+    });
+
+    const svg = Chart.el("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
+    // 엣지
+    tasks.forEach((t) => {
+      (t.dependencies || []).filter((x) => ids.has(x)).forEach((dep) => {
+        const a = pos[dep], b = pos[t.id];
+        if (!a || !b) return;
+        svg.appendChild(
+          Chart.el("line", {
+            x1: a.x + nodeW, y1: a.y + nodeH / 2, x2: b.x, y2: b.y + nodeH / 2,
+            stroke: "#3a4350", "stroke-width": 1.5,
+          })
+        );
+      });
+    });
+    // 노드
+    const color = { done: "#3fb950", ready: "#4aa8ff", waiting: "#8a93a3" };
+    tasks.forEach((t) => {
+      const p = pos[t.id];
+      svg.appendChild(
+        Chart.el("rect", {
+          x: p.x, y: p.y, width: nodeW, height: nodeH, rx: 8,
+          fill: "#1f2630", stroke: color[t.status] || "#8a93a3", "stroke-width": 2,
+        })
+      );
+      const dot = Chart.el("circle", { cx: p.x + 14, cy: p.y + nodeH / 2, r: 5, fill: color[t.status] || "#8a93a3" });
+      svg.appendChild(dot);
+      const tx = Chart.el("text", { x: p.x + 26, y: p.y + nodeH / 2 + 4, fill: "#e6e9ef", "font-size": "12" });
+      tx.textContent = t.id;
+      svg.appendChild(tx);
+    });
+    box.appendChild(svg);
+  }
+
+  async function loadTasks() {
+    const data = await getJSON("/api/tasks");
+    renderDepGraph(data.tasks || []);
+  }
+
+  async function refresh() {
+    try {
+      const milestone = sel.value;
+      await Promise.all([loadReport(milestone), loadTasks()]);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function init() {
+    try {
+      await loadMilestones();
+    } catch (e) {
+      console.error(e);
+    }
+    await refresh();
+    sel.addEventListener("change", refresh);
+    $("#refresh").addEventListener("click", refresh);
+  }
+
+  init();
+})();

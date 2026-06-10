@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Porpoise 대시보드</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🐬 Porpoise <span class="muted">대시보드</span></h1>
+    <div class="controls">
+      <label for="milestone">마일스톤</label>
+      <select id="milestone"></select>
+      <button id="refresh" title="새로고침">↻</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="rollup" class="cards"></section>
+
+    <section class="panel">
+      <h2>비용 (태스크별, USD)</h2>
+      <div id="cost-chart" class="chart"></div>
+    </section>
+
+    <section class="panel">
+      <h2>실행 리포트</h2>
+      <table id="report-table">
+        <thead>
+          <tr><th>Task</th><th>Verdict</th><th>시도</th><th>재투입</th><th>폴백</th><th>비용</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="report-empty" class="muted hidden">집계할 감사 기록이 없습니다.</p>
+    </section>
+
+    <section class="panel">
+      <h2>의존성 그래프</h2>
+      <div class="legend">
+        <span class="dot done"></span> 완료
+        <span class="dot ready"></span> 실행 가능
+        <span class="dot waiting"></span> 대기(deps)
+      </div>
+      <div id="dep-graph" class="chart"></div>
+    </section>
+  </main>
+
+  <footer class="muted">read-only 관측 · Porpoise dashboard</footer>
+
+  <script src="/static/chart.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// conductor-3 감사 레코드 중 집계에 필요한 필드. 스키마 변형·구버전에 견디도록 모두 기본값 허용.
 #[derive(Debug, Clone, Deserialize)]
@@ -52,7 +52,7 @@ impl AuditRecord {
 }
 
 /// 한 태스크의 실행 요약 — 여러 재투입 라운드를 합산한다.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TaskRunSummary {
     pub task_id: String,
     /// 기록된 라운드(시도) 수.

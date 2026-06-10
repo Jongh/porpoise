@@ -1,6 +1,7 @@
 mod claude;
 mod conductor;
 mod config;
+mod dashboard;
 mod doctor;
 mod init;
 mod logger;
@@ -55,6 +56,15 @@ pub enum Commands {
     Doctor,
     /// Show current orchestration status (milestone, task, stage, session count)
     Status,
+    /// Launch a local read-only web dashboard (reports, cost, dependency graph)
+    Dashboard {
+        /// Port to bind the local server (default: 7878)
+        #[arg(long, default_value_t = 7878)]
+        port: u16,
+        /// Do not auto-open the browser (print URL only)
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Aggregate conductor audit records into a fleet execution report
     Report {
         /// Limit to a specific milestone number (e.g. 25)
@@ -140,6 +150,9 @@ fn run() -> Result<()> {
             Commands::Status => {
                 status::run_status(&current_dir);
                 return Ok(());
+            }
+            Commands::Dashboard { port, no_open } => {
+                return dashboard::run_dashboard(&current_dir, *port, !*no_open);
             }
             Commands::Report {
                 milestone,

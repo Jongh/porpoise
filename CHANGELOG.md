@@ -4,6 +4,16 @@
 
 ---
 
+### [v0.27.0]
+- **로컬 웹 대시보드 — `porpoise dashboard` (M30, Phase 1)**: porpoise "지휘 통제실"의 1단계. conductor가 콘솔 텍스트로만 보여주던 데이터(실행 리포트·비용/토큰·의존성 그래프·마일스톤)를 로컬 웹에서 가시화한다. `porpoise dashboard [--port 7878] [--no-open]` — `tiny_http` 서버(127.0.0.1 전용) + `webbrowser` 자동 오픈. **read-only 관측 전용**(파일 쓰기 없음, conductor 로직 무변경)
+- **화면**: 롤업 카드(태스크·성공률·PASS/FAIL·재투입·폴백·총비용), 태스크별 비용 막대 차트(PASS 녹색/FAIL 빨강, 비용 없는 conductor-3 태스크는 제외), 실행 리포트 표(verdict·시도·재투입·폴백·비용 — 비용 없음은 "-"), **의존성 DAG**(의존 깊이 열 배치 SVG, done/ready/waiting 색상·엣지). 마일스톤 셀렉터(최신 우선)·수동 새로고침(폴링)
+- **JSON API**: `GET /api/milestones`·`/api/report?milestone=N`(롤업+태스크 요약)·`/api/tasks`(현재 태스크+의존성+상태) — `report::build_report`·`schedule::ready_tasks`·`parse_tasks_from_project_md`를 재사용해 직렬화만(새 데이터 0). `TaskRunSummary`에 `Serialize` 파생
+- **단일 바이너리·오프라인 원칙 유지**: 프론트엔드(vanilla HTML/JS/CSS + 자체 경량 SVG 차트 lib)를 `include_str!`로 임베드 — CDN 의존 0, node 툴체인·빌드 단계 없음. 신규 의존성은 `tiny_http`·`webbrowser` 2개
+- **보안**: 127.0.0.1 전용 바인딩, 고정 경로 정적 서빙(경로순회 불가), 파일 유래 문자열 HTML 이스케이프(self-XSS 방어)
+- **라이브 검증**: 합성 데이터(단일 PASS/다중라운드/폴백/FAIL/conductor-3 비용없음/3단계 DAG/복수 마일스톤)로 **브라우저 렌더 ↔ API 캡처 로그 ↔ 원본** 3층 대조 완전 일치(M1·M2 화면 모두). 스모크 하니스 `scripts/dashboard-smoke.ps1`(서버+API 종단)·문서 `docs/dashboard.md` 추가
+- **후속 Phase**: M31 라이브 스트리밍(SSE), M32 제어 UI(승인·halt·재투입)
+- **테스트**: 338개 (331 → 338, +7개)
+
 ### [v0.26.2]
 - **런타임 디렉터리 보장 위치 수정 (M29 보완)**: v0.26.1에 추가한 `ensure_runtime_dirs`가 `run_conductor` 내부에 있어, orchestrator의 프로젝트 포맷 판별(`is_new_format` — `.porpoise/sessions` 디렉터리 존재 여부로 판별) **이후**라 실제로 도달하지 못했다. `.porpoise/`가 gitignore된 fresh 체크아웃(sessions 비어 있음)에서 정식 프로젝트가 conductor 분기를 통째로 건너뛰고 "sessions/ 폴더가 없습니다"로 미인식되던 문제를 해소
 - **수정**: 보장 로직을 orchestrator 진입부(판별·세션 정리 **이전**)로 이동. `ensure_project_runtime_dirs_if_applicable` 신설 — `.porpoise/project.md` 존재 + 비-legacy(`messages/` 없음)일 때만 `sessions/worktrees/reports` 보장. legacy 프로젝트는 건드리지 않아 마이그레이션 안내 경로 보존

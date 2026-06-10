@@ -223,6 +223,14 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.27.0]
+- **로컬 웹 대시보드 — `porpoise dashboard` (M30, Phase 1)**: conductor가 콘솔로만 보여주던 데이터(실행 리포트·비용/토큰·의존성 그래프)를 **브라우저에서 가시화**. `--port`(기본 7878)·`--no-open` 옵션, `webbrowser`로 자동 오픈. **read-only 관측 전용** — `.porpoise/`에 쓰지 않고 conductor 로직 무변경
+- **화면**: 롤업 카드(성공률·재투입·폴백·총비용), 태스크별 비용 막대 차트(PASS 녹색/FAIL 빨강), 실행 리포트 표, **의존성 DAG**(깊이 열 배치, done/ready/waiting 색상). 마일스톤 셀렉터·새로고침
+- **JSON API**: `/api/milestones`·`/api/report?milestone=N`·`/api/tasks` — 기존 순수 함수(`build_report`·`ready_tasks`) 재사용, 새 데이터 0
+- **단일 바이너리·오프라인**: 프론트엔드(vanilla + 자체 SVG 차트 lib)를 바이너리에 임베드, CDN 의존 0, node 툴체인 없음. 서버는 `tiny_http`(127.0.0.1 전용)
+- **라이브 검증**: 합성 데이터(PASS/FAIL/폴백/재투입/conductor-3 비용없음/3단계 DAG)로 브라우저 렌더 ↔ API 응답 ↔ 원본 3층 대조 완전 일치. 스모크 하니스 `scripts/dashboard-smoke.ps1`·문서 `docs/dashboard.md`
+- **테스트**: 338개 (331 → 338, +7개)
+
 ### [v0.26.2]
 - **런타임 디렉터리 보장 위치 수정 (M29 보완)**: v0.26.1의 디렉터리 보장이 `run_conductor` 내부에 있어, 프로젝트 포맷 판별(`is_new_format`, `.porpoise/sessions` 존재로 판별) **이후**라 도달하지 못했다. fresh 체크아웃(`.porpoise/` gitignore로 sessions 비어 있음)에서 정식 프로젝트가 "sessions 폴더가 없습니다"로 미인식되던 문제를 해소 — 보장을 orchestrator 진입부(판별 **이전**)로 이동
 - **legacy 안전**: `project.md` 존재 + 비-legacy(`messages/` 없음)일 때만 보장 → 레거시 마이그레이션 안내 경로 보존
