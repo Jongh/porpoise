@@ -12,6 +12,7 @@
 
 pub mod brief;
 pub mod dispatch;
+pub mod gate;
 pub mod git;
 pub mod integrate;
 pub mod live;
@@ -115,6 +116,9 @@ fn run_conductor_inner(
     // 시작이 실패하지 않도록 sessions/worktrees/reports를 미리 생성한다. (순차·병렬 공통 지점)
     ensure_runtime_dirs(path, logger);
 
+    // M33: 직전 실행의 stale 제어 파일(stop-next·미소비 게이트 응답) 청소 — 이월 정지 방지
+    gate::cleanup_stale_controls(path);
+
     // M22: 기본 ON 전환 — 기존 사용자에게 1회 안내 (mode 미설정 시에만)
     maybe_show_transition_notice(path, workspace);
 
@@ -212,7 +216,14 @@ fn run_conductor_inner(
             break;
         }
 
-        if !confirm_or_default(&format!("'{}' 작업을 지휘하시겠습니까?", task.id), true, args.yes)? {
+        // M33: 게이트 모드면 대시보드 승인 대기 (--yes는 양쪽 모두 자동 승인)
+        let prompt = format!("'{}' 작업을 지휘하시겠습니까?", task.id);
+        let approved = if workspace.conductor_gate_mode() && !args.yes {
+            gate::gate_decision(path, &task.id, &prompt) == gate::Decision::Approve
+        } else {
+            confirm_or_default(&prompt, true, args.yes)?
+        };
+        if !approved {
             println!("{}", "Skipped.".yellow());
             break;
         }

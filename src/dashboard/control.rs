@@ -1,0 +1,171 @@
+//! 제어 API (M33) — `POST /api/control`.
+//!
+//! 대시보드의 첫 **쓰기** 기능. 쓰기 범위는 해당 프로젝트의 `.porpoise/control/`
+//! 게이트 응답 파일로 한정된다. 보호 계층:
+//! - M32 허용 목록·프로젝트 스코프 상속 (미등록 프로젝트 404)
+//! - gate_id 형식 검증 (영숫자·하이픈만 — 경로 주입 차단)
+//! - Origin 검증 (localhost 외 브라우저 cross-origin POST 403 — CSRF 차단)
+
+use std::path::Path;
+
+use serde::Deserialize;
+
+/// 제어 요청 본문.
+#[derive(Debug, Deserialize)]
+pub struct ControlRequest {
+    /// 응답할 게이트 id. 생략 + decision=stop 이면 사전 정지(stop-next).
+    #[serde(default)]
+    pub gate_id: Option<String>,
+    pub decision: String,
+}
+
+/// 제어 처리 결과 (상태코드 + 본문).
+pub struct ControlOutcome {
+    pub status: u16,
+    pub body: String,
+}
+
+fn outcome(status: u16, body: &str) -> ControlOutcome {
+    ControlOutcome { status, body: body.to_string() }
+}
+
+/// Origin 헤더가 허용 가능한가 (없음 = 비브라우저 도구 → 허용, 있으면 localhost만).
+pub fn origin_allowed(origin: Option<&str>) -> bool {
+    match origin {
+        None => true,
+        Some(o) => {
+            o.starts_with("http://127.0.0.1") || o.starts_with("http://localhost")
+        }
+    }
+}
+
+/// gate_id가 경로-안전한가 (영숫자·하이픈만, 비어 있지 않음).
+pub fn gate_id_safe(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// 제어 요청을 처리한다 — 검증 후 게이트 응답 파일을 원자적으로 작성.
+pub fn handle_control(project: &Path, body: &str, origin: Option<&str>) -> ControlOutcome {
+    if !origin_allowed(origin) {
+        return outcome(403, r#"{"error":"forbidden origin"}"#);
+    }
+    let req: ControlRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => return outcome(400, r#"{"error":"invalid body"}"#),
+    };
+    if req.decision != "approve" && req.decision != "stop" {
+        return outcome(400, r#"{"error":"decision must be approve|stop"}"#);
+    }
+
+    let control_dir = project.join(".porpoise").join("control");
+    if std::fs::create_dir_all(&control_dir).is_err() {
+        return outcome(500, r#"{"error":"cannot create control dir"}"#);
+    }
+
+    let filename = match &req.gate_id {
+        Some(id) => {
+            if !gate_id_safe(id) {
+                return outcome(400, r#"{"error":"invalid gate_id"}"#);
+            }
+            format!("gate-{}.json", id)
+        }
+        None => {
+            // 사전 정지만 게이트 없이 허용
+            if req.decision != "stop" {
+                return outcome(400, r#"{"error":"gate_id required for approve"}"#);
+            }
+            "stop-next.json".to_string()
+        }
+    };
+
+    let content = format!(r#"{{"decision":"{}"}}"#, req.decision);
+    let target = control_dir.join(&filename);
+    let tmp = control_dir.join(format!("{}.tmp", filename));
+    if std::fs::write(&tmp, &content).is_err() {
+        return outcome(500, r#"{"error":"write failed"}"#);
+    }
+    if std::fs::rename(&tmp, &target).is_err() {
+        let _ = std::fs::remove_file(&target);
+        if std::fs::rename(&tmp, &target).is_err() {
+            return outcome(500, r#"{"error":"write failed"}"#);
+        }
+    }
+    outcome(200, r#"{"ok":true}"#)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".porpoise")).unwrap();
+        tmp
+    }
+
+    #[test]
+    fn origin_rules() {
+        assert!(origin_allowed(None), "비브라우저(헤더 없음) 허용");
+        assert!(origin_allowed(Some("http://127.0.0.1:7878")));
+        assert!(origin_allowed(Some("http://localhost:7878")));
+        assert!(!origin_allowed(Some("http://evil.example.com")), "외부 origin 차단");
+        assert!(!origin_allowed(Some("https://127.0.0.1.evil.com")));
+    }
+
+    #[test]
+    fn approve_writes_gate_file() {
+        let tmp = dir();
+        let r = handle_control(tmp.path(), r#"{"gate_id":"m1-t01-120000","decision":"approve"}"#, None);
+        assert_eq!(r.status, 200);
+        let f = tmp.path().join(".porpoise").join("control").join("gate-m1-t01-120000.json");
+        assert!(f.exists());
+        assert!(std::fs::read_to_string(f).unwrap().contains("approve"));
+    }
+
+    #[test]
+    fn stop_without_gate_id_is_stop_next() {
+        let tmp = dir();
+        let r = handle_control(tmp.path(), r#"{"decision":"stop"}"#, None);
+        assert_eq!(r.status, 200);
+        assert!(tmp.path().join(".porpoise").join("control").join("stop-next.json").exists());
+    }
+
+    #[test]
+    fn rejects_invalid_inputs() {
+        let tmp = dir();
+        // 경로 주입 시도
+        let r = handle_control(tmp.path(), r#"{"gate_id":"../../evil","decision":"approve"}"#, None);
+        assert_eq!(r.status, 400, "경로 주입 gate_id 거부");
+        // 미지 decision
+        let r2 = handle_control(tmp.path(), r#"{"gate_id":"g1","decision":"nuke"}"#, None);
+        assert_eq!(r2.status, 400);
+        // approve엔 gate_id 필수
+        let r3 = handle_control(tmp.path(), r#"{"decision":"approve"}"#, None);
+        assert_eq!(r3.status, 400);
+        // 손상 body
+        let r4 = handle_control(tmp.path(), "garbage", None);
+        assert_eq!(r4.status, 400);
+        // 외부 origin
+        let r5 = handle_control(tmp.path(), r#"{"decision":"stop"}"#, Some("http://evil.com"));
+        assert_eq!(r5.status, 403);
+        // 어떤 거부도 control/ 에 파일을 남기지 않음 (stop-next 제외 검증)
+        let ctrl = tmp.path().join(".porpoise").join("control");
+        let leftover: Vec<_> = std::fs::read_dir(&ctrl)
+            .map(|e| e.flatten().map(|f| f.file_name().to_string_lossy().to_string()).collect())
+            .unwrap_or_default();
+        assert!(leftover.is_empty(), "거부 요청은 파일을 만들지 않아야 함: {:?}", leftover);
+    }
+
+    #[test]
+    fn gate_roundtrip_with_conductor_poll() {
+        // 종단: control API가 쓴 응답을 conductor 게이트가 소비
+        let tmp = dir();
+        std::fs::create_dir_all(tmp.path().join(".porpoise").join("control")).unwrap();
+        let r = handle_control(tmp.path(), r#"{"decision":"stop"}"#, Some("http://127.0.0.1:7878"));
+        assert_eq!(r.status, 200);
+        let d = crate::conductor::gate::gate_decision_with_interval(
+            tmp.path(), "M1-T01", "게이트", std::time::Duration::from_millis(10),
+        );
+        assert_eq!(d, crate::conductor::gate::Decision::Stop, "사전 정지가 게이트에서 소비됨");
+    }
+}

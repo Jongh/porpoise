@@ -129,7 +129,15 @@ pub fn run_parallel(
             println!("{}", "  [dry-run] 병렬 배치 실행 계획만 출력".dimmed());
             break;
         }
-        if !confirm_or_default(&format!("{}개 task를 병렬 지휘하시겠습니까?", batch.len()), true, args.yes)? {
+        // M33: 게이트 모드면 대시보드 승인 대기 (--yes는 양쪽 모두 자동 승인)
+        let prompt = format!("{}개 task를 병렬 지휘하시겠습니까?", batch.len());
+        let approved = if workspace.conductor_gate_mode() && !args.yes {
+            let label = format!("batch-{}", batch.first().map(|t| t.id.as_str()).unwrap_or("x"));
+            super::gate::gate_decision(path, &label, &prompt) == super::gate::Decision::Approve
+        } else {
+            confirm_or_default(&prompt, true, args.yes)?
+        };
+        if !approved {
             println!("{}", "Skipped.".yellow());
             break;
         }

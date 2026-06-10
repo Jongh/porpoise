@@ -62,6 +62,24 @@ footer { text-align: center; padding: 24px; font-size: 12px; }
 .phase-step.active { background: rgba(74,168,255,.18); color: var(--accent); border-color: var(--accent); font-weight: 700; }
 .phase-step.final-merged { background: rgba(63,185,80,.18); color: var(--pass); border-color: var(--pass); }
 .phase-step.final-halted { background: rgba(248,81,73,.18); color: var(--fail); border-color: var(--fail); }
+/* M33: 게이트 제어 */
+.gate-card {
+  margin: 10px 0; padding: 12px 14px; border-radius: 10px;
+  background: rgba(74,168,255,.08); border: 1px solid var(--accent);
+}
+.gate-prompt { font-weight: 600; margin-bottom: 10px; }
+.gate-actions { display: flex; gap: 8px; align-items: center; }
+.btn-approve, .btn-stop {
+  border: none; border-radius: 6px; padding: 6px 16px; font-size: 13px;
+  font-weight: 700; cursor: pointer;
+}
+.btn-approve { background: var(--pass); color: #06250e; }
+.btn-approve:hover { filter: brightness(1.15); }
+.btn-stop { background: rgba(248,81,73,.15); color: var(--fail); border: 1px solid var(--fail); }
+.btn-stop:hover { background: rgba(248,81,73,.3); }
+#stop-next { margin-left: 10px; padding: 3px 10px; font-size: 11px; vertical-align: middle; }
+.gate-error { color: var(--fail); font-size: 12px; }
+
 .budget-bar { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; margin-top: 10px; overflow: hidden; }
 #budget-fill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
 #budget-fill.over { background: var(--fail); }

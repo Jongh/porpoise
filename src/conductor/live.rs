@@ -19,6 +19,13 @@ pub struct LiveTask {
     pub redispatch: u32,
 }
 
+/// 승인 대기 게이트 (M33). 게이트 모드에서 conductor가 응답을 기다리는 동안 설정된다.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct PendingGate {
+    pub id: String,
+    pub prompt: String,
+}
+
 /// `.porpoise/live.json` 전체 상태 (live-1).
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct LiveState {
@@ -31,6 +38,9 @@ pub struct LiveState {
     pub total_cost_usd: f64,
     pub budget_usd: Option<f64>,
     pub tasks: Vec<LiveTask>,
+    /// M33: 승인 대기 게이트 (없으면 직렬화 생략 — live-1 하위호환)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_gate: Option<PendingGate>,
 }
 
 fn live_path(path: &Path) -> PathBuf {
@@ -80,6 +90,7 @@ pub fn start(path: &Path, mode: &str, budget_usd: Option<f64>) {
         total_cost_usd: 0.0,
         budget_usd,
         tasks: Vec::new(),
+        pending_gate: None,
     };
     write_atomic(path, state);
 }
@@ -115,9 +126,18 @@ pub fn set_total_cost(path: &Path, total_cost_usd: f64) {
     update(path, |s| s.total_cost_usd = total_cost_usd);
 }
 
+/// 승인 대기 게이트를 설정/해제한다 (M33).
+pub fn set_pending_gate(path: &Path, gate: Option<PendingGate>) {
+    update(path, |s| s.pending_gate = gate);
+}
+
 /// 실행 종료 — run_active=false (마지막 상태는 보존해 "마지막 실행 요약"으로 쓰인다).
+/// 대기 게이트도 함께 해제한다.
 pub fn finish(path: &Path) {
-    update(path, |s| s.run_active = false);
+    update(path, |s| {
+        s.run_active = false;
+        s.pending_gate = None;
+    });
 }
 
 #[cfg(test)]

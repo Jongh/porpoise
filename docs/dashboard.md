@@ -107,5 +107,31 @@ conductor ─쓰기→ .porpoise/live.json ←변화 감지(500ms 폴링)─ das
 같은 엔드포인트를 project id만 바꿔 호출해 서로 다른 ground truth 반환을 대조, 미등록 id
 404, 미지정 하위호환 확인. 종료 시 임시 항목을 레지스트리에서 해제(원복).
 
+## 게이트 제어 (M33)
+
+콘솔 승인 게이트를 대시보드 버튼으로 처리한다. `workspace.toml`:
+```toml
+[conductor]
+approval_mode = "gate"   # 기본 "console" — 미설정 시 기존 터미널 프롬프트
+```
+- gate 모드에서 conductor는 task/배치 승인 시점에 `live.json`에 `pending_gate {id, prompt}`를
+  올리고 `.porpoise/control/gate-<id>.json` 응답을 폴링한다(1초). 라이브 패널에 **승인 대기
+  카드**([승인]/[정지])가 떠오르고, 클릭하면 응답 파일이 작성되어 conductor가 소비(삭제)한다.
+- **graceful stop**: 실행 중(RUNNING) 상시 표시되는 **[다음 게이트에서 정지]** 버튼이
+  `control/stop-next.json`을 만든다 — 진행 중 task를 마치고 다음 게이트에서 자동 정지.
+- `--yes`는 gate 모드에서도 자동 승인(자동화·CI 우선). 콘솔 모드 동작은 무변경.
+
+### 제어 채널 보안 (read-only의 의도된 첫 이탈)
+- 쓰기 범위는 해당 프로젝트의 **`.porpoise/control/`** 게이트 응답 파일로 한정 — 코드·설정·
+  project.md는 일절 쓰지 않는다.
+- `POST /api/control` `{gate_id?, decision: approve|stop}` — M32 허용 목록·`?project=` 스코프
+  상속(미등록 404), gate_id는 영숫자·하이픈만(경로 주입 차단), **Origin 검증**(localhost 외
+  브라우저 cross-origin POST 403 — CSRF 차단).
+
+### 검증
+`scripts/dashboard-gate-validate.ps1`: 제어 API 검증(승인 파일 작성·Origin 403·주입 400·
+미등록 404) + 게이트 왕복(가짜 conductor 게이트 → API 응답 → 소비 확인). claude 불필요.
+
 ## 후속 Phase
-- **M33**: 제어 UI — 승인·halt·재투입·마일스톤 편집 (프로젝트-스코프로 설계)
+- **M34**: 계획 제어 — 마일스톤 생성·릴리즈 게이트·task 편집
+- **M35**: 런처 — 실행 시작·halt 재투입·설정 편집

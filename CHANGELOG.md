@@ -4,6 +4,15 @@
 
 ---
 
+### [v0.30.0]
+- **게이트 제어 — 대시보드에서 task 승인·정지 (M33, Phase 3a)**: "지휘 통제실" 제어 1단계. `[conductor] approval_mode = "gate"`면 task/배치 승인 게이트("'M1-T01' 작업을 지휘하시겠습니까?")가 콘솔 프롬프트 대신 **대시보드 승인 대기 카드**([승인]/[정지])로 처리된다. 기본 `console` 모드와 `--yes` 자동 승인(자동화·CI)은 무변경
+- **게이트 프로토콜 (무결합 유지)**: `src/conductor/gate.rs` 신설 — conductor가 `live.json`에 `pending_gate {id, prompt}`를 기록(SSE로 카드 표시)하고 `.porpoise/control/gate-<id>.json` 응답을 폴링(1초)·**소비(삭제)**. 손상 응답은 제거 후 계속 대기(무한 루프 방지). M31 관측의 역방향이지만 같은 원칙: 파일 매개, conductor는 대시보드의 존재를 모른다
+- **graceful stop**: 실행 중(RUNNING) 상시 표시되는 **[다음 게이트에서 정지]** 버튼이 `control/stop-next.json`을 작성 — 진행 중 task를 마치고 다음 게이트에서 자동 정지(사전 정지가 게이트 응답보다 우선). 실행 시작 시 **stale 제어 파일 자동 청소**(`cleanup_stale_controls`) — 직전 실행의 미소비 stop-next가 다음 실행 첫 게이트를 의도치 않게 정지시키는 이월 함정 차단(리뷰에서 발견·수정)
+- **`POST /api/control` — 대시보드의 첫 쓰기 기능**: `src/dashboard/control.rs` 신설. `{gate_id?, decision: approve|stop}` (gate_id 생략+stop = 사전 정지). 쓰기 범위를 해당 프로젝트 `.porpoise/control/`로 한정하고 3중 보호 — M32 허용 목록·`?project=` 스코프 상속(미등록 404), gate_id 영숫자·하이픈 검증(경로 주입 400), **Origin 검증**(localhost 외 브라우저 cross-origin POST 403 — CSRF 차단). 거부 요청은 파일을 남기지 않음
+- **라이브 검증**: 실제 conductor gate 모드 + 브라우저로 전 시나리오 통과 — [승인]→진행, [정지]→세션 종료, [다음 게이트에서 정지]→T02 완료 후 T03 게이트 없이 자동 정지, 재실행 시 stale 청소로 정상 게이트 표시. 하니스 `scripts/dashboard-gate-validate.ps1`(승인 파일·graceful stop·403/400/404 경계) 추가
+- **사용자 피드백 (후속 마일스톤 반영)**: 사전 정지 버튼의 시각 피드백 부재 → M34에서 `stop_pending` 노출·UI 표시 예정. 마일스톤 생성·릴리즈 세션의 콘솔 종속 → M34 계획 제어. 대시보드·conductor 분리 실행 불편 → M35 내장 기동
+- **테스트**: 366개 (353 → 366, +13개 — gate 8 · control 5)
+
 ### [v0.29.0]
 - **멀티 프로젝트 관측 — 대시보드 저장소 선택 (M32)**: 한 대시보드에서 여러 porpoise 프로젝트를 셀렉터로 전환하며 관제한다. 리포트·비용·DAG·라이브 패널이 선택한 프로젝트로 스코프되며, read-only 관측은 유지된다. 제어 UI(M33)가 처음부터 프로젝트-스코프로 설계되도록 기반(레지스트리·스코핑·보안 모델)을 이 단계에서 확립
 - **프로젝트 레지스트리(허용 목록)**: `src/dashboard/registry.rs` 신설 — `~/.porpoise/registry.json`(`{id, name, path}`), id는 정규화 경로의 **FNV-1a 안정 해시**(외부 의존 0). `porpoise dashboard` 기동 시 현재 프로젝트 자동 등록(upsert), `--register/--unregister <path>` 명시 관리. 원자적 저장, 손상 파일은 빈 목록으로 우아 처리

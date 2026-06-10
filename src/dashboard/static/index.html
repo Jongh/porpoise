@@ -22,7 +22,17 @@
 
   <main>
     <section class="panel" id="live-panel">
-      <h2>라이브 <span id="live-badge" class="live-badge idle">IDLE</span></h2>
+      <h2>라이브 <span id="live-badge" class="live-badge idle">IDLE</span>
+        <button id="stop-next" class="btn-stop hidden" title="진행 중인 task를 마친 뒤 다음 게이트에서 정지">다음 게이트에서 정지</button>
+      </h2>
+      <div id="gate-card" class="gate-card hidden">
+        <div id="gate-prompt" class="gate-prompt"></div>
+        <div class="gate-actions">
+          <button id="gate-approve" class="btn-approve">승인</button>
+          <button id="gate-stop" class="btn-stop">정지</button>
+          <span id="gate-error" class="gate-error hidden"></span>
+        </div>
+      </div>
       <div id="live-body" class="muted">실행 중인 함대 없음</div>
       <div id="live-budget" class="hidden">
         <div class="budget-bar"><div id="budget-fill"></div></div>

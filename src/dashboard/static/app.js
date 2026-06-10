@@ -264,9 +264,48 @@
       budgetBox.classList.add("hidden");
     }
 
+    // M33: 승인 대기 게이트 카드
+    const gate = live.pending_gate;
+    const card = $("#gate-card");
+    if (gate && live.run_active) {
+      currentGateId = gate.id;
+      $("#gate-prompt").textContent = gate.prompt;
+      card.classList.remove("hidden");
+    } else {
+      currentGateId = null;
+      card.classList.add("hidden");
+      $("#gate-error").classList.add("hidden");
+    }
+    // 실행 중 상시 사전 정지 버튼
+    $("#stop-next").classList.toggle("hidden", !live.run_active);
+
     // 실행 종료 전환(RUNNING→IDLE) 시 리포트·DAG 자동 새로고침
     if (wasActive && !live.run_active) refresh();
     wasActive = !!live.run_active;
+  }
+
+  // ── M33: 제어 전송 ─────────────────────────────────────────────────
+  let currentGateId = null;
+
+  async function sendControl(payload) {
+    const err = $("#gate-error");
+    err.classList.add("hidden");
+    try {
+      const r = await fetch(withProject("/api/control"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        err.textContent = "전송 실패 (" + r.status + ") " + (data.error || "");
+        err.classList.remove("hidden");
+      }
+      // 성공 시 별도 처리 없음 — conductor가 소비하면 live 이벤트로 카드가 자연 소멸
+    } catch (e) {
+      err.textContent = "전송 실패: " + e;
+      err.classList.remove("hidden");
+    }
   }
 
   let pollTimer = null;
@@ -325,6 +364,14 @@
     sel.addEventListener("change", refresh);
     projSel.addEventListener("change", switchProject);
     $("#refresh").addEventListener("click", refresh);
+    // M33: 게이트 제어 버튼
+    $("#gate-approve").addEventListener("click", () => {
+      if (currentGateId) sendControl({ gate_id: currentGateId, decision: "approve" });
+    });
+    $("#gate-stop").addEventListener("click", () => {
+      if (currentGateId) sendControl({ gate_id: currentGateId, decision: "stop" });
+    });
+    $("#stop-next").addEventListener("click", () => sendControl({ decision: "stop" }));
   }
 
   init();

@@ -223,6 +223,13 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.30.0]
+- **게이트 제어 — 대시보드에서 task 승인·정지 (M33, Phase 3a)**: `[conductor] approval_mode = "gate"`면 콘솔 프롬프트 대신 **대시보드 승인 대기 카드**([승인]/[정지])로 task/배치 게이트를 처리. 실행 중 상시 **[다음 게이트에서 정지]** 버튼으로 graceful stop(진행 중 task를 마치고 다음 게이트에서 자동 정지). 기본 console 모드·`--yes` 자동 승인은 무변경
+- **제어 채널 (무결합 유지)**: conductor가 `live.json`에 `pending_gate`를 올리고 `.porpoise/control/gate-<id>.json` 응답을 폴링·소비(M31 관측의 역방향 — 파일 매개). 실행 시작 시 stale 제어 파일(이전 실행의 stop-next 등) 자동 청소로 이월 정지 방지
+- **`POST /api/control` (대시보드 첫 쓰기)**: 쓰기 범위를 `.porpoise/control/`로 한정. 3중 보호 — M32 허용 목록·프로젝트 스코프 상속(미등록 404), gate_id 형식 검증(경로 주입 400), **Origin 검증**(cross-origin POST 403, CSRF 차단)
+- **라이브 검증**: 실제 conductor gate 모드로 [승인]→진행 / [정지]→종료 / 사전 정지→다음 게이트 자동 정지 — 세 제어 전 시나리오 통과
+- **테스트**: 366개 (353 → 366, +13개)
+
 ### [v0.29.0]
 - **멀티 프로젝트 관측 — 대시보드 저장소 선택 (M32)**: 한 대시보드에서 **여러 porpoise 프로젝트를 셀렉터로 전환**하며 관제(리포트·비용·DAG·라이브 전부 스코프). read-only 유지
 - **프로젝트 레지스트리(허용 목록)**: `~/.porpoise/registry.json` — `porpoise dashboard` 실행 시 현재 프로젝트 자동 등록, `--register/--unregister <path>` 명시 관리. 클라이언트는 경로가 아닌 **불투명 id**(`?project=<id>`)로만 참조하고 서버는 **등록된 경로만** 해석(미등록 404) — 임의 파일시스템 열람 차단

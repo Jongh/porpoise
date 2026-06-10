@@ -4,6 +4,7 @@
 //! 브라우저에서 본다. conductor 로직은 건드리지 않는다(파일 쓰기 없음).
 
 pub mod api;
+pub mod control;
 pub mod registry;
 pub mod sse;
 
@@ -184,9 +185,34 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
 }
 
 /// 요청 하나를 처리한다 (요청 전용 스레드에서 실행).
-fn handle_request(request: tiny_http::Request, project: &Path) {
+fn handle_request(mut request: tiny_http::Request, project: &Path) {
     let url = request.url().to_string();
-    if url.starts_with("/api/events") {
+
+    // M33: 제어 POST — 유일한 쓰기 경로 (.porpoise/control/ 한정)
+    let (req_path, _) = parse_path_and_query(&url);
+    if req_path == "/api/control" && request.method() == &tiny_http::Method::Post {
+        let (_, params) = parse_path_and_query(&url);
+        let Ok(scope) = resolve_project_scope(project, &params) else {
+            respond_json(request, 404, r#"{"error":"unknown project id"}"#);
+            return;
+        };
+        let origin = request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("Origin"))
+            .map(|h| h.value.as_str().to_string());
+        let mut body = String::new();
+        use std::io::Read;
+        if request.as_reader().take(16 * 1024).read_to_string(&mut body).is_err() {
+            respond_json(request, 400, r#"{"error":"unreadable body"}"#);
+            return;
+        }
+        let out = control::handle_control(&scope, &body, origin.as_deref());
+        respond_json(request, out.status, &out.body);
+        return;
+    }
+
+    if req_path == "/api/events" {
         // M32: SSE도 ?project= 스코프 적용 (미등록 id는 404)
         let (_, params) = parse_path_and_query(&url);
         let Ok(scope) = resolve_project_scope(project, &params) else {
@@ -215,6 +241,17 @@ fn handle_request(request: tiny_http::Request, project: &Path) {
         .expect("유효한 헤더");
     let response = tiny_http::Response::from_string(r.body)
         .with_status_code(r.status)
+        .with_header(header);
+    let _ = request.respond(response);
+}
+
+/// JSON 응답 헬퍼.
+fn respond_json(request: tiny_http::Request, status: u16, body: &str) {
+    let header =
+        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..])
+            .expect("유효한 헤더");
+    let response = tiny_http::Response::from_string(body)
+        .with_status_code(status)
         .with_header(header);
     let _ = request.respond(response);
 }

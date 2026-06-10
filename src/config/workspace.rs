@@ -96,6 +96,8 @@ pub struct WorkspaceConductor {
     /// 누적 비용(USD) 상한 (M28). 설정 시 누적 비용이 도달하면 다음 dispatch 전 중단.
     /// 생략·0 이하이면 무제한(기존 동작).
     pub budget_usd: Option<f64>,
+    /// 승인 게이트 모드 (M33): "console"(기본 — 터미널 프롬프트) | "gate"(대시보드 승인 대기).
+    pub approval_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -468,6 +470,14 @@ reviewer_extra = ""
             .as_ref()
             .and_then(|c| c.budget_usd)
             .filter(|b| *b > 0.0)
+    }
+
+    /// 게이트 승인 모드 여부 (M33). `approval_mode = "gate"`일 때만 true (기본 console).
+    pub fn conductor_gate_mode(&self) -> bool {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.approval_mode.as_deref())
+            == Some("gate")
     }
 
     pub fn session_keep_completed(&self) -> bool {
