@@ -297,7 +297,7 @@ pub(super) fn run_new_format(
                             }
                             println!("{}", "새 마일스톤이 생성되지 않았습니다.".yellow());
                         } else {
-                            let _ = super::run_release_flow(config.github_repo());
+                            let _ = super::run_release_flow(config.github_repo(), None);
                         }
                         break;
                     }

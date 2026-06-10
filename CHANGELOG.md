@@ -4,6 +4,15 @@
 
 ---
 
+### [v0.31.0]
+- **계획 제어 + 게이트 UX (M34, Phase 3b)**: M33 라이브 검증의 사용자 피드백 2건을 해소 — gate 모드 한 사이클(task 승인→실행→마일스톤 생성 확인→릴리즈 태그 입력)이 **터미널 입력 없이** 돈다
+- **정지 예약 가시화 (피드백 1)**: [다음 게이트에서 정지]를 눌러도 화면 변화가 없던 문제 해소. live 페이로드에 `stop_pending`(서버 진실 — `control/stop-next.json` **존재만** 읽음, read-only 유지)을 추가하고 `snapshot`에 포함해 변화가 SSE로 push되게 함 → 버튼이 **"⏹ 정지 예약됨"**(비활성·강조)으로 즉시 전환, **모든 브라우저 창이 일관**, 게이트에서 소비되면 자연 해제
+- **텍스트 게이트 프로토콜**: `pending_gate.kind`(`confirm` 기존 | `text` 자유 입력 | `confirm_text` 예약) + 응답 `text` 필드. `gate_exchange` 코어 신설(기존 `gate_decision`은 무변경 위임), `gate_text_decision` 추가. control API는 text를 **4KB 제한·제어문자 거부**로 검증하고 `serde_json` 직렬화로 특수문자를 안전 이스케이프
+- **계획·릴리즈 게이트화 (피드백 2)**: gate 모드에서 전 task 완료 후 — "새 마일스톤을 생성하시겠습니까?"(conductor)가 confirm 게이트로, `run_release_flow`의 태그 입력(dialoguer)이 **text 게이트**(입력 폼·**Enter 전송**·빈 값/정지=건너뜀)로. console 모드·`--yes`·레거시(new_format) 경로 무변경
+- **라이브 검증**: gate-trace 로그로 입증 — ① dispatch 중 정지 클릭 → 즉시 `STOP-PENDING` 기록·표시, merged 후 게이트 없이 graceful stop ② `confirm:m1-t02 → confirm:new-milestone → text:release-tag` 시퀀스 무터미널 완주, 모든 응답 파일 출현→소비, 잔여 0. 하니스 +3항목(stop_pending 노출/해제·text 왕복 보존)
+- **알려진 한계**: git push **실패 시 재시도 confirm**(`run_release_flow` 내)은 아직 콘솔 — 드문 에러 경로로, 후속(M35+)에서 정리 예정
+- **테스트**: 369개 (366 → 369, +3개)
+
 ### [v0.30.0]
 - **게이트 제어 — 대시보드에서 task 승인·정지 (M33, Phase 3a)**: "지휘 통제실" 제어 1단계. `[conductor] approval_mode = "gate"`면 task/배치 승인 게이트("'M1-T01' 작업을 지휘하시겠습니까?")가 콘솔 프롬프트 대신 **대시보드 승인 대기 카드**([승인]/[정지])로 처리된다. 기본 `console` 모드와 `--yes` 자동 승인(자동화·CI)은 무변경
 - **게이트 프로토콜 (무결합 유지)**: `src/conductor/gate.rs` 신설 — conductor가 `live.json`에 `pending_gate {id, prompt}`를 기록(SSE로 카드 표시)하고 `.porpoise/control/gate-<id>.json` 응답을 폴링(1초)·**소비(삭제)**. 손상 응답은 제거 후 계속 대기(무한 루프 방지). M31 관측의 역방향이지만 같은 원칙: 파일 매개, conductor는 대시보드의 존재를 모른다

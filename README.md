@@ -223,6 +223,15 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.31.0]
+- **계획 제어 + 게이트 UX (M34, Phase 3b)**: M33 라이브 피드백 2건 해소 — gate 모드 한 사이클(승인→실행→마일스톤 생성→릴리즈)이 **터미널 입력 없이** 돈다
+- **정지 예약 가시화**: [다음 게이트에서 정지] 클릭 시 live 페이로드의 `stop_pending`(서버 진실 — `control/stop-next.json` 존재)이 SSE로 push되어 버튼이 **"⏹ 정지 예약됨"**으로 즉시 전환(모든 브라우저 창 일관), 게이트 소비 시 자연 해제
+- **텍스트 게이트 프로토콜**: `pending_gate.kind`(confirm/text/confirm_text) + 응답 `text`(4KB 제한·제어문자 거부, serde_json 이스케이프). 기존 confirm 게이트 하위호환
+- **계획·릴리즈 게이트화**: 전 task 완료 후 "새 마일스톤을 생성하시겠습니까?" → confirm 게이트, "신규 릴리즈 태그" → **text 게이트**(입력 폼·Enter 전송·빈 값=건너뜀). console 모드·`--yes`·레거시 경로 무변경
+- **라이브 검증**: 정지 예약 즉시 가시화(STOP-PENDING 트레이스), `confirm:new-milestone → text:release-tag` 게이트 시퀀스 무터미널 완주 — gate-trace 로그로 입증
+- **알려진 한계**: git push **실패 시 재시도 confirm**은 아직 콘솔(드문 에러 경로 — 후속 정리 예정)
+- **테스트**: 369개 (366 → 369, +3개)
+
 ### [v0.30.0]
 - **게이트 제어 — 대시보드에서 task 승인·정지 (M33, Phase 3a)**: `[conductor] approval_mode = "gate"`면 콘솔 프롬프트 대신 **대시보드 승인 대기 카드**([승인]/[정지])로 task/배치 게이트를 처리. 실행 중 상시 **[다음 게이트에서 정지]** 버튼으로 graceful stop(진행 중 task를 마치고 다음 게이트에서 자동 정지). 기본 console 모드·`--yes` 자동 승인은 무변경
 - **제어 채널 (무결합 유지)**: conductor가 `live.json`에 `pending_gate`를 올리고 `.porpoise/control/gate-<id>.json` 응답을 폴링·소비(M31 관측의 역방향 — 파일 매개). 실행 시작 시 stale 제어 파일(이전 실행의 stop-next 등) 자동 청소로 이월 정지 방지

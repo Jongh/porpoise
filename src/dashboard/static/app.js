@@ -264,20 +264,34 @@
       budgetBox.classList.add("hidden");
     }
 
-    // M33: 승인 대기 게이트 카드
+    // M33: 승인 대기 게이트 카드 (M34: kind별 폼)
     const gate = live.pending_gate;
     const card = $("#gate-card");
+    const textInput = $("#gate-text");
     if (gate && live.run_active) {
+      const isNewGate = currentGateId !== gate.id;
       currentGateId = gate.id;
+      currentGateKind = gate.kind || "confirm";
       $("#gate-prompt").textContent = gate.prompt;
+      // text 계열 게이트는 입력 폼 표시, 승인 버튼 라벨을 "전송"으로
+      const wantsText = currentGateKind === "text" || currentGateKind === "confirm_text";
+      textInput.classList.toggle("hidden", !wantsText);
+      $("#gate-approve").textContent = currentGateKind === "text" ? "전송" : "승인";
+      if (isNewGate) textInput.value = "";
       card.classList.remove("hidden");
     } else {
       currentGateId = null;
+      currentGateKind = "confirm";
       card.classList.add("hidden");
       $("#gate-error").classList.add("hidden");
     }
-    // 실행 중 상시 사전 정지 버튼
-    $("#stop-next").classList.toggle("hidden", !live.run_active);
+    // 실행 중 상시 사전 정지 버튼 (M34: 정지 예약 가시화 — 서버 진실 stop_pending)
+    const stopBtn = $("#stop-next");
+    stopBtn.classList.toggle("hidden", !live.run_active);
+    const armed = !!(payload && payload.stop_pending);
+    stopBtn.classList.toggle("armed", armed);
+    stopBtn.disabled = armed;
+    stopBtn.textContent = armed ? "⏹ 정지 예약됨" : "다음 게이트에서 정지";
 
     // 실행 종료 전환(RUNNING→IDLE) 시 리포트·DAG 자동 새로고침
     if (wasActive && !live.run_active) refresh();
@@ -286,6 +300,7 @@
 
   // ── M33: 제어 전송 ─────────────────────────────────────────────────
   let currentGateId = null;
+  let currentGateKind = "confirm"; // M34: text 게이트면 입력값 동봉
 
   async function sendControl(payload) {
     const err = $("#gate-error");
@@ -364,14 +379,23 @@
     sel.addEventListener("change", refresh);
     projSel.addEventListener("change", switchProject);
     $("#refresh").addEventListener("click", refresh);
-    // M33: 게이트 제어 버튼
+    // M33: 게이트 제어 버튼 (M34: text 게이트면 입력값 동봉)
     $("#gate-approve").addEventListener("click", () => {
-      if (currentGateId) sendControl({ gate_id: currentGateId, decision: "approve" });
+      if (!currentGateId) return;
+      const payload = { gate_id: currentGateId, decision: "approve" };
+      if (currentGateKind === "text" || currentGateKind === "confirm_text") {
+        payload.text = $("#gate-text").value;
+      }
+      sendControl(payload);
     });
     $("#gate-stop").addEventListener("click", () => {
       if (currentGateId) sendControl({ gate_id: currentGateId, decision: "stop" });
     });
     $("#stop-next").addEventListener("click", () => sendControl({ decision: "stop" }));
+    // M34: 텍스트 게이트에서 Enter = 전송 (콘솔 Input의 자연스러운 대체)
+    $("#gate-text").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") $("#gate-approve").click();
+    });
   }
 
   init();

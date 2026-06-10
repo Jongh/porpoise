@@ -17,6 +17,14 @@ pub struct ControlRequest {
     #[serde(default)]
     pub gate_id: Option<String>,
     pub decision: String,
+    /// M34: 텍스트 게이트 응답 (예: 릴리즈 태그). 4KB 제한·제어문자 거부.
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// 텍스트 응답이 안전한가 (M34) — 4KB 이하, 제어문자 없음.
+pub fn text_safe(text: &str) -> bool {
+    text.len() <= 4096 && !text.chars().any(|c| c.is_control())
 }
 
 /// 제어 처리 결과 (상태코드 + 본문).
@@ -56,6 +64,11 @@ pub fn handle_control(project: &Path, body: &str, origin: Option<&str>) -> Contr
     if req.decision != "approve" && req.decision != "stop" {
         return outcome(400, r#"{"error":"decision must be approve|stop"}"#);
     }
+    if let Some(ref t) = req.text {
+        if !text_safe(t) {
+            return outcome(400, r#"{"error":"text too long or contains control chars"}"#);
+        }
+    }
 
     let control_dir = project.join(".porpoise").join("control");
     if std::fs::create_dir_all(&control_dir).is_err() {
@@ -78,7 +91,8 @@ pub fn handle_control(project: &Path, body: &str, origin: Option<&str>) -> Contr
         }
     };
 
-    let content = format!(r#"{{"decision":"{}"}}"#, req.decision);
+    // serde_json 직렬화 — 텍스트의 따옴표 등 특수문자를 안전하게 이스케이프
+    let content = serde_json::json!({ "decision": req.decision, "text": req.text }).to_string();
     let target = control_dir.join(&filename);
     let tmp = control_dir.join(format!("{}.tmp", filename));
     if std::fs::write(&tmp, &content).is_err() {
@@ -154,6 +168,34 @@ mod tests {
             .map(|e| e.flatten().map(|f| f.file_name().to_string_lossy().to_string()).collect())
             .unwrap_or_default();
         assert!(leftover.is_empty(), "거부 요청은 파일을 만들지 않아야 함: {:?}", leftover);
+    }
+
+    #[test]
+    fn text_response_written_and_validated() {
+        // M34: 텍스트 응답 — 특수문자 이스케이프 + 검증 거부
+        let tmp = dir();
+        let r = handle_control(
+            tmp.path(),
+            r#"{"gate_id":"rel-1","decision":"approve","text":"v0.31.0 \"quoted\""}"#,
+            None,
+        );
+        assert_eq!(r.status, 200);
+        let f = tmp.path().join(".porpoise").join("control").join("gate-rel-1.json");
+        let content = std::fs::read_to_string(f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["text"], "v0.31.0 \"quoted\"", "텍스트가 안전하게 직렬화됨");
+
+        // 제어문자 거부
+        let r2 = handle_control(
+            tmp.path(),
+            "{\"gate_id\":\"rel-2\",\"decision\":\"approve\",\"text\":\"a\\u0000b\"}",
+            None,
+        );
+        assert_eq!(r2.status, 400, "제어문자 텍스트 거부");
+        // 4KB 초과 거부
+        let long = "x".repeat(5000);
+        let body = format!(r#"{{"gate_id":"rel-3","decision":"approve","text":"{}"}}"#, long);
+        assert_eq!(handle_control(tmp.path(), &body, None).status, 400);
     }
 
     #[test]

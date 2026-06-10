@@ -24,6 +24,10 @@ pub struct LiveTask {
 pub struct PendingGate {
     pub id: String,
     pub prompt: String,
+    /// M34: 게이트 종류 — "confirm"(승인/정지) | "text"(자유 텍스트) | "confirm_text"(승인+선택 텍스트).
+    /// 구 기록엔 없으므로 default(빈 문자열)는 confirm으로 해석한다.
+    #[serde(default)]
+    pub kind: String,
 }
 
 /// `.porpoise/live.json` 전체 상태 (live-1).

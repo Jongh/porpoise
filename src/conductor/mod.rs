@@ -443,9 +443,20 @@ fn handle_all_tasks_done(
     logger: &Logger,
 ) -> Result<bool> {
     println!("{}", "\n모든 작업 항목 완료!".green().bold());
-    let create_new = confirm_or_default("새 마일스톤을 생성하시겠습니까?", args.yes, args.yes)?;
+    // M34: gate 모드면 마일스톤 생성 여부도 대시보드 confirm 게이트로
+    let gate_mode = workspace.conductor_gate_mode() && !args.yes;
+    let create_new = if gate_mode {
+        gate::gate_decision(path, "new-milestone", "새 마일스톤을 생성하시겠습니까?")
+            == gate::Decision::Approve
+    } else {
+        confirm_or_default("새 마일스톤을 생성하시겠습니까?", args.yes, args.yes)?
+    };
     if !create_new {
-        let _ = crate::orchestrator::run_release_flow(config.github_repo());
+        // M34: gate 모드면 릴리즈 태그 입력도 text 게이트로 (Some(path) 전달)
+        let _ = crate::orchestrator::run_release_flow(
+            config.github_repo(),
+            if gate_mode { Some(path) } else { None },
+        );
         return Ok(false);
     }
     crate::orchestrator::milestone_session::run_milestone_session(

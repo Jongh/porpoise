@@ -82,12 +82,29 @@ catch { $code = [int]$_.Exception.Response.StatusCode }
 if ($code -ne 404) { Fail "unknown project should be 404, got $code" }
 Ok "unknown project id -> 404 (allow-list inherited)"
 
-# 4. fake pending gate in live.json -> /api/live exposes it
-$live = @{ schema_version="live-1"; run_active=$true; started_at="t"; updated_at="t"; mode="sequential"; total_cost_usd=0.0; budget_usd=$null; tasks=@(); pending_gate=@{ id="m1-t01-999999"; prompt="'M1-T01' 작업을 지휘하시겠습니까?" } } | ConvertTo-Json -Depth 6
+# 4. fake pending gate in live.json -> /api/live exposes it (M34: kind 포함)
+$live = @{ schema_version="live-1"; run_active=$true; started_at="t"; updated_at="t"; mode="sequential"; total_cost_usd=0.0; budget_usd=$null; tasks=@(); pending_gate=@{ id="m1-t01-999999"; prompt="'M1-T01' 작업을 지휘하시겠습니까?"; kind="text" } } | ConvertTo-Json -Depth 6
 WriteUtf8 (Join-Path $porpoise "live.json") $live
 $lv = Invoke-RestMethod "$base/api/live"
 if ($lv.live.pending_gate.id -ne "m1-t01-999999") { Fail "/api/live missing pending_gate" }
-Ok "/api/live exposes pending_gate (UI data path)"
+if ($lv.live.pending_gate.kind -ne "text") { Fail "pending_gate.kind not exposed" }
+Ok "/api/live exposes pending_gate with kind (UI data path)"
+
+# 5. M34: stop_pending visibility — stop-next.json 존재가 payload에 반영
+if ($lv.stop_pending -ne $true) { Fail "stop_pending should be true (stop-next.json from step 2 exists)" }
+Ok "stop_pending=true exposed (stop reservation visible)"
+Remove-Item (Join-Path $porpoise "control\stop-next.json") -Force
+$lv2 = Invoke-RestMethod "$base/api/live"
+if ($lv2.stop_pending -ne $false) { Fail "stop_pending should clear after consume" }
+Ok "stop_pending clears when stop-next consumed"
+
+# 6. M34: text gate response roundtrip — POST with text -> file contains escaped text
+$r6 = Invoke-RestMethod -Method Post -Uri "$base/api/control" -ContentType "application/json" -Body '{"gate_id":"rel-100","decision":"approve","text":"v9.9.9"}'
+$relFile = Join-Path $porpoise "control\gate-rel-100.json"
+if (-not (Test-Path $relFile)) { Fail "text gate response not written" }
+$relJson = Get-Content $relFile -Raw | ConvertFrom-Json
+if ($relJson.text -ne "v9.9.9") { Fail "text not preserved in response file" }
+Ok "text gate response roundtrip (text preserved)"
 
 Cleanup
 Write-Host "`nM33 GATE CONTROL VALIDATION: PASS" -ForegroundColor Green

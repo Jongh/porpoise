@@ -58,13 +58,16 @@ pub fn gate_id_for(task_id: &str) -> String {
 }
 
 /// 응답 파일 내용을 해석한다 (순수). 손상·미지 decision은 None.
-fn parse_decision(content: &str) -> Option<Decision> {
+/// M34: 텍스트 응답(`text`)도 함께 반환한다 (없으면 None).
+fn parse_response(content: &str) -> Option<(Decision, Option<String>)> {
     let v: serde_json::Value = serde_json::from_str(content.trim_start_matches('\u{feff}')).ok()?;
-    match v.get("decision").and_then(|d| d.as_str()) {
-        Some("approve") => Some(Decision::Approve),
-        Some("stop") => Some(Decision::Stop),
-        _ => None,
-    }
+    let decision = match v.get("decision").and_then(|d| d.as_str()) {
+        Some("approve") => Decision::Approve,
+        Some("stop") => Decision::Stop,
+        _ => return None,
+    };
+    let text = v.get("text").and_then(|t| t.as_str()).map(str::to_string);
+    Some((decision, text))
 }
 
 /// 파일이 존재하면 읽고 **소비(삭제)** 한다.
@@ -80,19 +83,16 @@ fn consume_stop_next(path: &Path) -> bool {
 }
 
 /// 한 번의 폴링 틱 — 게이트 응답·사전 정지를 확인한다 (순수에 가깝게 분리, 테스트 용이).
-fn poll_once(path: &Path, gate_id: &str) -> Option<Decision> {
+fn poll_once(path: &Path, gate_id: &str) -> Option<(Decision, Option<String>)> {
     if consume_stop_next(path) {
-        return Some(Decision::Stop);
+        return Some((Decision::Stop, None));
     }
     let file = gate_file(path, gate_id);
     let content = consume(&file)?;
-    parse_decision(&content) // 손상이면 None — 이미 삭제됨, 계속 대기
+    parse_response(&content) // 손상이면 None — 이미 삭제됨, 계속 대기
 }
 
-/// 게이트 결정을 기다린다 (블로킹 — gate 모드 전용).
-///
-/// 대시보드가 `POST /api/control`로 응답 파일을 쓰면 소비하고 반환한다.
-/// `poll_interval`은 테스트 주입용 (운영 기본 1초).
+/// 게이트 결정을 기다린다 (블로킹 — gate 모드 전용, 승인/정지만).
 pub fn gate_decision(path: &Path, task_label: &str, prompt: &str) -> Decision {
     gate_decision_with_interval(path, task_label, prompt, Duration::from_secs(1))
 }
@@ -103,6 +103,26 @@ pub fn gate_decision_with_interval(
     prompt: &str,
     poll_interval: Duration,
 ) -> Decision {
+    gate_exchange(path, task_label, prompt, "confirm", poll_interval).0
+}
+
+/// 텍스트 게이트 (M34) — 자유 텍스트 응답을 기다린다 (예: 릴리즈 태그).
+/// 반환: (결정, 텍스트 — Approve여도 빈 값일 수 있음).
+pub fn gate_text_decision(path: &Path, label: &str, prompt: &str) -> (Decision, String) {
+    let (d, t) = gate_exchange(path, label, prompt, "text", Duration::from_secs(1));
+    (d, t.unwrap_or_default())
+}
+
+/// 게이트 교환 코어 — kind를 live.json에 공개하고 응답(결정+텍스트)을 폴링한다.
+/// 대시보드가 `POST /api/control`로 응답 파일을 쓰면 소비하고 반환한다.
+/// `poll_interval`은 테스트 주입용 (운영 기본 1초).
+pub fn gate_exchange(
+    path: &Path,
+    task_label: &str,
+    prompt: &str,
+    kind: &str,
+    poll_interval: Duration,
+) -> (Decision, Option<String>) {
     // control 디렉터리 보장 (없으면 폴링이 영원히 빈손)
     let _ = std::fs::create_dir_all(control_dir(path));
 
@@ -111,21 +131,25 @@ pub fn gate_decision_with_interval(
     // 1. 사전 정지 — 게이트를 띄우기 전에 즉시 처리
     if consume_stop_next(path) {
         println!("  ⏹ 사전 정지 요청 수신 — 다음 task를 시작하지 않습니다.");
-        return Decision::Stop;
+        return (Decision::Stop, None);
     }
 
     // 2. 대기 상태 공개
     live::set_pending_gate(
         path,
-        Some(PendingGate { id: gate_id.clone(), prompt: prompt.to_string() }),
+        Some(PendingGate {
+            id: gate_id.clone(),
+            prompt: prompt.to_string(),
+            kind: kind.to_string(),
+        }),
     );
     println!("  ⏸ 대시보드 승인 대기 중... ({} — Ctrl-C로 중단)", prompt);
 
     // 3. 폴링
     let mut ticks: u64 = 0;
-    let decision = loop {
-        if let Some(d) = poll_once(path, &gate_id) {
-            break d;
+    let (decision, text) = loop {
+        if let Some(r) = poll_once(path, &gate_id) {
+            break r;
         }
         std::thread::sleep(poll_interval);
         ticks += 1;
@@ -141,7 +165,7 @@ pub fn gate_decision_with_interval(
         Decision::Approve => println!("  ▶ 대시보드 승인 — 진행합니다."),
         Decision::Stop => println!("  ⏹ 대시보드 정지 — 세션을 종료합니다."),
     }
-    decision
+    (decision, text)
 }
 
 #[cfg(test)]
@@ -163,11 +187,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_decision_variants() {
-        assert_eq!(parse_decision(r#"{"decision":"approve"}"#), Some(Decision::Approve));
-        assert_eq!(parse_decision(r#"{"decision":"stop"}"#), Some(Decision::Stop));
-        assert_eq!(parse_decision(r#"{"decision":"nuke"}"#), None);
-        assert_eq!(parse_decision("not json"), None);
+    fn parse_response_variants() {
+        assert_eq!(parse_response(r#"{"decision":"approve"}"#), Some((Decision::Approve, None)));
+        assert_eq!(parse_response(r#"{"decision":"stop"}"#), Some((Decision::Stop, None)));
+        // M34: 텍스트 응답
+        assert_eq!(
+            parse_response(r#"{"decision":"approve","text":"v0.31.0"}"#),
+            Some((Decision::Approve, Some("v0.31.0".to_string())))
+        );
+        assert_eq!(parse_response(r#"{"decision":"nuke"}"#), None);
+        assert_eq!(parse_response("not json"), None);
     }
 
     #[test]
@@ -184,7 +213,7 @@ mod tests {
     fn poll_consumes_approve_response() {
         let tmp = dir();
         write_gate_response(tmp.path(), "g1", "approve");
-        assert_eq!(poll_once(tmp.path(), "g1"), Some(Decision::Approve));
+        assert_eq!(poll_once(tmp.path(), "g1"), Some((Decision::Approve, None)));
         // 소비됨 — 두 번째 폴링은 빈손
         assert_eq!(poll_once(tmp.path(), "g1"), None);
         assert!(!gate_file(tmp.path(), "g1").exists(), "응답 파일은 소비(삭제)되어야 함");
@@ -196,10 +225,42 @@ mod tests {
         std::fs::write(stop_next_file(tmp.path()), "{}").unwrap();
         write_gate_response(tmp.path(), "g2", "approve");
         // 사전 정지가 우선
-        assert_eq!(poll_once(tmp.path(), "g2"), Some(Decision::Stop));
+        assert_eq!(poll_once(tmp.path(), "g2"), Some((Decision::Stop, None)));
         assert!(!stop_next_file(tmp.path()).exists(), "stop-next는 소비됨");
         // 다음 폴링에선 approve가 보임
-        assert_eq!(poll_once(tmp.path(), "g2"), Some(Decision::Approve));
+        assert_eq!(poll_once(tmp.path(), "g2"), Some((Decision::Approve, None)));
+    }
+
+    #[test]
+    fn text_gate_roundtrip() {
+        // M34: 텍스트 게이트 — pending_gate에 kind 공개, 응답 텍스트 수신
+        let tmp = dir();
+        let path = tmp.path().to_path_buf();
+        let ctrl = control_dir(&path);
+        let writer = std::thread::spawn(move || {
+            for _ in 0..100 {
+                std::thread::sleep(Duration::from_millis(10));
+                if let Some(s) = crate::conductor::live::load(&path) {
+                    if let Some(g) = s.pending_gate {
+                        assert_eq!(g.kind, "text", "kind가 live.json에 공개되어야 함");
+                        std::fs::write(
+                            ctrl.join(format!("gate-{}.json", g.id)),
+                            r#"{"decision":"approve","text":"v9.9.9"}"#,
+                        )
+                        .unwrap();
+                        return;
+                    }
+                }
+            }
+            panic!("pending_gate 미출현");
+        });
+
+        let (d, t) = gate_exchange(
+            tmp.path(), "release", "신규 릴리즈 태그", "text", Duration::from_millis(10),
+        );
+        writer.join().unwrap();
+        assert_eq!(d, Decision::Approve);
+        assert_eq!(t.as_deref(), Some("v9.9.9"));
     }
 
     #[test]

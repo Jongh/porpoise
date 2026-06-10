@@ -463,7 +463,9 @@ pub(super) fn all_tasks_done(path: &Path) -> bool {
     !tasks.is_empty() && tasks.iter().all(|t| t.completed)
 }
 
-pub(super) fn run_release_flow(github_repo: Option<&str>) -> Result<()> {
+/// 릴리즈 플로우. `gate_path`가 Some이면(M34 — gate 모드) 태그 입력을 콘솔 대신
+/// 대시보드 text 게이트로 받는다.
+pub(crate) fn run_release_flow(github_repo: Option<&str>, gate_path: Option<&Path>) -> Result<()> {
     println!("{}", "\n=== 릴리즈 플로우 ===".green().bold());
 
     let branch_out = Command::new("git")
@@ -484,10 +486,25 @@ pub(super) fn run_release_flow(github_repo: Option<&str>) -> Result<()> {
     };
     println!("  현재 버전: {}", current_tag.yellow());
 
-    let new_tag = Input::<String>::new()
-        .with_prompt("신규 릴리즈 태그 (비워두면 건너뜀)")
-        .allow_empty(true)
-        .interact_text()?;
+    // M34: gate 모드면 태그 입력을 대시보드 text 게이트로 (빈 텍스트·정지 = 건너뜀)
+    let new_tag = match gate_path {
+        Some(p) => {
+            let (decision, text) = crate::conductor::gate::gate_text_decision(
+                p,
+                "release-tag",
+                "신규 릴리즈 태그 (비워두면 건너뜀)",
+            );
+            if decision == crate::conductor::gate::Decision::Stop {
+                String::new()
+            } else {
+                text
+            }
+        }
+        None => Input::<String>::new()
+            .with_prompt("신규 릴리즈 태그 (비워두면 건너뜀)")
+            .allow_empty(true)
+            .interact_text()?,
+    };
 
     let new_tag = new_tag.trim().to_string();
     if new_tag.is_empty() {

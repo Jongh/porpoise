@@ -14,11 +14,20 @@ const POLL_MS: u64 = 500;
 /// keep-alive 주석(`: ping`) 주기 (폴링 틱 수 — 500ms × 20 = 10초).
 const PING_TICKS: u32 = 20;
 
-/// 변화 감지용 스냅샷 키 — live.json 원문 + sessions 파일 수.
+/// 변화 감지용 스냅샷 키 — live.json 원문 + sessions 파일 수 + 정지 예약 여부.
 pub fn snapshot(project: &Path) -> String {
     let live = std::fs::read_to_string(project.join(".porpoise").join("live.json"))
         .unwrap_or_default();
-    format!("{}|{}", sessions_count(project), live)
+    format!("{}|{}|{}", sessions_count(project), stop_pending(project), live)
+}
+
+/// 사전 정지(stop-next)가 대기 중인가 (M34) — 파일 존재만 확인 (read-only).
+fn stop_pending(project: &Path) -> bool {
+    project
+        .join(".porpoise")
+        .join("control")
+        .join("stop-next.json")
+        .exists()
 }
 
 fn sessions_count(project: &Path) -> usize {
@@ -33,7 +42,12 @@ pub fn live_payload(project: &Path) -> Value {
     let live = crate::conductor::live::load(project)
         .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
         .unwrap_or_else(|| json!({ "run_active": false }));
-    json!({ "live": live, "sessions_count": sessions_count(project) })
+    json!({
+        "live": live,
+        "sessions_count": sessions_count(project),
+        // M34: 정지 예약 가시화 — 버튼이 눌렸는지 모든 클라이언트가 일관되게 본다
+        "stop_pending": stop_pending(project),
+    })
 }
 
 /// tiny_http의 청크 인코더는 8192B 내부 버퍼(`chunked_transfer::Encoder::new`)가 차야
@@ -153,6 +167,23 @@ mod tests {
         std::fs::write(tmp.path().join(".porpoise").join("sessions").join("b.json"), "{}").unwrap();
         let s3 = snapshot(tmp.path());
         assert_ne!(s2, s3, "sessions 수 변화도 반영");
+    }
+
+    #[test]
+    fn stop_pending_reflected_in_payload_and_snapshot() {
+        // M34: stop-next.json 존재가 payload·snapshot에 반영 → SSE push 트리거
+        let tmp = dir();
+        let s1 = snapshot(tmp.path());
+        let v1 = live_payload(tmp.path());
+        assert_eq!(v1["stop_pending"], false);
+
+        let ctrl = tmp.path().join(".porpoise").join("control");
+        std::fs::create_dir_all(&ctrl).unwrap();
+        std::fs::write(ctrl.join("stop-next.json"), "{}").unwrap();
+
+        let v2 = live_payload(tmp.path());
+        assert_eq!(v2["stop_pending"], true);
+        assert_ne!(s1, snapshot(tmp.path()), "정지 예약이 스냅샷 변화로 감지됨");
     }
 
     #[test]
