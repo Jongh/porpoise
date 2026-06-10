@@ -138,7 +138,38 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
         let tasks = parse_tasks_from_project_md(path);
         if tasks.iter().all(|t| t.completed) {
             logger.info("orchestrator", "No pending tasks — entering milestone session");
-            println!("{}", "\n미완료 작업이 없습니다. 마일스톤 생성 세션을 시작합니다.".cyan().bold());
+            println!("{}", "\n미완료 작업이 없습니다.".cyan().bold());
+
+            // M36: gate 모드면 마일스톤 생성(LLM 비용 행위)도 무확인 시작하지 않고 게이트로.
+            // (conductor 루프 내 경로는 M34에서 게이트화 — 재실행 경로의 일관성 갭 해소)
+            // 게이트는 conductor 전용 개념 — legacy(API 어댑터 등) 경로에서는 발동하지 않는다.
+            let conductor_active = workspace.conductor_enabled()
+                && workspace.model_adapter_type()
+                    == crate::model::adapter::AdapterType::ClaudeCode;
+            if conductor_active && workspace.conductor_gate_mode() && !args.yes {
+                // 게이트 무한 대기 방지: 대시보드를 먼저 보장(이미 떠 있으면 공존)
+                use crate::dashboard::ServeOutcome;
+                match crate::dashboard::serve_in_background(path, 7878) {
+                    ServeOutcome::Started(url) | ServeOutcome::PortInUse(url) => {
+                        println!("  {} 대시보드: {}", "▶".green(), url.cyan());
+                        let _ = webbrowser::open(&url);
+                    }
+                    ServeOutcome::Failed(e) => {
+                        logger.warn("orchestrator", &format!("대시보드 기동 실패: {}", e));
+                    }
+                }
+                let approve = crate::conductor::gate::gate_decision(
+                    path,
+                    "new-milestone",
+                    "새 마일스톤을 생성하시겠습니까?",
+                ) == crate::conductor::gate::Decision::Approve;
+                if !approve {
+                    let _ = run_release_flow(config.github_repo(), Some(path));
+                    return Ok(());
+                }
+            }
+
+            println!("{}", "마일스톤 생성 세션을 시작합니다.".cyan().bold());
             milestone_session::run_milestone_session(
                 path,
                 args.dry_run,
@@ -533,10 +564,20 @@ pub(crate) fn run_release_flow(github_repo: Option<&str>, gate_path: Option<&Pat
             "{}",
             format!("⚠ git push 실패 (exit code: {})", status.code().unwrap_or(-1)).yellow()
         );
-        let retry = Confirm::new()
-            .with_prompt("다시 시도하시겠습니까? (아니오: 릴리즈를 건너뜁니다)")
-            .default(true)
-            .interact()?;
+        // M36: gate 모드면 재시도 여부도 게이트로 (마지막 잔여 콘솔 confirm)
+        let retry = match gate_path {
+            Some(p) => {
+                crate::conductor::gate::gate_decision(
+                    p,
+                    "push-retry",
+                    "git push 실패 — 다시 시도하시겠습니까? (정지: 릴리즈 건너뜀)",
+                ) == crate::conductor::gate::Decision::Approve
+            }
+            None => Confirm::new()
+                .with_prompt("다시 시도하시겠습니까? (아니오: 릴리즈를 건너뜁니다)")
+                .default(true)
+                .interact()?,
+        };
         if !retry {
             println!("{}", "릴리즈 건너뜀.".dimmed());
             return Ok(());

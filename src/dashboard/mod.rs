@@ -126,6 +126,22 @@ pub fn route(path: &Path, url: &str) -> RouteResponse {
         "/api/tasks" => json_resp(api::tasks_json(scope)),
         // M31: 단발 라이브 조회 (SSE 폴백·초기 로드)
         "/api/live" => json_resp(sse::live_payload(scope)),
+        // M36: task 상세 — 최신 run의 라운드별 작업 보고·검증 피드백
+        "/api/task" => {
+            let id = params
+                .iter()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            if id.is_empty() {
+                return RouteResponse {
+                    status: 400,
+                    content_type: "application/json; charset=utf-8",
+                    body: r#"{"error":"id required"}"#.to_string(),
+                };
+            }
+            json_resp(api::task_detail_json(scope, &id))
+        }
         _ => not_found(),
     }
 }

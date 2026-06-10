@@ -149,9 +149,10 @@ pub fn run_parallel(
         }
 
         // ── Phase 2 (병렬): dispatch + verify ───────────────────────────────
-        // M31: 배치 전체를 dispatch 단계로 기록 (스레드 경쟁 회피 — 배치 수준 기록)
-        let batch_ids: Vec<String> = batch.iter().map(|t| t.id.clone()).collect();
-        super::live::set_batch(path, &batch_ids, "dispatch");
+        // M31: 배치 전체를 dispatch 단계로 기록 (스레드 경쟁 회피 — 배치 수준 기록, M36: 제목 포함)
+        let batch_tasks: Vec<(String, String)> =
+            batch.iter().map(|t| (t.id.clone(), t.title.clone())).collect();
+        super::live::set_batch(path, &batch_tasks, "dispatch");
         println!("  {} {}개 task 동시 dispatch·verify 중... (출력은 완료 후 그룹 표시)", "→".cyan(), batch.len());
         let runs = dispatch_batch_parallel(
             &worktrees, &batch, path, workspace, runner, dispatch_model, verifier_model,
@@ -183,7 +184,7 @@ pub fn run_parallel(
                                     logger.warn("conductor", &format!("task 완료 표시 실패: {}", e));
                                 }
                                 println!("  {} [{}] 병합 완료", "✓".green(), run.task_id);
-                                super::live::set_task(path, &run.task_id, "merged", attempt);
+                                super::live::set_task(path, &run.task_id, "", "merged", attempt);
                                 history.push(format!("[{}] MERGED", run.task_id));
                                 attempts.remove(&run.task_id);
                                 feedbacks.remove(&run.task_id);

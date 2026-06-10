@@ -267,7 +267,7 @@ fn run_conductor_inner(
 
         match outcome {
             TaskOutcome::Merged => {
-                live::set_task(path, &task.id, "merged", 0);
+                live::set_task(path, &task.id, "", "merged", 0);
                 let cost_note = if task_cost > 0.0 {
                     format!(" (비용 ${:.4}, 누적 ${:.4})", task_cost, total_cost)
                 } else {
@@ -276,7 +276,7 @@ fn run_conductor_inner(
                 println!("  {} task 완료 및 병합{}", "✓".green(), cost_note.dimmed());
             }
             TaskOutcome::Halted { feedback } => {
-                live::set_task(path, &task.id, "halted", 0);
+                live::set_task(path, &task.id, "", "halted", 0);
                 println!("{}", "  ⚠ 검증 실패 — 재투입 한도 소진. 사용자 개입이 필요합니다.".yellow().bold());
                 save_halt_hint(path, &task.id, &feedback, logger);
                 break;
@@ -307,7 +307,7 @@ fn conduct_task(
     max_redispatch: u32,
     logger: &Logger,
 ) -> Result<(TaskOutcome, f64)> {
-    save_phase(path, task_id, "brief", 0, logger);
+    save_phase(path, task_id, task_title, "brief", 0, logger);
     let brief = brief::build_brief(path, task_id, task_title, workspace);
 
     let wt = Worktree::create(path, task_id).context("격리 worktree 생성 실패")?;
@@ -353,7 +353,7 @@ fn conduct_in_worktree(
 
     loop {
         // ── Dispatch ──────────────────────────────────────────────────────
-        save_phase(path, task_id, "dispatch", redispatch, logger);
+        save_phase(path, task_id, task_title, "dispatch", redispatch, logger);
         println!(
             "  {} Dispatch{} — 에이전트에게 위임 중...",
             "→".cyan(),
@@ -385,7 +385,7 @@ fn conduct_in_worktree(
         };
 
         // ── Verify ────────────────────────────────────────────────────────
-        save_phase(path, task_id, "verify", redispatch, logger);
+        save_phase(path, task_id, task_title, "verify", redispatch, logger);
         println!("  {} Verify — 독립 검증자 심사 중...", "→".cyan());
         let outcome = verify::run_verification(
             &wt.path, task_id, task_title, dod, &diff, &command_results, runner, verifier_model,
@@ -398,7 +398,7 @@ fn conduct_in_worktree(
         );
 
         // ── Integrate 결정 ────────────────────────────────────────────────
-        save_phase(path, task_id, "integrate", redispatch, logger);
+        save_phase(path, task_id, task_title, "integrate", redispatch, logger);
         match integrate::decide(&outcome.verdict, redispatch, max_redispatch) {
             IntegrateDecision::Merge => {
                 if outcome.fallback_used {
@@ -495,14 +495,14 @@ fn handle_all_tasks_done(
     }
 }
 
-fn save_phase(path: &Path, task_id: &str, phase: &str, retry: u32, logger: &Logger) {
+fn save_phase(path: &Path, task_id: &str, task_title: &str, phase: &str, retry: u32, logger: &Logger) {
     let cp = Checkpoint::new(1, "conductor", vec![], "conductor", vec![], task_id, retry, vec![])
         .with_conductor_phase(phase);
     if let Err(e) = save_checkpoint(&cp, path) {
         logger.warn("conductor", &format!("checkpoint 저장 실패: {}", e));
     }
-    // M31: 라이브 상태도 갱신 (대시보드 관측용 — 실패해도 실행에 영향 없음)
-    live::set_task(path, task_id, phase, retry);
+    // M31: 라이브 상태도 갱신 (대시보드 관측용 — 실패해도 실행에 영향 없음). M36: 제목 포함.
+    live::set_task(path, task_id, task_title, phase, retry);
 }
 
 fn save_halt_hint(path: &Path, task_id: &str, feedback: &str, logger: &Logger) {

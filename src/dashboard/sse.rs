@@ -147,7 +147,7 @@ mod tests {
     fn live_payload_reflects_live_json() {
         let tmp = dir();
         crate::conductor::live::start(tmp.path(), "sequential", Some(2.0));
-        crate::conductor::live::set_task(tmp.path(), "M1-T01", "dispatch", 0);
+        crate::conductor::live::set_task(tmp.path(), "M1-T01", "파서 구현", "dispatch", 0);
         std::fs::write(tmp.path().join(".porpoise").join("sessions").join("a.json"), "{}").unwrap();
 
         let v = live_payload(tmp.path());

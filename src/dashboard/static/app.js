@@ -91,12 +91,16 @@
       tasks.forEach((t) => {
         const verdict = t.final_verdict ? "PASS" : "FAIL";
         const tr = document.createElement("tr");
+        tr.className = "report-row";
+        tr.title = "클릭하면 작업 내용 상세를 펼칩니다";
         tr.innerHTML =
           `<td class="mono">${esc(t.task_id)}</td>` +
           `<td><span class="tag ${verdict}">${verdict}</span></td>` +
           `<td>${t.attempts}</td><td>${t.max_redispatch}</td>` +
           `<td>${t.fallback_used ? "예" : ""}</td>` +
           `<td>${money(t.cost_usd)}</td>`;
+        // M36: 행 클릭 → 작업 내용 상세 펼침/접기
+        tr.addEventListener("click", () => toggleDetail(tr, t.task_id));
         tbody.appendChild(tr);
       });
     }
@@ -106,6 +110,55 @@
       .filter((t) => t.cost_usd != null)
       .map((t) => ({ label: t.task_id, value: t.cost_usd, color: t.final_verdict ? "#3fb950" : "#f85149" }));
     Chart.bars($("#cost-chart"), costItems, { format: (v) => "$" + v.toFixed(4) });
+  }
+
+  // ── M36: 리포트 행 펼침 — 작업 내용 상세 ─────────────────────────────
+  async function toggleDetail(row, taskId) {
+    // 이미 펼쳐져 있으면 접기
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains("detail-row")) {
+      next.remove();
+      return;
+    }
+    // 다른 펼침은 닫기 (한 번에 하나)
+    document.querySelectorAll(".detail-row").forEach((el) => el.remove());
+
+    const tr = document.createElement("tr");
+    tr.className = "detail-row";
+    const td = document.createElement("td");
+    td.colSpan = 6;
+    td.innerHTML = '<div class="muted">불러오는 중...</div>';
+    tr.appendChild(td);
+    row.after(tr);
+
+    try {
+      const data = await getJSON("/api/task?id=" + encodeURIComponent(taskId));
+      const rounds = data.rounds || [];
+      if (rounds.length === 0) {
+        td.innerHTML = '<div class="muted">상세 기록 없음</div>';
+        return;
+      }
+      td.innerHTML = rounds
+        .map((r) => {
+          const v = r.verdict === "PASS" ? "PASS" : "FAIL";
+          const head =
+            `<div class="round-head"><span class="tag ${v}">${v}</span>` +
+            `<span class="muted"> R${r.redispatch} · diff ${r.diff_lines}줄` +
+            (r.cost_usd != null ? " · " + money(r.cost_usd) : "") +
+            (r.fallback_used ? " · 폴백" : "") +
+            `</span></div>`;
+          const feedback = r.feedback
+            ? `<div class="detail-block fail-block"><b>검증 피드백</b><pre>${esc(r.feedback)}</pre></div>`
+            : "";
+          const output = r.dispatch_output
+            ? `<div class="detail-block"><b>에이전트 작업 보고</b><pre>${esc(r.dispatch_output)}</pre></div>`
+            : '<div class="muted">에이전트 보고 없음</div>';
+          return `<div class="round">${head}${feedback}${output}</div>`;
+        })
+        .join("");
+    } catch (e) {
+      td.innerHTML = '<div class="gate-error">상세 조회 실패: ' + esc(String(e)) + "</div>";
+    }
   }
 
   // 의존성 그래프 — 의존 깊이로 열 배치, SVG 노드+엣지
@@ -221,6 +274,10 @@
     if (live.run_active) {
       badge.textContent = "RUNNING · " + esc(live.mode || "");
       badge.className = "live-badge running";
+    } else if (live.pending_gate) {
+      // M36: 재실행 게이트 등 — 실행 전 승인 대기 상태
+      badge.textContent = "WAITING";
+      badge.className = "live-badge running";
     } else {
       badge.textContent = "IDLE";
       badge.className = "live-badge idle";
@@ -241,6 +298,8 @@
               `<div class="live-task"><span class="tid">${esc(t.task_id)}</span>` +
               `<span class="phase-steps">${phaseSteps(t)}</span>` +
               (t.redispatch > 0 ? `<span class="muted">재투입 ${t.redispatch}</span>` : "") +
+              // M36: 작업 제목 — 무슨 작업인지 표시
+              (t.title ? `<span class="task-title" title="${esc(t.title)}">${esc(t.title)}</span>` : "") +
               `</div>`
           )
           .join("");
@@ -265,10 +324,12 @@
     }
 
     // M33: 승인 대기 게이트 카드 (M34: kind별 폼)
+    // M36: run_active와 무관하게 표시 — 재실행 게이트(orchestrator 초입)는 conductor 루프
+    // 밖에서 발동해 live가 idle 상태일 수 있다. pending_gate는 게이트 종료 시 항상 해제됨.
     const gate = live.pending_gate;
     const card = $("#gate-card");
     const textInput = $("#gate-text");
-    if (gate && live.run_active) {
+    if (gate) {
       const isNewGate = currentGateId !== gate.id;
       currentGateId = gate.id;
       currentGateKind = gate.kind || "confirm";

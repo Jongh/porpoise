@@ -90,6 +90,28 @@ footer { text-align: center; padding: 24px; font-size: 12px; }
 #stop-next { margin-left: 10px; padding: 3px 10px; font-size: 11px; vertical-align: middle; }
 .gate-error { color: var(--fail); font-size: 12px; }
 
+/* M36: 작업 내용 가시화 */
+.task-title {
+  color: var(--muted); font-size: 12px; margin-left: 8px;
+  max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: inline-block; vertical-align: middle;
+}
+.report-row { cursor: pointer; }
+.report-row:hover td { background: rgba(74,168,255,.05); }
+.detail-row td { background: var(--bg); padding: 12px 14px; }
+.round { margin-bottom: 12px; }
+.round:last-child { margin-bottom: 0; }
+.round-head { margin-bottom: 6px; }
+.detail-block { margin: 6px 0; }
+.detail-block b { font-size: 12px; color: var(--muted); }
+.detail-block pre {
+  margin: 4px 0 0; padding: 10px 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px;
+  font: 12px/1.5 ui-monospace, "Cascadia Code", monospace;
+  white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto;
+}
+.fail-block pre { border-color: var(--fail); }
+
 .budget-bar { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; margin-top: 10px; overflow: hidden; }
 #budget-fill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
 #budget-fill.over { background: var(--fail); }

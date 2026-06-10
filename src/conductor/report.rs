@@ -12,7 +12,7 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 
 /// conductor-3 감사 레코드 중 집계에 필요한 필드. 스키마 변형·구버전에 견디도록 모두 기본값 허용.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct AuditRecord {
     #[serde(default)]
     pub task_id: String,
@@ -35,6 +35,26 @@ pub struct AuditRecord {
     pub input_tokens: Option<u64>,
     #[serde(default)]
     pub output_tokens: Option<u64>,
+    // M36: task 상세 보기용 본문 필드 — 검증 피드백·에이전트 최종 보고·검증자 원문.
+    #[serde(default)]
+    pub feedback: String,
+    #[serde(default)]
+    pub dispatch_output: String,
+    #[serde(default)]
+    pub verifier_raw: String,
+}
+
+/// 한 task의 **최신 run**(M27 규칙 — timestamp 정렬 후 마지막 R0부터) 레코드를 반환한다.
+/// `/api/task` 상세 보기(M36)와 `aggregate`가 같은 run 정의를 공유한다.
+pub fn latest_run_records(records: &[AuditRecord], task_id: &str) -> Vec<AuditRecord> {
+    let mut recs: Vec<AuditRecord> = records
+        .iter()
+        .filter(|r| r.task_id == task_id)
+        .cloned()
+        .collect();
+    recs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    let start = recs.iter().rposition(|r| r.redispatch == 0).unwrap_or(0);
+    recs.split_off(start)
 }
 
 /// 감사 기록의 verify 명령 결과 (집계엔 exit_code만 필요 — 나머지 키는 serde가 무시).
@@ -457,11 +477,7 @@ mod tests {
             timestamp: ts.to_string(),
             verdict: verdict.to_string(),
             fallback_used: fallback,
-            diff_lines: 0,
-            verify_commands: vec![],
-            cost_usd: None,
-            input_tokens: None,
-            output_tokens: None,
+            ..Default::default()
         }
     }
 
@@ -579,6 +595,24 @@ mod tests {
         assert!(out[0].final_verdict, "이번 run 최종(R1) PASS");
         assert_eq!(out[0].attempts, 2, "이번 run의 두 라운드");
         assert_eq!(out[0].max_redispatch, 1);
+    }
+
+    #[test]
+    fn latest_run_records_returns_only_latest_run() {
+        // M36: 상세 보기도 M27의 최신 run 정의를 따른다
+        let recs = vec![
+            rec("M1-T02", 0, "2026-06-09T13:19:00Z", "FAIL", false), // 이전 run
+            rec("M1-T02", 1, "2026-06-09T13:20:00Z", "FAIL", false), // 이전 run
+            rec("M1-T02", 0, "2026-06-09T13:40:00Z", "FAIL", false), // 이번 run R0
+            rec("M1-T02", 1, "2026-06-09T13:45:00Z", "PASS", false), // 이번 run R1
+            rec("M1-T03", 0, "2026-06-09T14:00:00Z", "PASS", false), // 다른 task
+        ];
+        let run = latest_run_records(&recs, "M1-T02");
+        assert_eq!(run.len(), 2, "최신 run의 두 라운드만");
+        assert_eq!(run[0].redispatch, 0);
+        assert_eq!(run[1].redispatch, 1);
+        assert!(run[1].passed());
+        assert!(latest_run_records(&recs, "NOPE").is_empty());
     }
 
     #[test]

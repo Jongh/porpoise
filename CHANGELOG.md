@@ -4,6 +4,14 @@
 
 ---
 
+### [v0.33.0]
+- **태스크 작업 내용 가시화 (M36)**: 사용자 요청 — 모니터링에서 task id·숫자만이 아니라 **실제 작업 내용**이 보이게. ① 라이브 패널에 각 task의 **작업 제목**(`LiveTask.title`, live-1 하위호환 — `save_phase` 4단계 자동 전달, 병렬 배치 포함, 빈 제목은 기존 보존) ② 실행 리포트 **행 클릭 펼침** — 최신 run(M27 규칙 공유 `latest_run_records`)의 라운드별 verdict·diff·비용·**검증 피드백**(FAIL 사유, 빨간 테두리)·**에이전트 작업 보고**(dispatch_output). 재투입 task는 라운드별 구분되어 "왜 재투입됐고 어떻게 반영했는지"가 보인다
+- **`GET /api/task?id=M1-T03`**: 감사 기록(conductor-4)에 이미 저장된 본문의 노출 — 새 수집 0·read-only. `AuditRecord`에 본문 필드(feedback·dispatch_output·verifier_raw) 역직렬화 추가, 응답 2KB 트렁케이트(전송 절제), 렌더링 esc() 경유(XSS 방어)
+- **잔여 콘솔 게이트화 (gate 모드 무터미널 사이클 완결)**: ① **재실행 마일스톤 세션** — 전부-완료 상태로 재실행 시 무확인 LLM 세션 시작(M35 라이브 발견) 대신 confirm 게이트. 게이트 전 `serve_in_background`로 대시보드를 보장(내장 기동/공존)해 무한 대기 방지. 거부 시 릴리즈 플로우 ② **push 실패 재시도** — 마지막 잔여 콘솔 Confirm을 게이트로(M34 기록 갭). legacy(API 어댑터) 경로는 `conductor_enabled && ClaudeCode` 가드로 게이트 미발동, console·`--yes` 무변경
+- **라이브 검증이 잡은 수정 2건**: ① 게이트 카드 표시 조건이 `run_active`에 의존해 — conductor 루프 밖(재실행·릴리즈 게이트)에서 발동한 게이트가 idle 상태라 **카드가 숨겨지던 버그** → pending_gate 단독 조건 + **WAITING 배지** ② legacy+`approval_mode=gate` 설정 조합의 재실행 게이트 오발동 → conductor 활성 가드(리뷰에서 발견)
+- **라이브 검증**: ① 라이브 패널 작업 제목 표시 ② 합성 다중 라운드(R0 FAIL→R1 PASS) 행 펼침 — 피드백 빨간 박스·재투입 반영 보고·라운드 구분 시각 확인 ③ 재실행 confirm 게이트 → 릴리즈 text 게이트 → 콘솔 입력 0회 완주. 하니스 +2항목(/api/task 본문·live title)
+- **테스트**: 374개 (372 → 374, +2개)
+
 ### [v0.32.0]
 - **통합 실행 — conductor의 대시보드 내장 기동 (M35, Phase 3c)**: M33 라이브 피드백 3(대시보드·conductor 분리 실행 불편) 해소. **gate 모드 `porpoise` 한 번이면** 대시보드 서버가 같은 프로세스의 백그라운드 스레드로 자동 기동되고 브라우저가 열린다 — **터미널 1개**로 게이트 운영 전체가 시작되고, conductor 종료 시 함께 닫힌다
 - **서버 분리 리팩토링**: `run_dashboard`(블로킹 CLI)에서 `try_bind`(바인딩 실패=None)·`serve_loop`·`serve_in_background`(`Started | PortInUse | Failed`)를 분리 — CLI 동작은 분리 조각의 재조립이라 무변경

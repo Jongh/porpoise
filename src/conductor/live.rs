@@ -17,6 +17,9 @@ pub struct LiveTask {
     /// "brief" | "dispatch" | "verify" | "integrate" | "merged" | "halted"
     pub phase: String,
     pub redispatch: u32,
+    /// M36: 작업 제목 — 모니터링에서 "무슨 작업인지" 표시 (구 기록 하위호환 default).
+    #[serde(default)]
+    pub title: String,
 }
 
 /// 승인 대기 게이트 (M33). 게이트 모드에서 conductor가 응답을 기다리는 동안 설정된다.
@@ -100,27 +103,37 @@ pub fn start(path: &Path, mode: &str, budget_usd: Option<f64>) {
 }
 
 /// task의 현재 단계를 갱신한다 (목록에 없으면 추가).
-pub fn set_task(path: &Path, task_id: &str, phase: &str, redispatch: u32) {
+/// `title`이 비어 있지 않으면 함께 갱신한다 (M36 — 빈 값은 기존 제목 보존).
+pub fn set_task(path: &Path, task_id: &str, title: &str, phase: &str, redispatch: u32) {
     update(path, |s| {
         if let Some(t) = s.tasks.iter_mut().find(|t| t.task_id == task_id) {
             t.phase = phase.to_string();
             t.redispatch = redispatch;
+            if !title.is_empty() {
+                t.title = title.to_string();
+            }
         } else {
             s.tasks.push(LiveTask {
                 task_id: task_id.to_string(),
                 phase: phase.to_string(),
                 redispatch,
+                title: title.to_string(),
             });
         }
     });
 }
 
-/// 병렬 배치 전체를 같은 단계로 기록한다 (이전 배치 목록은 대체).
-pub fn set_batch(path: &Path, task_ids: &[String], phase: &str) {
+/// 병렬 배치 전체를 같은 단계로 기록한다 (이전 배치 목록은 대체). (id, title) 쌍 (M36).
+pub fn set_batch(path: &Path, tasks: &[(String, String)], phase: &str) {
     update(path, |s| {
-        s.tasks = task_ids
+        s.tasks = tasks
             .iter()
-            .map(|id| LiveTask { task_id: id.clone(), phase: phase.to_string(), redispatch: 0 })
+            .map(|(id, title)| LiveTask {
+                task_id: id.clone(),
+                phase: phase.to_string(),
+                redispatch: 0,
+                title: title.clone(),
+            })
             .collect();
     });
 }
@@ -171,27 +184,34 @@ mod tests {
     fn set_task_adds_then_updates() {
         let tmp = dir();
         start(tmp.path(), "sequential", None);
-        set_task(tmp.path(), "M1-T01", "dispatch", 0);
-        set_task(tmp.path(), "M1-T01", "verify", 0);
-        set_task(tmp.path(), "M1-T02", "brief", 1);
+        set_task(tmp.path(), "M1-T01", "파서 구현", "dispatch", 0);
+        set_task(tmp.path(), "M1-T01", "", "verify", 0); // 빈 제목 = 기존 보존
+        set_task(tmp.path(), "M1-T02", "집계 구현", "brief", 1);
 
         let s = load(tmp.path()).unwrap();
         assert_eq!(s.tasks.len(), 2);
         assert_eq!(s.tasks[0].task_id, "M1-T01");
         assert_eq!(s.tasks[0].phase, "verify", "같은 task는 갱신");
+        assert_eq!(s.tasks[0].title, "파서 구현", "빈 제목은 기존 제목 보존 (M36)");
         assert_eq!(s.tasks[1].redispatch, 1);
+        assert_eq!(s.tasks[1].title, "집계 구현");
     }
 
     #[test]
     fn set_batch_replaces_tasks() {
         let tmp = dir();
         start(tmp.path(), "parallel", None);
-        set_task(tmp.path(), "OLD-T01", "merged", 0);
-        set_batch(tmp.path(), &["M1-T01".into(), "M1-T02".into()], "dispatch");
+        set_task(tmp.path(), "OLD-T01", "옛 작업", "merged", 0);
+        set_batch(
+            tmp.path(),
+            &[("M1-T01".into(), "작업 A".into()), ("M1-T02".into(), "작업 B".into())],
+            "dispatch",
+        );
 
         let s = load(tmp.path()).unwrap();
         assert_eq!(s.tasks.len(), 2, "배치가 이전 목록을 대체");
         assert!(s.tasks.iter().all(|t| t.phase == "dispatch"));
+        assert_eq!(s.tasks[0].title, "작업 A", "배치에도 제목 포함 (M36)");
     }
 
     #[test]

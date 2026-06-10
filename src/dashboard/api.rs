@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use crate::conductor::report::build_report;
+use crate::conductor::report::{build_report, latest_run_records, load_records};
 use crate::conductor::schedule;
 use crate::orchestrator::state::parse_tasks_from_project_md;
 
@@ -71,6 +71,42 @@ pub fn report_json(path: &Path, milestone: Option<u32>) -> Value {
         "parse_errors": report.parse_errors,
         "tasks": tasks,
     })
+}
+
+/// 상세 본문의 응답 트렁케이트 한도 (전송량 절제).
+const DETAIL_MAX_CHARS: usize = 2000;
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    let total = s.chars().count();
+    if total <= max {
+        s.to_string()
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{}…[{} chars 생략]", head, total - max)
+    }
+}
+
+/// `GET /api/task?id=M1-T03` → 해당 task **최신 run**(M27 규칙)의 라운드별 상세 (M36).
+/// 감사 기록에 이미 저장된 에이전트 보고·검증 피드백의 노출 — 새 수집 0, read-only.
+pub fn task_detail_json(path: &Path, task_id: &str) -> Value {
+    let (records, _) = load_records(path);
+    let rounds: Vec<Value> = latest_run_records(&records, task_id)
+        .iter()
+        .map(|r| {
+            json!({
+                "redispatch": r.redispatch,
+                "timestamp": r.timestamp,
+                "verdict": r.verdict,
+                "fallback_used": r.fallback_used,
+                "diff_lines": r.diff_lines,
+                "cost_usd": r.cost_usd,
+                "feedback": truncate_chars(&r.feedback, DETAIL_MAX_CHARS),
+                "dispatch_output": truncate_chars(&r.dispatch_output, DETAIL_MAX_CHARS),
+                "verifier_raw": truncate_chars(&r.verifier_raw, DETAIL_MAX_CHARS),
+            })
+        })
+        .collect();
+    json!({ "task_id": task_id, "rounds": rounds })
 }
 
 /// `GET /api/tasks` → 현재(project.md) 태스크 + 의존성 + 상태(ready/waiting/done).
@@ -161,6 +197,36 @@ mod tests {
         assert_eq!(v["total_cost"], 0.05);
         assert!(v["tasks"].is_array());
         assert_eq!(v["tasks"][0]["task_id"], "M30-T01");
+    }
+
+    #[test]
+    fn task_detail_exposes_rounds_with_truncation() {
+        // M36: 상세 API — 라운드별 본문 노출 + 트렁케이트
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join(".porpoise").join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let long_output = "에이전트 보고 ".repeat(500); // > 2000 chars
+        let rec = json!({
+            "schema_version": "conductor-4", "task_id": "M9-T01", "redispatch": 0,
+            "timestamp": "2026-06-10T10:00:00Z", "verdict": "FAIL",
+            "feedback": "테스트 누락", "dispatch_output": long_output, "verifier_raw": "{...}"
+        });
+        std::fs::write(
+            sessions.join("M9-T01-conductor-20260610-100000-R0.json"),
+            serde_json::to_string(&rec).unwrap(),
+        )
+        .unwrap();
+
+        let v = task_detail_json(tmp.path(), "M9-T01");
+        let rounds = v["rounds"].as_array().unwrap();
+        assert_eq!(rounds.len(), 1);
+        assert_eq!(rounds[0]["verdict"], "FAIL");
+        assert_eq!(rounds[0]["feedback"], "테스트 누락");
+        let out = rounds[0]["dispatch_output"].as_str().unwrap();
+        assert!(out.contains("chars 생략"), "트렁케이트되어야 함");
+        assert!(out.chars().count() < 2100);
+        // 없는 task는 빈 배열
+        assert!(task_detail_json(tmp.path(), "NOPE")["rounds"].as_array().unwrap().is_empty());
     }
 
     #[test]

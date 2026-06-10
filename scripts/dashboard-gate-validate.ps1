@@ -106,6 +106,23 @@ $relJson = Get-Content $relFile -Raw | ConvertFrom-Json
 if ($relJson.text -ne "v9.9.9") { Fail "text not preserved in response file" }
 Ok "text gate response roundtrip (text preserved)"
 
+# 7. M36: task detail endpoint - synthetic audit record -> rounds with bodies (ASCII bodies)
+$audit = @{ schema_version="conductor-4"; task_id="M1-T01"; redispatch=0; timestamp="2026-06-10T10:00:00Z"; verdict="FAIL"; feedback="missing tests"; dispatch_output="wrote tests/a.rs with add fn"; verifier_raw="raw"; fallback_used=$false } | ConvertTo-Json
+New-Item -ItemType Directory -Force -Path (Join-Path $porpoise "sessions") | Out-Null
+WriteUtf8 (Join-Path $porpoise "sessions\M1-T01-conductor-20260610-100000-R0.json") $audit
+$detail = Invoke-RestMethod "$base/api/task?id=M1-T01"
+if ($detail.rounds.Count -ne 1) { Fail "task detail rounds != 1" }
+if ($detail.rounds[0].feedback -ne "missing tests") { Fail "feedback not exposed" }
+if ($detail.rounds[0].dispatch_output -notmatch "tests/a.rs") { Fail "dispatch_output not exposed" }
+Ok "GET /api/task exposes per-round feedback + agent output (M36)"
+
+# 8. M36: live title exposed
+$liveT = @{ schema_version="live-1"; run_active=$true; started_at="t"; updated_at="t"; mode="sequential"; total_cost_usd=0.0; budget_usd=$null; tasks=@(@{task_id="M1-T01"; phase="dispatch"; redispatch=0; title="add fn in tests/a.rs"}) } | ConvertTo-Json -Depth 6
+WriteUtf8 (Join-Path $porpoise "live.json") $liveT
+$lvT = Invoke-RestMethod "$base/api/live"
+if ($lvT.live.tasks[0].title -notmatch "add") { Fail "live task title not exposed" }
+Ok "live.json task title exposed (M36)"
+
 Cleanup
 Write-Host "`nM33 GATE CONTROL VALIDATION: PASS" -ForegroundColor Green
 Write-Host "Control API writes confined to control/, security boundaries enforced." -ForegroundColor Green
