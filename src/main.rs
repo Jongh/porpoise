@@ -64,6 +64,12 @@ pub enum Commands {
         /// Do not auto-open the browser (print URL only)
         #[arg(long)]
         no_open: bool,
+        /// Register a project path in the dashboard registry and exit
+        #[arg(long, value_name = "PATH")]
+        register: Option<String>,
+        /// Unregister a project path from the dashboard registry and exit
+        #[arg(long, value_name = "PATH")]
+        unregister: Option<String>,
     },
     /// Aggregate conductor audit records into a fleet execution report
     Report {
@@ -151,7 +157,20 @@ fn run() -> Result<()> {
                 status::run_status(&current_dir);
                 return Ok(());
             }
-            Commands::Dashboard { port, no_open } => {
+            Commands::Dashboard { port, no_open, register, unregister } => {
+                // M32: 레지스트리 관리 옵션 — 등록/해제만 하고 종료
+                if let Some(p) = register {
+                    dashboard::registry::register(std::path::Path::new(p))
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    println!("등록됨: {}", p);
+                    return Ok(());
+                }
+                if let Some(p) = unregister {
+                    dashboard::registry::unregister(std::path::Path::new(p))
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    println!("해제됨: {}", p);
+                    return Ok(());
+                }
                 return dashboard::run_dashboard(&current_dir, *port, !*no_open);
             }
             Commands::Report {

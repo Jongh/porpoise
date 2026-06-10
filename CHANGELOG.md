@@ -4,6 +4,16 @@
 
 ---
 
+### [v0.29.0]
+- **멀티 프로젝트 관측 — 대시보드 저장소 선택 (M32)**: 한 대시보드에서 여러 porpoise 프로젝트를 셀렉터로 전환하며 관제한다. 리포트·비용·DAG·라이브 패널이 선택한 프로젝트로 스코프되며, read-only 관측은 유지된다. 제어 UI(M33)가 처음부터 프로젝트-스코프로 설계되도록 기반(레지스트리·스코핑·보안 모델)을 이 단계에서 확립
+- **프로젝트 레지스트리(허용 목록)**: `src/dashboard/registry.rs` 신설 — `~/.porpoise/registry.json`(`{id, name, path}`), id는 정규화 경로의 **FNV-1a 안정 해시**(외부 의존 0). `porpoise dashboard` 기동 시 현재 프로젝트 자동 등록(upsert), `--register/--unregister <path>` 명시 관리. 원자적 저장, 손상 파일은 빈 목록으로 우아 처리
+- **보안 모델**: 클라이언트는 경로가 아닌 **불투명 id**(`?project=<id>`)로만 프로젝트를 참조하고, 서버는 **레지스트리에 등록된 경로만** 해석(`resolve_project_scope` 단일 관문) — 미등록 id·`.porpoise` 소멸 경로는 404. 자유 경로 입력에 의한 임의 파일시스템 열람 차단. 경계는 단위 테스트(4개 API 거부)와 스모크 양층으로 고정
+- **API**: `GET /api/projects`(`{id,name,path,current}`) 신설, 전 데이터 API + **SSE**(`/api/events`)에 `?project=` 스코프. **미지정 시 기동 디렉터리**(기존 동작, 하위호환)
+- **UI**: 헤더 프로젝트 셀렉터(등록 2개 이상일 때만 표시 — 1개면 기존 화면 동일), 전환 시 마일스톤→리포트→DAG 갱신 + **라이브 SSE 스트림을 닫고 새 프로젝트로 재구독**
+- **라이브 검증**: 두 프로젝트(alpha 1태스크/$0.01 vs beta 5태스크/$0.22·FAIL/폴백/비용없음·DAG 6노드 3단계) 전환과 DevTools Network의 `?project=` 스코프(SSE 포함) 확인. **SSE 스코프 격리** 시각 입증 — beta 라이브 생애주기 재생 중 alpha 선택 시 IDLE 유지, beta 복귀 시 진행 상태 즉시 재수신(연결 직후 현재 상태 push). 멀티 스모크 `scripts/dashboard-multi-validate.ps1`(교차 ground truth·404·하위호환·레지스트리 원복) 추가
+- **알려진 한계**: Windows `canonicalize`의 `\\?\` 접두사가 경로 표시에 노출될 수 있음(기능 무영향)
+- **테스트**: 353개 (348 → 353, +5개)
+
 ### [v0.28.0]
 - **대시보드 라이브 스트리밍 (M31, Phase 2)**: "지휘 통제실" 2단계. M30이 끝난 실행의 정적 조회였다면, 이제 **진행 중인 conductor 실행**을 실시간으로 비춘다 — 라이브 패널에 RUNNING/IDLE 배지, task별 현재 단계(brief→dispatch→verify→integrate 진행 배지, MERGED/HALTED 최종), 재투입 횟수, **누적 비용/예산 진행 바**(`budget_usd` 설정 시, 초과면 빨강). 실행 종료(RUNNING→IDLE) 시 리포트·DAG **자동 새로고침**, idle엔 마지막 실행 요약 표시
 - **결합 없는 구조**: conductor(CLI)와 dashboard(서버)는 **파일을 매개로만** 통신. `src/conductor/live.rs` 신설 — conductor가 단계 전환·비용 갱신·종료마다 `.porpoise/live.json`(스키마 live-1)을 **원자적**(temp→rename)으로 기록(`save_phase` 끼워넣기로 침습 최소, 순차·병렬 공통). 기록 실패는 실행에 무영향. 에러로 비정상 종료해도 wrapper(`run_conductor`→`run_conductor_inner`)가 `live::finish`를 보장해 대시보드 stale RUNNING 고착 방지

@@ -2,9 +2,19 @@
 (function () {
   const $ = (s) => document.querySelector(s);
   const sel = $("#milestone");
+  const projSel = $("#project");
+
+  // M32: 선택된 프로젝트 id ("" = 서버 기동 디렉터리, 하위호환)
+  let currentProject = "";
+
+  // URL에 프로젝트 스코프를 부여한다.
+  function withProject(url) {
+    if (!currentProject) return url;
+    return url + (url.includes("?") ? "&" : "?") + "project=" + encodeURIComponent(currentProject);
+  }
 
   async function getJSON(url) {
-    const r = await fetch(url);
+    const r = await fetch(withProject(url));
     if (!r.ok) throw new Error(url + " → " + r.status);
     return r.json();
   }
@@ -22,6 +32,25 @@
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  // M32: 프로젝트 목록 — 2개 이상일 때만 셀렉터 노출 (1개면 기존 화면과 동일)
+  async function loadProjects() {
+    const r = await fetch("/api/projects"); // 스코프 무관 엔드포인트
+    if (!r.ok) return;
+    const data = await r.json();
+    const projects = data.projects || [];
+    if (projects.length < 2) return;
+    projSel.innerHTML = "";
+    projects.forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.name;
+      o.title = p.path;
+      if (p.current) o.selected = true;
+      projSel.appendChild(o);
+    });
+    $("#project-wrap").classList.remove("hidden");
   }
 
   async function loadMilestones() {
@@ -250,9 +279,15 @@
     pollTimer = setInterval(poll, 2000);
   }
 
+  let es = null;
   function startLive() {
+    // M32: 프로젝트 전환 시 기존 스트림을 닫고 새 스코프로 재구독
+    if (es) {
+      es.close();
+      es = null;
+    }
     try {
-      const es = new EventSource("/api/events");
+      es = new EventSource(withProject("/api/events"));
       es.addEventListener("live", (ev) => {
         try { renderLive(JSON.parse(ev.data)); } catch (e) { console.error(e); }
       });
@@ -265,7 +300,10 @@
     }
   }
 
-  async function init() {
+  // M32: 프로젝트 전환 — 마일스톤 목록부터 라이브 스트림까지 전부 새 스코프로
+  async function switchProject() {
+    currentProject = projSel.value;
+    wasActive = false;
     try {
       await loadMilestones();
     } catch (e) {
@@ -273,7 +311,19 @@
     }
     await refresh();
     startLive();
+  }
+
+  async function init() {
+    try {
+      await loadProjects();
+      await loadMilestones();
+    } catch (e) {
+      console.error(e);
+    }
+    await refresh();
+    startLive();
     sel.addEventListener("change", refresh);
+    projSel.addEventListener("change", switchProject);
     $("#refresh").addEventListener("click", refresh);
   }
 

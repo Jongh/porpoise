@@ -4,9 +4,10 @@
 //! 브라우저에서 본다. conductor 로직은 건드리지 않는다(파일 쓰기 없음).
 
 pub mod api;
+pub mod registry;
 pub mod sse;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use colored::Colorize;
@@ -48,6 +49,23 @@ fn param_milestone(params: &[(String, String)]) -> Option<u32> {
         .and_then(|(_, v)| v.parse().ok())
 }
 
+fn param_project(params: &[(String, String)]) -> Option<String> {
+    params
+        .iter()
+        .find(|(k, _)| k == "project")
+        .map(|(_, v)| v.clone())
+        .filter(|v| !v.is_empty())
+}
+
+/// `?project=<id>`를 해석한다 (M32). 미지정이면 기본 경로(하위호환), 지정이면
+/// **레지스트리에 등록된 경로만** 허용 — 미등록·소멸 경로는 Err(404 응답용).
+fn resolve_project_scope(default_path: &Path, params: &[(String, String)]) -> Result<PathBuf, ()> {
+    match param_project(params) {
+        None => Ok(default_path.to_path_buf()),
+        Some(id) => registry::resolve(&id).ok_or(()),
+    }
+}
+
 fn html(body: &str) -> RouteResponse {
     RouteResponse { status: 200, content_type: "text/html; charset=utf-8", body: body.to_string() }
 }
@@ -69,26 +87,65 @@ fn not_found() -> RouteResponse {
     RouteResponse { status: 404, content_type: "text/plain; charset=utf-8", body: "Not Found".into() }
 }
 
-/// 요청 URL을 라우팅한다 (순수 — 파일은 읽되 쓰지 않음).
+/// 요청 URL을 라우팅한다 (파일은 읽되 쓰지 않음 — read-only).
+///
+/// M32: `?project=<id>`가 있으면 레지스트리에 등록된 프로젝트로 스코프를 바꾼다.
+/// 미등록·소멸 경로는 404. 미지정이면 기본 경로(기동 디렉터리, 하위호환).
 pub fn route(path: &Path, url: &str) -> RouteResponse {
     let (p, params) = parse_path_and_query(url);
+
+    // 정적 에셋·프로젝트 목록은 스코프 무관
     match p.as_str() {
-        "/" | "/index.html" => html(INDEX_HTML),
-        "/static/app.js" => js(APP_JS),
-        "/static/chart.js" => js(CHART_JS),
-        "/static/style.css" => RouteResponse {
-            status: 200,
-            content_type: "text/css; charset=utf-8",
-            body: STYLE_CSS.to_string(),
-        },
-        "/api/milestones" => json_resp(api::milestones_json(path)),
-        "/api/report" => json_resp(api::report_json(path, param_milestone(&params))),
-        "/api/tasks" => json_resp(api::tasks_json(path)),
+        "/" | "/index.html" => return html(INDEX_HTML),
+        "/static/app.js" => return js(APP_JS),
+        "/static/chart.js" => return js(CHART_JS),
+        "/static/style.css" => {
+            return RouteResponse {
+                status: 200,
+                content_type: "text/css; charset=utf-8",
+                body: STYLE_CSS.to_string(),
+            }
+        }
+        "/api/projects" => return json_resp(projects_json(path)),
+        _ => {}
+    }
+
+    // API는 프로젝트 스코프 해석 후 수행
+    let Ok(scope) = resolve_project_scope(path, &params) else {
+        return RouteResponse {
+            status: 404,
+            content_type: "application/json; charset=utf-8",
+            body: r#"{"error":"unknown project id (not registered or path gone)"}"#.to_string(),
+        };
+    };
+    let scope = scope.as_path();
+    match p.as_str() {
+        "/api/milestones" => json_resp(api::milestones_json(scope)),
+        "/api/report" => json_resp(api::report_json(scope, param_milestone(&params))),
+        "/api/tasks" => json_resp(api::tasks_json(scope)),
         // M31: 단발 라이브 조회 (SSE 폴백·초기 로드)
-        "/api/live" => json_resp(sse::live_payload(path)),
+        "/api/live" => json_resp(sse::live_payload(scope)),
         _ => not_found(),
     }
 }
+
+/// `GET /api/projects` — 레지스트리 목록 (+ 기동 디렉터리 표시).
+fn projects_json(current: &Path) -> serde_json::Value {
+    let reg = registry::load();
+    let current_id = registry::project_id(&registry::normalize(current));
+    let projects: Vec<serde_json::Value> = reg
+        .projects
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id, "name": e.name, "path": e.path,
+                "current": e.id == current_id,
+            })
+        })
+        .collect();
+    serde_json::json!({ "projects": projects })
+}
+
 
 /// 대시보드 서버를 기동한다 (블로킹). Ctrl-C로 종료.
 pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
@@ -97,6 +154,11 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
             ".porpoise/ 가 없습니다. porpoise 프로젝트 디렉터리에서 실행하세요."
         );
     }
+    // M32: 현재 프로젝트를 레지스트리에 자동 등록 (멀티 프로젝트 셀렉터 노출)
+    if let Err(e) = registry::register(path) {
+        eprintln!("  ⚠ 프로젝트 자동 등록 실패: {}", e);
+    }
+
     let addr = format!("127.0.0.1:{}", port);
     let server = tiny_http::Server::http(&addr)
         .map_err(|e| anyhow::anyhow!("대시보드 서버 기동 실패 ({}): {} — 다른 --port를 시도하세요.", addr, e))?;
@@ -125,8 +187,16 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
 fn handle_request(request: tiny_http::Request, project: &Path) {
     let url = request.url().to_string();
     if url.starts_with("/api/events") {
+        // M32: SSE도 ?project= 스코프 적용 (미등록 id는 404)
+        let (_, params) = parse_path_and_query(&url);
+        let Ok(scope) = resolve_project_scope(project, &params) else {
+            let r = tiny_http::Response::from_string(r#"{"error":"unknown project id"}"#)
+                .with_status_code(404);
+            let _ = request.respond(r);
+            return;
+        };
         // SSE: 무한 스트림 — Content-Length 없이 청크로 흘려보낸다.
-        let stream = sse::SseStream::new(project);
+        let stream = sse::SseStream::new(&scope);
         let headers = [
             ("Content-Type", "text/event-stream; charset=utf-8"),
             ("Cache-Control", "no-cache"),
@@ -195,5 +265,23 @@ mod tests {
     fn route_unknown_is_404() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(route(tmp.path(), "/nope").status, 404);
+    }
+
+    #[test]
+    fn route_rejects_unregistered_project_id() {
+        // M32 보안 경계: 미등록 project id는 데이터 API 전체에서 404 (허용 목록 강제)
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".porpoise")).unwrap();
+        for url in [
+            "/api/report?project=0000000000000000",
+            "/api/tasks?project=0000000000000000",
+            "/api/milestones?project=0000000000000000",
+            "/api/live?project=0000000000000000",
+        ] {
+            let r = route(tmp.path(), url);
+            assert_eq!(r.status, 404, "{} 는 404여야 함", url);
+        }
+        // 미지정은 기존 동작(기동 디렉터리) — 200
+        assert_eq!(route(tmp.path(), "/api/tasks").status, 200);
     }
 }

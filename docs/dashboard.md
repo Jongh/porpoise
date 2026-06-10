@@ -77,5 +77,35 @@ conductor ─쓰기→ .porpoise/live.json ←변화 감지(500ms 폴링)─ das
 (시작→dispatch→verify→merged→종료) → SSE 스트림을 구독해 이벤트 수신·내용을 대조
 (claude 불필요).
 
+## 멀티 프로젝트 (M32)
+
+대시보드에서 **여러 porpoise 프로젝트를 셀렉터로 전환**하며 관제한다. read-only 유지.
+
+### 레지스트리 (허용 목록)
+- 위치: `~/.porpoise/registry.json` — 항목 `{id, name, path}` (id = 경로의 안정 해시)
+- `porpoise dashboard` 실행 시 현재 프로젝트가 **자동 등록**된다.
+- 명시 관리: `porpoise dashboard --register <path>` / `--unregister <path>` (실행 없이 등록만)
+
+### 보안 모델
+- 클라이언트는 경로가 아니라 **불투명 id**(`?project=<id>`)로만 프로젝트를 참조한다.
+- 서버는 **레지스트리에 등록된 경로만** 해석한다 — 미등록 id·`.porpoise` 소멸 경로는 404.
+  (자유 경로 입력에 의한 임의 파일시스템 열람 차단)
+- 후속 제어 UI(M33)는 이 스코프·허용 목록 모델을 그대로 상속한다.
+
+### API
+- `GET /api/projects` → `{projects:[{id,name,path,current}]}` (current = 기동 디렉터리)
+- 모든 데이터 API(+SSE `/api/events`)가 `?project=<id>`를 받는다.
+  **미지정 시 기동 디렉터리**(기존 동작, 하위호환).
+
+### UI
+- 헤더의 프로젝트 셀렉터(등록 2개 이상일 때만 표시 — 1개면 기존 화면과 동일).
+- 전환 시 마일스톤 목록·리포트·DAG가 새 스코프로 갱신되고, **라이브 SSE 스트림을 닫고
+  새 프로젝트로 재구독**한다.
+
+### 검증
+`scripts/dashboard-multi-validate.ps1`: 임시 프로젝트 2개(서로 다른 합성 데이터)를 등록 →
+같은 엔드포인트를 project id만 바꿔 호출해 서로 다른 ground truth 반환을 대조, 미등록 id
+404, 미지정 하위호환 확인. 종료 시 임시 항목을 레지스트리에서 해제(원복).
+
 ## 후속 Phase
-- **M32**: 제어 UI — 승인·halt·재투입·마일스톤 편집
+- **M33**: 제어 UI — 승인·halt·재투입·마일스톤 편집 (프로젝트-스코프로 설계)

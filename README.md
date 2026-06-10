@@ -223,6 +223,15 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.29.0]
+- **멀티 프로젝트 관측 — 대시보드 저장소 선택 (M32)**: 한 대시보드에서 **여러 porpoise 프로젝트를 셀렉터로 전환**하며 관제(리포트·비용·DAG·라이브 전부 스코프). read-only 유지
+- **프로젝트 레지스트리(허용 목록)**: `~/.porpoise/registry.json` — `porpoise dashboard` 실행 시 현재 프로젝트 자동 등록, `--register/--unregister <path>` 명시 관리. 클라이언트는 경로가 아닌 **불투명 id**(`?project=<id>`)로만 참조하고 서버는 **등록된 경로만** 해석(미등록 404) — 임의 파일시스템 열람 차단
+- **API**: `GET /api/projects` 신설, 전 데이터 API + **SSE**(`/api/events`)에 `?project=` 스코프. **미지정 시 기존 동작**(기동 디렉터리, 하위호환)
+- **UI**: 프로젝트 셀렉터(2개 이상일 때만 표시), 전환 시 전 패널 갱신 + **라이브 SSE 재구독**
+- **라이브 검증**: 두 프로젝트(1태스크/$0.01 vs 5태스크/$0.22·DAG 6노드) 전환·Network `?project=` 확인 + **SSE 스코프 격리**(beta 라이브 재생 중 alpha는 IDLE 유지, 복귀 시 즉시 재수신) 시각 입증. 스모크 `scripts/dashboard-multi-validate.ps1` 추가
+- 후속 제어 UI(M33)가 이 프로젝트-스코프·허용 목록 모델을 상속
+- **테스트**: 353개 (348 → 353, +5개)
+
 ### [v0.28.0]
 - **대시보드 라이브 스트리밍 (M31, Phase 2)**: **진행 중인 conductor 실행**을 대시보드가 실시간으로 비춘다 — task별 현재 단계(brief→dispatch→verify→integrate, MERGED/HALTED), 재투입, **누적 비용/예산 진행 바**(초과 시 빨강). 실행 종료 시 리포트·DAG **자동 새로고침**, idle엔 마지막 실행 요약
 - **결합 없는 구조**: conductor가 단계 전환마다 `.porpoise/live.json`(live-1)을 **원자적**(temp→rename)으로 기록 — 대시보드의 존재를 모르고, 기록 실패는 실행에 무영향. 비정상 종료(에러)에도 wrapper가 `run_active`를 마감해 stale RUNNING 방지
