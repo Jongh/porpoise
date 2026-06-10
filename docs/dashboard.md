@@ -145,6 +145,29 @@ approval_mode = "gate"   # 기본 "console" — 미설정 시 기존 터미널 �
   - 즉 gate 모드 한 사이클(승인→실행→마일스톤→릴리즈)이 **터미널 입력 없이** 돈다.
   console 모드·`--yes`·레거시 경로는 무변경.
 
+## 통합 실행 — 대시보드 내장 기동 (M35)
+
+**gate 모드로 `porpoise`를 실행하면 대시보드가 자동으로 함께 기동**된다(같은 프로세스의
+백그라운드 스레드, 포트 7878) — 터미널 하나로 게이트 운영 전체가 시작된다. 브라우저도
+자동으로 열린다. conductor 종료 시 함께 닫힌다.
+
+```toml
+[conductor]
+approval_mode = "gate"     # gate 모드면 내장 기동이 기본
+serve_dashboard = false    # 끄기 (또는 true로 console 모드에서도 기동)
+```
+- 이미 `porpoise dashboard`가 떠 있으면(포트 사용 중) 에러 없이 **기존 대시보드와 공존** —
+  안내 후 브라우저만 연다.
+- 기동 실패는 경고만 남기고 실행은 계속된다(대시보드는 부가 기능).
+- 같은 프로세스여도 통신은 파일 매개(live.json·control/) 그대로 — 무결합 설계 불변.
+
+### 레지스트리 위생
+`/api/projects`(셀렉터)는 **실존하는 프로젝트만** 노출한다 — 삭제된 프로젝트의 stale 항목은
+숨겨진다(레지스트리 파일은 수정하지 않는 읽기 필터). 영구 제거는 `--unregister <path>`.
+
+### 검증
+`scripts/dashboard-embed-validate.ps1`: 내장 기동 HTTP 응답·이중 기동 공존(기존 서버 유지)·
+stale 필터를 검증. claude 불필요.
+
 ## 후속 Phase
-- **M35**: 통합 실행 — conductor의 대시보드 내장 기동
-- **M36**: 런처 — 함대 실행 버튼·halt 재투입·설정 편집
+- **M36**: 런처 — 함대 실행 버튼·halt 재투입·설정 편집·push 재시도 게이트화

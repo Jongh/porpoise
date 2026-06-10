@@ -131,11 +131,11 @@ pub fn route(path: &Path, url: &str) -> RouteResponse {
 }
 
 /// `GET /api/projects` — 레지스트리 목록 (+ 기동 디렉터리 표시).
+/// M35: 실존 항목만 노출 (삭제된 프로젝트의 stale 항목 숨김).
 fn projects_json(current: &Path) -> serde_json::Value {
     let reg = registry::load();
     let current_id = registry::project_id(&registry::normalize(current));
-    let projects: Vec<serde_json::Value> = reg
-        .projects
+    let projects: Vec<serde_json::Value> = registry::list_existing(&reg)
         .iter()
         .map(|e| {
             serde_json::json!({
@@ -148,7 +148,51 @@ fn projects_json(current: &Path) -> serde_json::Value {
 }
 
 
-/// 대시보드 서버를 기동한다 (블로킹). Ctrl-C로 종료.
+/// 포트 바인딩을 시도한다 (M35) — 실패(대개 포트 사용 중)는 에러가 아닌 None.
+fn try_bind(port: u16) -> Option<tiny_http::Server> {
+    tiny_http::Server::http(format!("127.0.0.1:{}", port)).ok()
+}
+
+/// 요청 수락 루프 (M31: 요청별 스레드 분리 — 장수명 SSE가 다른 요청을 블록하지 않음).
+fn serve_loop(server: tiny_http::Server, project: std::path::PathBuf) {
+    for request in server.incoming_requests() {
+        let p = project.clone();
+        std::thread::spawn(move || handle_request(request, &p));
+    }
+}
+
+/// 백그라운드 기동 결과 (M35).
+#[derive(Debug)]
+pub enum ServeOutcome {
+    /// 새 서버를 스레드로 기동함.
+    Started(String),
+    /// 포트가 이미 사용 중 — 기존 대시보드와 공존(같은 URL 사용).
+    PortInUse(String),
+    /// 기동 불가 (프로젝트 아님 등).
+    Failed(String),
+}
+
+/// 대시보드 서버를 백그라운드 스레드로 기동한다 (M35 — conductor 내장 기동용).
+/// 같은 프로세스여도 conductor와의 통신은 파일 매개(live.json·control/) 그대로다.
+pub fn serve_in_background(project: &Path, port: u16) -> ServeOutcome {
+    if !project.join(".porpoise").exists() {
+        return ServeOutcome::Failed(".porpoise/ 없음".to_string());
+    }
+    if let Err(e) = registry::register(project) {
+        eprintln!("  ⚠ 프로젝트 자동 등록 실패: {}", e);
+    }
+    let url = format!("http://127.0.0.1:{}", port);
+    match try_bind(port) {
+        Some(server) => {
+            let p = project.to_path_buf();
+            std::thread::spawn(move || serve_loop(server, p));
+            ServeOutcome::Started(url)
+        }
+        None => ServeOutcome::PortInUse(url),
+    }
+}
+
+/// 대시보드 서버를 기동한다 (블로킹 CLI 진입점 — `porpoise dashboard`). Ctrl-C로 종료.
 pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
     if !path.join(".porpoise").exists() {
         anyhow::bail!(
@@ -161,8 +205,9 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
     }
 
     let addr = format!("127.0.0.1:{}", port);
-    let server = tiny_http::Server::http(&addr)
-        .map_err(|e| anyhow::anyhow!("대시보드 서버 기동 실패 ({}): {} — 다른 --port를 시도하세요.", addr, e))?;
+    let server = try_bind(port).ok_or_else(|| {
+        anyhow::anyhow!("대시보드 서버 기동 실패 ({}) — 다른 --port를 시도하세요.", addr)
+    })?;
 
     let url = format!("http://{}", addr);
     println!();
@@ -175,12 +220,7 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
         }
     }
 
-    // M31: 요청별 스레드 분리 — 장수명 SSE 연결이 다른 요청을 블록하지 않게 한다.
-    let project = path.to_path_buf();
-    for request in server.incoming_requests() {
-        let p = project.clone();
-        std::thread::spawn(move || handle_request(request, &p));
-    }
+    serve_loop(server, path.to_path_buf());
     Ok(())
 }
 
@@ -302,6 +342,64 @@ mod tests {
     fn route_unknown_is_404() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(route(tmp.path(), "/nope").status, 404);
+    }
+
+    #[test]
+    fn try_bind_detects_port_conflict() {
+        // M35: 같은 포트 이중 바인딩 — 첫째 성공, 둘째 None(공존 경로)
+        let first = try_bind(17961).expect("첫 바인딩 성공");
+        assert!(try_bind(17961).is_none(), "사용 중인 포트는 None");
+        drop(first);
+    }
+
+    #[test]
+    fn serve_in_background_responds_over_http() {
+        // M35: 백그라운드 기동 후 실제 HTTP 응답 (detached 스레드)
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".porpoise")).unwrap();
+
+        match serve_in_background(tmp.path(), 17962) {
+            ServeOutcome::Started(url) => {
+                let resp = ureq::get(&format!("{}/api/live", url)).call().expect("HTTP 응답");
+                assert_eq!(resp.status(), 200);
+                let body = resp.into_string().unwrap();
+                assert!(body.contains("run_active"));
+            }
+            other => panic!("Started여야 함: {:?}", other),
+        }
+        // 자동 등록된 tempdir를 사용자 레지스트리에서 정리 (테스트 부작용 방지)
+        let _ = registry::unregister(tmp.path());
+        // 비-프로젝트 디렉터리는 Failed
+        let empty = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            serve_in_background(empty.path(), 17963),
+            ServeOutcome::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn projects_list_filters_stale_entries() {
+        // M35: 소멸 프로젝트는 목록에서 숨김 (registry::list_existing)
+        let tmp = tempfile::tempdir().unwrap();
+        let alive = tmp.path().join("alive");
+        std::fs::create_dir_all(alive.join(".porpoise")).unwrap();
+        let reg = registry::Registry {
+            projects: vec![
+                registry::ProjectEntry {
+                    id: "a".into(),
+                    name: "alive".into(),
+                    path: alive.to_string_lossy().to_string(),
+                },
+                registry::ProjectEntry {
+                    id: "g".into(),
+                    name: "ghost".into(),
+                    path: tmp.path().join("ghost").to_string_lossy().to_string(),
+                },
+            ],
+        };
+        let existing = registry::list_existing(&reg);
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].name, "alive");
     }
 
     #[test]

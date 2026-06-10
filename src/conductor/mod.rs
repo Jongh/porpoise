@@ -119,6 +119,26 @@ fn run_conductor_inner(
     // M33: 직전 실행의 stale 제어 파일(stop-next·미소비 게이트 응답) 청소 — 이월 정지 방지
     gate::cleanup_stale_controls(path);
 
+    // M35: 대시보드 내장 기동 — gate 모드면 기본(설정 opt-out). 터미널 하나로 게이트 운영.
+    // 같은 프로세스여도 통신은 파일 매개(live.json·control/) 그대로(무결합 불변).
+    if workspace.conductor_serve_dashboard() {
+        use crate::dashboard::ServeOutcome;
+        match crate::dashboard::serve_in_background(path, 7878) {
+            ServeOutcome::Started(url) => {
+                println!("  {} 대시보드 내장 기동: {}", "▶".green(), url.cyan());
+                println!("{}", "    (conductor 종료 시 함께 닫힙니다)".dimmed());
+                let _ = webbrowser::open(&url);
+            }
+            ServeOutcome::PortInUse(url) => {
+                println!("  {} 기존 대시보드와 공존: {}", "ℹ".cyan(), url.cyan());
+                let _ = webbrowser::open(&url);
+            }
+            ServeOutcome::Failed(e) => {
+                logger.warn("conductor", &format!("대시보드 내장 기동 실패(실행은 계속): {}", e));
+            }
+        }
+    }
+
     // M22: 기본 ON 전환 — 기존 사용자에게 1회 안내 (mode 미설정 시에만)
     maybe_show_transition_notice(path, workspace);
 

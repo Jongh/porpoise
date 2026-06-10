@@ -98,6 +98,8 @@ pub struct WorkspaceConductor {
     pub budget_usd: Option<f64>,
     /// 승인 게이트 모드 (M33): "console"(기본 — 터미널 프롬프트) | "gate"(대시보드 승인 대기).
     pub approval_mode: Option<String>,
+    /// 대시보드 내장 기동 (M35): 미설정 = gate 모드면 자동 기동, false = 끔, true = 항상 기동.
+    pub serve_dashboard: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -478,6 +480,14 @@ reviewer_extra = ""
             .as_ref()
             .and_then(|c| c.approval_mode.as_deref())
             == Some("gate")
+    }
+
+    /// 대시보드 내장 기동 여부 (M35). 명시 설정이 우선, 미설정이면 gate 모드와 동일.
+    pub fn conductor_serve_dashboard(&self) -> bool {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.serve_dashboard)
+            .unwrap_or_else(|| self.conductor_gate_mode())
     }
 
     pub fn session_keep_completed(&self) -> bool {

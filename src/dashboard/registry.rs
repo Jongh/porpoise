@@ -157,6 +157,15 @@ pub fn resolve(id: &str) -> Option<PathBuf> {
     resolve_in(&load(), id)
 }
 
+/// 실존(`.porpoise` 존재) 항목만 반환한다 (M35 — stale 항목 셀렉터 노출 방지).
+/// 읽기 필터일 뿐 레지스트리 파일은 수정하지 않는다(read-only 유지).
+pub fn list_existing(reg: &Registry) -> Vec<&ProjectEntry> {
+    reg.projects
+        .iter()
+        .filter(|e| PathBuf::from(&e.path).join(".porpoise").exists())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
