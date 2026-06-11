@@ -71,6 +71,8 @@ pub fn run_parallel(
 
     // task별 시도 횟수 (충돌·실패 누적) — 무한 루프 방지용 캡
     let mut attempts: HashMap<String, u32> = HashMap::new();
+    // M37: 대시보드 재투입 오버라이드로 상향된 task별 추가 재투입 예산 (누적)
+    let mut redispatch_bonus: HashMap<String, u32> = HashMap::new();
     // 재투입 시 brief에 주입할 피드백 (충돌·FAIL 사유). 다음 라운드 에이전트가 맥락을 알도록 한다.
     let mut feedbacks: HashMap<String, String> = HashMap::new();
     let mut history: Vec<String> = Vec::new();
@@ -96,6 +98,14 @@ pub fn run_parallel(
 
         // M24: 의존성이 모두 충족된 ready task만 배치 대상
         let ready = schedule::ready_tasks(&pending, &completed_ids);
+        // M37: 대시보드 재투입 오버라이드 소비 — ready task의 재투입 한도를 상향
+        for t in &ready {
+            if let Some(extra) = super::redispatch::consume_override(path, &t.id, logger) {
+                let b = redispatch_bonus.entry(t.id.clone()).or_insert(0);
+                *b = b.saturating_add(extra);
+                println!("  {} [{}] 재투입 요청 수신 — 재투입 한도 +{}", "↻".cyan(), t.id, extra);
+            }
+        }
         if ready.is_empty() {
             println!(
                 "{}",
@@ -236,10 +246,16 @@ pub fn run_parallel(
 
         save_batch_checkpoint(path, &batch, logger);
 
-        // 무한 루프 방지: 시도 한도 초과 task가 있으면 중단
+        // 무한 루프 방지: 시도 한도 초과 task가 있으면 중단 (M37: 재투입 오버라이드로 상향된 한도 반영)
         let stuck: Vec<String> = attempts
             .iter()
-            .filter(|(_, c)| **c > max_redispatch)
+            .filter(|(id, c)| {
+                let cap = super::redispatch::effective_max_redispatch(
+                    max_redispatch,
+                    *redispatch_bonus.get(*id).unwrap_or(&0),
+                );
+                **c > cap
+            })
             .map(|(id, _)| id.clone())
             .collect();
         if !stuck.is_empty() {

@@ -189,5 +189,45 @@ gate 모드에서 마지막 남은 터미널 입력 2곳이 게이트로 처리�
 - **push 재시도**: 릴리즈의 git push 실패 시 재시도 여부가 confirm 게이트로.
 console 모드·`--yes`는 기존 동작 유지.
 
-## 후속 Phase
-- **M37**: 런처 — 함대 실행 버튼·halt 재투입·설정 편집
+## 런처 — 함대 실행·재투입·설정 편집 (M37)
+
+대시보드가 관측·게이트 제어를 넘어 **실행을 시작·관리**한다. M35까지는 conductor가 대시보드를
+내장 기동했으나, 런처는 그 방향을 역전해 **독립 실행 중인 대시보드가 conductor 프로세스를 spawn**한다
+(대시보드가 자식 프로세스의 수명을 소유). 실행 백엔드를 제외한 통신은 여전히 파일 매개를 유지한다.
+
+### 함대 실행 — `POST /api/launch`
+- 라이브 패널의 **[▶ 함대 실행]** 버튼(런 비활성·대기 게이트 없을 때만 노출) → `porpoise`를
+  프로젝트 디렉터리에서 **detached spawn**(stdin=null, stdout/stderr → `.porpoise/launch.log`,
+  새 프로세스 그룹). 대시보드를 닫거나 Ctrl-C해도 런은 계속된다.
+- **런 락**: live.json `run_active`가 true이거나 신선한(30초 이내) `.porpoise/run.lock`이
+  있으면 **409**(이중 기동 차단). run.lock은 spawn~`live::start` 공백을 덮고 시간 기반으로 자가
+  만료(stale 락은 무시)한다.
+- spawn된 gate 모드 conductor는 자기 대시보드를 `serve_in_background`로 띄우려다 `PortInUse`로
+  기존(런처) 대시보드와 **공존**(M35 경로). body `{"yes":true}`면 `--yes`(자동 승인) 전달.
+
+### halt task 재투입 — `POST /api/control {decision:"redispatch", gate_id:<task_id>}`
+- `max_redispatch` 소진으로 halt된 task는 incomplete로 남아 다음 실행에서 어차피 재시도되지만,
+  같은 한도에서 또 즉시 halt된다. 재투입은 **재투입 예산을 +1 상향**해 이를 막는다.
+- 리포트의 **FAIL task 행 [재투입] 버튼** → `.porpoise/control/redispatch-<task_id>.json`(`{extra_budget:1}`)
+  기록. conductor가 다음 실행에서 해당 task 처리 직전 **소비(삭제)** 하고 유효 한도를 `base+extra`로
+  올리며 halt 힌트도 정리한다. (`cleanup_stale_controls`는 redispatch-*.json을 지우지 않아 살아남는다.)
+- 실행 중 함대로의 핫-재큐는 범위 밖 — 재투입은 **다음 [함대 실행]에서 효력**.
+
+### 설정 편집 — `GET/POST /api/config`
+- `GET` → 현재 `[conductor]` 편집 가능 값(effective). 설정 패널의 **[편집]** 폼에 채워진다.
+- `POST` → **화이트리스트 키만** 검증·저장: `mode`·`approval_mode`·`max_parallel`·`max_redispatch`·
+  `serve_dashboard`·`verifier_model`·`verdict_fallback`. 화이트리스트 외 키·범위 위반·잘못된
+  열거값은 **400**이며 **아무것도 쓰지 않는다**(원자성). workspace.toml의 다른 섹션·값은 보존된다
+  (주석은 toml round-trip 특성상 보존되지 않음 — 알려진 트레이드오프).
+- **경계 확장**: M33은 제어 쓰기를 `control/`로 한정했으나(설정·코드 쓰기 금지), 이 엔드포인트만
+  `[conductor]` 설정 쓰기를 **의도적으로** 허용한다(코드·project.md는 여전히 불가). 쓰기는
+  `utils::fs::write_file`(루트 경계) 경유.
+
+### 보안
+신규 쓰기 엔드포인트(`/api/launch`·`/api/config`·`redispatch` control) 모두 **Origin 검증(403)**·
+**프로젝트 스코프(404)** 를 상속한다. 설정 쓰기는 `[conductor]` 화이트리스트로 한정(임의 TOML 주입 불가).
+
+### 검증
+`scripts/dashboard-launch-validate.ps1`: 런 락 409·Origin 403·미등록 404, 재투입 오버라이드 작성,
+설정 GET/POST 왕복(화이트리스트 위반 거부·타 섹션 보존)을 HTTP 수준에서 검증. claude 불필요.
+실제 detached spawn([함대 실행] 성공 경로)은 실제 conductor 런을 띄우므로 **운영자 라이브 검증** 항목.

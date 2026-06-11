@@ -116,3 +116,35 @@ footer { text-align: center; padding: 24px; font-size: 12px; }
 #budget-fill { height: 100%; width: 0%; background: var(--accent); transition: width .4s; }
 #budget-fill.over { background: var(--fail); }
 #budget-label { font-size: 12px; margin-top: 4px; }
+
+/* M37: 런처 — 함대 실행 · 재투입 · 설정 편집 */
+.btn-launch {
+  margin-left: 10px; padding: 3px 12px; font-size: 11px; vertical-align: middle;
+  border: 1px solid var(--pass); border-radius: 6px; font-weight: 700; cursor: pointer;
+  background: rgba(63,185,80,.15); color: var(--pass);
+}
+.btn-launch:hover { background: rgba(63,185,80,.3); }
+.btn-launch:disabled { opacity: .5; cursor: default; }
+.launch-msg { margin-left: 10px; font-size: 12px; vertical-align: middle; }
+.launch-msg.ok { color: var(--pass); }
+.launch-msg.err { color: var(--fail); }
+.btn-redispatch {
+  margin-left: 8px; padding: 1px 8px; font-size: 11px; cursor: pointer;
+  border: 1px solid var(--accent); border-radius: 5px;
+  background: rgba(74,168,255,.12); color: var(--ready);
+}
+.btn-redispatch:hover { background: rgba(74,168,255,.28); }
+.btn-redispatch:disabled { opacity: .55; cursor: default; }
+.btn-cfg {
+  margin-left: 10px; padding: 2px 10px; font-size: 11px; vertical-align: middle; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--muted);
+}
+.btn-cfg:hover { color: var(--ink); }
+.config-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
+.config-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.config-form label.cb { flex-direction: row; align-items: center; gap: 8px; }
+.config-form select, .config-form input[type="number"], .config-form input[type="text"] {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--ink); padding: 5px 8px; font-size: 13px;
+}
+.config-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; }

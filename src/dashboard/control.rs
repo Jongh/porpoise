@@ -61,8 +61,12 @@ pub fn handle_control(project: &Path, body: &str, origin: Option<&str>) -> Contr
         Ok(r) => r,
         Err(_) => return outcome(400, r#"{"error":"invalid body"}"#),
     };
-    if req.decision != "approve" && req.decision != "stop" {
-        return outcome(400, r#"{"error":"decision must be approve|stop"}"#);
+    if req.decision != "approve" && req.decision != "stop" && req.decision != "redispatch" {
+        return outcome(400, r#"{"error":"decision must be approve|stop|redispatch"}"#);
+    }
+    // M37: halt task 재투입 — 별도 채널(redispatch-<task_id>.json)에 오버라이드를 기록한다.
+    if req.decision == "redispatch" {
+        return handle_redispatch(project, req.gate_id.as_deref());
     }
     if let Some(ref t) = req.text {
         if !text_safe(t) {
@@ -93,6 +97,35 @@ pub fn handle_control(project: &Path, body: &str, origin: Option<&str>) -> Contr
 
     // serde_json 직렬화 — 텍스트의 따옴표 등 특수문자를 안전하게 이스케이프
     let content = serde_json::json!({ "decision": req.decision, "text": req.text }).to_string();
+    let target = control_dir.join(&filename);
+    let tmp = control_dir.join(format!("{}.tmp", filename));
+    if std::fs::write(&tmp, &content).is_err() {
+        return outcome(500, r#"{"error":"write failed"}"#);
+    }
+    if std::fs::rename(&tmp, &target).is_err() {
+        let _ = std::fs::remove_file(&target);
+        if std::fs::rename(&tmp, &target).is_err() {
+            return outcome(500, r#"{"error":"write failed"}"#);
+        }
+    }
+    outcome(200, r#"{"ok":true}"#)
+}
+
+/// M37: 재투입 오버라이드 파일을 쓴다. gate_id에 task id를 받아 검증 후
+/// `.porpoise/control/redispatch-<task_id>.json`(`{extra_budget:1}`)을 원자적으로 작성한다.
+/// 다음 conductor 실행이 해당 task 처리 직전 이를 소비해 재투입 예산을 상향한다.
+fn handle_redispatch(project: &Path, gate_id: Option<&str>) -> ControlOutcome {
+    let task_id = match gate_id {
+        Some(id) if gate_id_safe(id) => id,
+        Some(_) => return outcome(400, r#"{"error":"invalid gate_id"}"#),
+        None => return outcome(400, r#"{"error":"gate_id (task id) required for redispatch"}"#),
+    };
+    let control_dir = project.join(".porpoise").join("control");
+    if std::fs::create_dir_all(&control_dir).is_err() {
+        return outcome(500, r#"{"error":"cannot create control dir"}"#);
+    }
+    let content = serde_json::json!({ "extra_budget": 1 }).to_string();
+    let filename = format!("redispatch-{}.json", task_id);
     let target = control_dir.join(&filename);
     let tmp = control_dir.join(format!("{}.tmp", filename));
     if std::fs::write(&tmp, &content).is_err() {
@@ -168,6 +201,45 @@ mod tests {
             .map(|e| e.flatten().map(|f| f.file_name().to_string_lossy().to_string()).collect())
             .unwrap_or_default();
         assert!(leftover.is_empty(), "거부 요청은 파일을 만들지 않아야 함: {:?}", leftover);
+    }
+
+    #[test]
+    fn redispatch_writes_override_file() {
+        // M37: decision=redispatch + gate_id(task id) → redispatch-<id>.json 작성
+        let tmp = dir();
+        let r = handle_control(
+            tmp.path(),
+            r#"{"gate_id":"M37-T01","decision":"redispatch"}"#,
+            None,
+        );
+        assert_eq!(r.status, 200);
+        let f = tmp.path().join(".porpoise").join("control").join("redispatch-M37-T01.json");
+        assert!(f.exists(), "재투입 오버라이드 파일이 생성되어야 함");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
+        assert_eq!(v["extra_budget"], 1);
+    }
+
+    #[test]
+    fn redispatch_rejects_invalid_inputs() {
+        let tmp = dir();
+        // gate_id(task id) 누락
+        let r1 = handle_control(tmp.path(), r#"{"decision":"redispatch"}"#, None);
+        assert_eq!(r1.status, 400, "재투입엔 task id 필수");
+        // 경로 주입 task id
+        let r2 = handle_control(
+            tmp.path(),
+            r#"{"gate_id":"../../evil","decision":"redispatch"}"#,
+            None,
+        );
+        assert_eq!(r2.status, 400, "경로 주입 task id 거부");
+        // 외부 origin
+        let r3 = handle_control(
+            tmp.path(),
+            r#"{"gate_id":"M37-T01","decision":"redispatch"}"#,
+            Some("http://evil.com"),
+        );
+        assert_eq!(r3.status, 403, "외부 origin 차단(재투입도 쓰기)");
     }
 
     #[test]

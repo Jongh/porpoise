@@ -4,6 +4,16 @@
 
 ---
 
+### [v0.34.0]
+- **런처 — 대시보드에서 함대 실행·halt 재투입·설정 편집 (M37)**: 대시보드가 관측·게이트 제어를 넘어 **실행을 시작·관리**하는 통제실이 된다. M35까지 conductor가 대시보드를 내장 기동했으나, 런처는 방향을 역전해 **독립 실행 중인 대시보드가 conductor 프로세스를 detached spawn**한다(대시보드가 자식 프로세스의 수명 소유 — M33부터 이월된 후속). 실행 백엔드 외 통신은 여전히 파일 매개·무결합
+- **함대 실행 `POST /api/launch`**: 라이브 패널 [▶ 함대 실행] 버튼 → `current_exe`로 `porpoise`를 프로젝트 디렉터리에서 detached spawn(stdin=null, stdout/stderr→`.porpoise/launch.log`; Windows `CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW`, Unix `process_group(0)`). **런 락**(live.json `run_active` OR 30초 신선 `.porpoise/run.lock`)으로 이중 기동을 409 차단 — 락은 spawn 전 선점으로 TOCTOU 창을 닫고 시간 기반 자가 만료. spawn된 gate 모드 conductor는 PortInUse로 기존(런처) 대시보드와 공존(M35)
+- **halt task 재투입 `POST /api/control {decision:"redispatch"}`**: max_redispatch 소진으로 halt된 task의 리포트 FAIL 행 [재투입] 버튼 → `.porpoise/control/redispatch-<task_id>.json`(`{extra_budget:1}`) 기록. conductor가 다음 실행에서 해당 task 처리 직전 **소비(삭제)** 하고 유효 재투입 한도를 `base+extra`(상한 20)로 상향, halt 힌트도 정리. 순차·병렬 양 경로 적용. `cleanup_stale_controls`가 redispatch-*.json은 지우지 않아 실행 시작 청소를 넘어 살아남는다. 실행 중 함대로의 핫-재큐는 범위 밖(다음 실행에서 효력)
+- **설정 편집 `GET/POST /api/config`**: 설정 패널 [편집] 폼에서 `[conductor]` **화이트리스트 7키**(mode·approval_mode·max_parallel·max_redispatch·serve_dashboard·verifier_model·verdict_fallback) 읽기·쓰기. 필드별 검증(열거·범위·타입·텍스트 안전성), 화이트리스트 외 키·검증 실패는 400·**무쓰기(원자성)**, toml round-trip으로 타 섹션 보존(주석은 미보존 — 알려진 트레이드오프). M33의 "control/ 한정·설정 쓰기 금지" 경계를 [conductor]에 한해 **의도적 확장**(코드·project.md는 여전히 불가), 쓰기는 `utils::fs::write_file`(루트 경계) 경유
+- **보안**: 신규 쓰기 엔드포인트 3개(`/api/launch`·`/api/config`·`redispatch` control) 모두 Origin 검증(403)·프로젝트 스코프(404)를 상속. 설정 쓰기는 화이트리스트로 임의 TOML 주입 차단. 하위호환: live.json 스키마 무변경, control `redispatch`·신규 엔드포인트·UI 버튼 모두 가산적, console·`--yes` 의미 보존
+- **검증**: ① 단위(런 락 분기·재투입 오버라이드 소비·설정 검증/부분 갱신) ② HTTP 하니스 `scripts/dashboard-launch-validate.ps1`(claude 불필요 — 런 락 409·Origin 403·미등록 404·재투입 작성·설정 GET/POST 왕복·화이트리스트 위반 400 무쓰기) ③ **라이브** `scripts/dashboard-launch-live.ps1` — gate 모드 git 샌드박스에서 [함대 실행]→ 자식이 첫 task 게이트 블록(dispatch 전 → **비용 0**)→ **대시보드 강제 종료 후 자식 생존(detached spawn 증명)**→ stop-next 우아한 정지
+- **리뷰가 잡은 수정**: 함대 실행 TOCTOU 경쟁(가드 후 spawn·이후 락 기록 → 동시 요청 이중 spawn 가능) → 락을 spawn **전에** 선점하고 실패 시 롤백
+- **테스트**: 396개 (374 → 396, +22개)
+
 ### [v0.33.0]
 - **태스크 작업 내용 가시화 (M36)**: 사용자 요청 — 모니터링에서 task id·숫자만이 아니라 **실제 작업 내용**이 보이게. ① 라이브 패널에 각 task의 **작업 제목**(`LiveTask.title`, live-1 하위호환 — `save_phase` 4단계 자동 전달, 병렬 배치 포함, 빈 제목은 기존 보존) ② 실행 리포트 **행 클릭 펼침** — 최신 run(M27 규칙 공유 `latest_run_records`)의 라운드별 verdict·diff·비용·**검증 피드백**(FAIL 사유, 빨간 테두리)·**에이전트 작업 보고**(dispatch_output). 재투입 task는 라운드별 구분되어 "왜 재투입됐고 어떻게 반영했는지"가 보인다
 - **`GET /api/task?id=M1-T03`**: 감사 기록(conductor-4)에 이미 저장된 본문의 노출 — 새 수집 0·read-only. `AuditRecord`에 본문 필드(feedback·dispatch_output·verifier_raw) 역직렬화 추가, 응답 2KB 트렁케이트(전송 절제), 렌더링 esc() 경유(XSS 방어)

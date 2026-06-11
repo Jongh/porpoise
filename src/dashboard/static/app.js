@@ -93,14 +93,26 @@
         const tr = document.createElement("tr");
         tr.className = "report-row";
         tr.title = "클릭하면 작업 내용 상세를 펼칩니다";
+        // M37: FAIL task는 [재투입] 버튼 — 다음 실행에서 예산 상향 후 재시도
+        const redispatchBtn = t.final_verdict
+          ? ""
+          : `<button class="btn-redispatch" data-task="${esc(t.task_id)}" title="재투입 예약 — 다음 함대 실행에서 재시도">재투입</button>`;
         tr.innerHTML =
-          `<td class="mono">${esc(t.task_id)}</td>` +
+          `<td class="mono">${esc(t.task_id)} ${redispatchBtn}</td>` +
           `<td><span class="tag ${verdict}">${verdict}</span></td>` +
           `<td>${t.attempts}</td><td>${t.max_redispatch}</td>` +
           `<td>${t.fallback_used ? "예" : ""}</td>` +
           `<td>${money(t.cost_usd)}</td>`;
         // M36: 행 클릭 → 작업 내용 상세 펼침/접기
         tr.addEventListener("click", () => toggleDetail(tr, t.task_id));
+        // M37: 재투입 버튼 — 행 펼침과 분리(이벤트 전파 차단)
+        const rb = tr.querySelector(".btn-redispatch");
+        if (rb) {
+          rb.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            redispatchTask(t.task_id, rb);
+          });
+        }
         tbody.appendChild(tr);
       });
     }
@@ -346,6 +358,11 @@
       card.classList.add("hidden");
       $("#gate-error").classList.add("hidden");
     }
+    // M37: 함대 실행 버튼 — 런이 비활성이고 대기 게이트도 없을 때만 노출
+    const launchBtn = $("#launch-fleet");
+    const canLaunch = !live.run_active && !live.pending_gate;
+    launchBtn.classList.toggle("hidden", !canLaunch);
+
     // 실행 중 상시 사전 정지 버튼 (M34: 정지 예약 가시화 — 서버 진실 stop_pending)
     const stopBtn = $("#stop-next");
     stopBtn.classList.toggle("hidden", !live.run_active);
@@ -381,6 +398,110 @@
     } catch (e) {
       err.textContent = "전송 실패: " + e;
       err.classList.remove("hidden");
+    }
+  }
+
+  // ── M37: 런처 — 함대 실행 ──────────────────────────────────────────
+  function flashMsg(el, text, isError) {
+    el.textContent = text;
+    el.className = "launch-msg" + (isError ? " err" : " ok");
+    setTimeout(() => el.classList.add("hidden"), 4000);
+  }
+
+  async function launchFleet() {
+    const msg = $("#launch-msg");
+    const btn = $("#launch-fleet");
+    btn.disabled = true;
+    try {
+      const r = await fetch(withProject("/api/launch"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        flashMsg(msg, "함대 기동 — PID " + (data.pid || "?"), false);
+        setTimeout(() => getJSON("/api/live").then(renderLive).catch(() => {}), 1200);
+      } else if (r.status === 409) {
+        flashMsg(msg, "이미 실행 중입니다", true);
+      } else {
+        flashMsg(msg, "실행 실패 (" + r.status + ") " + (data.error || ""), true);
+      }
+    } catch (e) {
+      flashMsg(msg, "실행 실패: " + e, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── M37: halt task 재투입 ──────────────────────────────────────────
+  async function redispatchTask(taskId, btn) {
+    btn.disabled = true;
+    try {
+      const r = await fetch(withProject("/api/control"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gate_id: taskId, decision: "redispatch" }),
+      });
+      if (r.ok) {
+        btn.textContent = "재투입 예약됨";
+        flashMsg($("#launch-msg"), taskId + " 재투입 예약 — 다음 함대 실행에서 재시도", false);
+      } else {
+        const data = await r.json().catch(() => ({}));
+        btn.disabled = false;
+        flashMsg($("#launch-msg"), "재투입 실패 (" + r.status + ") " + (data.error || ""), true);
+      }
+    } catch (e) {
+      btn.disabled = false;
+      flashMsg($("#launch-msg"), "재투입 실패: " + e, true);
+    }
+  }
+
+  // ── M37: 설정 편집 ─────────────────────────────────────────────────
+  async function loadConfig() {
+    try {
+      const data = await getJSON("/api/config");
+      const c = data.conductor || {};
+      const f = $("#config-form");
+      ["mode", "approval_mode", "verdict_fallback"].forEach((k) => {
+        if (f[k] != null && c[k] != null) f[k].value = c[k];
+      });
+      if (f.max_parallel) f.max_parallel.value = c.max_parallel;
+      if (f.max_redispatch) f.max_redispatch.value = c.max_redispatch;
+      if (f.serve_dashboard) f.serve_dashboard.checked = !!c.serve_dashboard;
+      if (f.verifier_model) f.verifier_model.value = c.verifier_model || "";
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function saveConfig(ev) {
+    ev.preventDefault();
+    const f = $("#config-form");
+    const msg = $("#config-msg");
+    const payload = {
+      mode: f.mode.value,
+      approval_mode: f.approval_mode.value,
+      verdict_fallback: f.verdict_fallback.value,
+      max_parallel: Number(f.max_parallel.value),
+      max_redispatch: Number(f.max_redispatch.value),
+      serve_dashboard: f.serve_dashboard.checked,
+      verifier_model: f.verifier_model.value,
+    };
+    try {
+      const r = await fetch(withProject("/api/config"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        flashMsg(msg, "설정 저장됨", false);
+      } else {
+        flashMsg(msg, "저장 실패 (" + r.status + ") " + (data.error || ""), true);
+      }
+    } catch (e) {
+      flashMsg(msg, "저장 실패: " + e, true);
     }
   }
 
@@ -425,6 +546,7 @@
       console.error(e);
     }
     await refresh();
+    await loadConfig();
     startLive();
   }
 
@@ -436,10 +558,17 @@
       console.error(e);
     }
     await refresh();
+    await loadConfig();
     startLive();
     sel.addEventListener("change", refresh);
     projSel.addEventListener("change", switchProject);
     $("#refresh").addEventListener("click", refresh);
+    // M37: 런처 — 함대 실행 / 설정 편집
+    $("#launch-fleet").addEventListener("click", launchFleet);
+    $("#config-toggle").addEventListener("click", () => {
+      $("#config-form").classList.toggle("hidden");
+    });
+    $("#config-form").addEventListener("submit", saveConfig);
     // M33: 게이트 제어 버튼 (M34: text 게이트면 입력값 동봉)
     $("#gate-approve").addEventListener("click", () => {
       if (!currentGateId) return;

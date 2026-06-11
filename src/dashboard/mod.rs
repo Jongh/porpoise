@@ -4,7 +4,9 @@
 //! 브라우저에서 본다. conductor 로직은 건드리지 않는다(파일 쓰기 없음).
 
 pub mod api;
+pub mod config_edit;
 pub mod control;
+pub mod launch;
 pub mod registry;
 pub mod sse;
 
@@ -142,6 +144,8 @@ pub fn route(path: &Path, url: &str) -> RouteResponse {
             }
             json_resp(api::task_detail_json(scope, &id))
         }
+        // M37: 설정 읽기 (편집 가능한 [conductor] 값)
+        "/api/config" => json_resp(config_edit::read_config_json(scope)),
         _ => not_found(),
     }
 }
@@ -244,9 +248,10 @@ pub fn run_dashboard(path: &Path, port: u16, open: bool) -> Result<()> {
 fn handle_request(mut request: tiny_http::Request, project: &Path) {
     let url = request.url().to_string();
 
-    // M33: 제어 POST — 유일한 쓰기 경로 (.porpoise/control/ 한정)
+    // 쓰기 POST 엔드포인트 — M33 control(.porpoise/control/), M37 launch·config
     let (req_path, _) = parse_path_and_query(&url);
-    if req_path == "/api/control" && request.method() == &tiny_http::Method::Post {
+    let is_post = request.method() == &tiny_http::Method::Post;
+    if is_post && matches!(req_path.as_str(), "/api/control" | "/api/launch" | "/api/config") {
         let (_, params) = parse_path_and_query(&url);
         let Ok(scope) = resolve_project_scope(project, &params) else {
             respond_json(request, 404, r#"{"error":"unknown project id"}"#);
@@ -263,8 +268,24 @@ fn handle_request(mut request: tiny_http::Request, project: &Path) {
             respond_json(request, 400, r#"{"error":"unreadable body"}"#);
             return;
         }
-        let out = control::handle_control(&scope, &body, origin.as_deref());
-        respond_json(request, out.status, &out.body);
+        let (status, out_body) = match req_path.as_str() {
+            "/api/control" => {
+                let o = control::handle_control(&scope, &body, origin.as_deref());
+                (o.status, o.body)
+            }
+            // M37: 함대 실행 — conductor 프로세스 detached spawn
+            "/api/launch" => {
+                let o = launch::handle_launch(&scope, &body, origin.as_deref());
+                (o.status, o.body)
+            }
+            // M37: 설정 편집 — [conductor] 화이트리스트 키 쓰기
+            "/api/config" => {
+                let o = config_edit::handle_config_post(&scope, &body, origin.as_deref());
+                (o.status, o.body)
+            }
+            _ => unreachable!(),
+        };
+        respond_json(request, status, &out_body);
         return;
     }
 

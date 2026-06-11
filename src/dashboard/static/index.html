@@ -23,7 +23,9 @@
   <main>
     <section class="panel" id="live-panel">
       <h2>라이브 <span id="live-badge" class="live-badge idle">IDLE</span>
+        <button id="launch-fleet" class="btn-launch hidden" title="대시보드에서 conductor 런을 기동합니다">▶ 함대 실행</button>
         <button id="stop-next" class="btn-stop hidden" title="진행 중인 task를 마친 뒤 다음 게이트에서 정지">다음 게이트에서 정지</button>
+        <span id="launch-msg" class="launch-msg hidden"></span>
       </h2>
       <div id="gate-card" class="gate-card hidden">
         <div id="gate-prompt" class="gate-prompt"></div>
@@ -57,6 +59,39 @@
         <tbody></tbody>
       </table>
       <p id="report-empty" class="muted hidden">집계할 감사 기록이 없습니다.</p>
+    </section>
+
+    <section class="panel" id="config-panel">
+      <h2>설정 <span class="muted">([conductor])</span>
+        <button id="config-toggle" class="btn-cfg" title="설정 편집 폼 열기/닫기">편집</button>
+      </h2>
+      <form id="config-form" class="config-form hidden">
+        <label>mode
+          <select name="mode"><option value="conductor">conductor</option><option value="legacy">legacy</option></select>
+        </label>
+        <label>approval_mode
+          <select name="approval_mode"><option value="console">console</option><option value="gate">gate</option></select>
+        </label>
+        <label>verdict_fallback
+          <select name="verdict_fallback"><option value="pass_if_checks_pass">pass_if_checks_pass</option><option value="halt">halt</option></select>
+        </label>
+        <label>max_parallel
+          <input type="number" name="max_parallel" min="1" max="8" step="1" />
+        </label>
+        <label>max_redispatch
+          <input type="number" name="max_redispatch" min="0" max="20" step="1" />
+        </label>
+        <label class="cb">serve_dashboard
+          <input type="checkbox" name="serve_dashboard" />
+        </label>
+        <label>verifier_model
+          <input type="text" name="verifier_model" maxlength="200" placeholder="(비워두면 dispatch와 동일)" />
+        </label>
+        <div class="config-actions">
+          <button type="submit" class="btn-approve">저장</button>
+          <span id="config-msg" class="launch-msg hidden"></span>
+        </div>
+      </form>
     </section>
 
     <section class="panel">

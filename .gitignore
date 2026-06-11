@@ -32,3 +32,6 @@ wix/porpoise.ico
 claude.md
 .docs/
 .porpoise/
+
+# tide cycle state (not committed)
+.tide/

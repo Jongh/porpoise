@@ -223,6 +223,15 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.34.0]
+- **런처 — 함대 실행·halt 재투입·설정 편집 (M37)**: 대시보드가 관측·게이트를 넘어 **실행을 시작·관리**한다. 독립 대시보드가 conductor를 **detached spawn**(자식 수명 소유 — M35 내장 기동의 역전, M33부터 이월된 후속)
+- **함대 실행 `POST /api/launch`**: [▶ 함대 실행] 버튼 → `porpoise` detached spawn(대시보드를 종료해도 런 생존, stdout/stderr→`.porpoise/launch.log`). **런 락**(live `run_active` OR 30초 신선 `run.lock`, spawn 전 선점)으로 이중 기동 409. gate 모드 자식은 PortInUse로 기존 대시보드와 공존(M35)
+- **halt 재투입 `redispatch` decision**: FAIL task 행 [재투입] → `redispatch-<id>.json` 기록 → conductor가 다음 실행에서 소비·재투입 예산 상향·halt 힌트 정리 (순차·병렬 양 경로, 다음 실행에서 효력)
+- **설정 편집 `GET/POST /api/config`**: `[conductor]` 화이트리스트 7키 읽기·쓰기, 필드별 검증·화이트리스트 외 거부(400 무쓰기)·타 섹션 보존. M33 "설정 쓰기 금지" 경계의 의도적 제한 확장(코드·project.md는 불가)
+- **보안**: 신규 쓰기 3엔드포인트 Origin(403)·스코프(404) 상속, 화이트리스트로 TOML 주입 차단. 하위호환(가산적 변경, console·`--yes` 무변경)
+- **라이브 검증**: gate 샌드박스에서 [함대 실행]→ 게이트 블록(비용 0)→ **대시보드 종료 후 자식 생존**(detach 증명)→ 우아한 정지. 하니스 2종(무-claude HTTP `dashboard-launch-validate` + 라이브 `dashboard-launch-live`)
+- **테스트**: 396개 (374 → 396, +22개)
+
 ### [v0.33.0]
 - **태스크 작업 내용 가시화 (M36)**: 모니터링에서 "각 태스크가 실제로 무슨 작업을 하는지" 보인다 — ① 라이브 패널에 task **작업 제목** 표시(`LiveTask.title`) ② 실행 리포트 **행 클릭 펼침** → 최신 run의 라운드별 **검증 피드백**(FAIL 사유, 빨간 테두리)·**에이전트 작업 보고**·diff·비용 (재투입 사유가 보임)
 - **`GET /api/task?id=`**: 감사 기록에 이미 저장된 본문(feedback·dispatch_output)의 노출 — 새 수집 0·read-only·2KB 트렁케이트·esc() XSS 방어. 최신 run 정의(M27)를 집계와 공유

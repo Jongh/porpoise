@@ -17,6 +17,7 @@ pub mod git;
 pub mod integrate;
 pub mod live;
 pub mod parallel;
+pub mod redispatch;
 pub mod report;
 pub mod schedule;
 pub mod verify;
@@ -248,6 +249,21 @@ fn run_conductor_inner(
             break;
         }
 
+        // M37: 대시보드에서 재투입 오버라이드가 왔으면 소비하고 이 task의 재투입 예산을 상향
+        let task_max_redispatch = match redispatch::consume_override(path, &task.id, logger) {
+            Some(extra) => {
+                let eff = redispatch::effective_max_redispatch(max_redispatch, extra);
+                println!(
+                    "  {} 재투입 요청 수신 — 재투입 한도 {} → {}",
+                    "↻".cyan(),
+                    max_redispatch,
+                    eff
+                );
+                eff
+            }
+            None => max_redispatch,
+        };
+
         let (outcome, task_cost) = conduct_task(
             path,
             &task.id,
@@ -257,7 +273,7 @@ fn run_conductor_inner(
             dispatch_model.as_deref(),
             verifier_model.as_deref(),
             &dod,
-            max_redispatch,
+            task_max_redispatch,
             logger,
         )?;
         total_cost += task_cost;
