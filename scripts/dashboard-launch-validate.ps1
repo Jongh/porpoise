@@ -156,6 +156,18 @@ if ((PostCode "$base/api/launch" '{}' @{}) -ne 409) { Fail "fresh preempt lock s
 Ok "fresh preempt lock (pid=0) -> 409 (TOCTOU window guard)"
 Remove-Item (Join-Path $porpoise "run.lock") -Force
 
+# 9. M39: halt 회복 설정 키 (park_on_halt 기본 true, auto_replan 기본 false) GET/POST
+$hc = Invoke-RestMethod "$base/api/config"
+if ($hc.conductor.park_on_halt -ne $true) { Fail "park_on_halt default should be true" }
+if ($hc.conductor.auto_replan -ne $false) { Fail "auto_replan default should be false" }
+$rh = Invoke-RestMethod -Method Post -Uri "$base/api/config" -ContentType "application/json" -Body '{"park_on_halt":false,"auto_replan":true}'
+if (-not $rh.ok) { Fail "halt-recovery config POST not ok" }
+$hc2 = Invoke-RestMethod "$base/api/config"
+if ($hc2.conductor.park_on_halt -ne $false) { Fail "park_on_halt not updated" }
+if ($hc2.conductor.auto_replan -ne $true) { Fail "auto_replan not updated" }
+if ((PostCode "$base/api/config" '{"park_on_halt":"yes"}' @{}) -ne 400) { Fail "non-bool park_on_halt should be 400" }
+Ok "M39 halt-recovery config (park_on_halt/auto_replan) GET/POST + type check"
+
 Cleanup
 Write-Host "`nM37+M38 LAUNCHER VALIDATION: PASS" -ForegroundColor Green
 Write-Host "Launch guards, redispatch, config (port/comment-preserving), run lock enforced at HTTP level." -ForegroundColor Green

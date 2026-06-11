@@ -223,6 +223,15 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.36.0]
+- **halt 회복 지능 (M39)**: task 정지(halt)가 함대 전체를 멈추지 않는다 — 파킹·핫-재큐·적응형 재계획
+- **⚠️ 동작 변경 — 정지 task 파킹 (`[conductor] park_on_halt` 기본 true)**: 정지 task는 런 종료 대신 **파킹**되고 나머지 ready task가 계속 진행된다(순차·병렬). 구 동작은 `park_on_halt=false`로 복원
+- **핫-재큐**: 파킹 task에 [재투입]이 오면 **같은 런에서 un-park·재시도**(다음 실행 대기 없음). 병렬 dispatch 오류도 카운트해 무한 재시도 차단
+- **적응형 재계획 (`auto_replan` 기본 false·옵트인)**: 정지 task를 LLM이 2~4개 하위 task(`-S1`… 순차 deps)로 분할, 부모 `[분할→]` 완료. 깊이 1·실패 시 파킹 폴백
+- **위생**: `lock_blocks` → 순수 `lock_verdict` + IO 분리(dead-PID 분기를 shell-out 없이 단위 테스트, M38-review 권장1)
+- **대시보드**: 파킹="정지·재투입 대기" 표시, 설정 폼에 `park_on_halt`·`auto_replan`
+- **테스트**: 411개 (403 → 411, +8개)
+
 ### [v0.35.0]
 - **런처 마감 (M38)**: M37 런처의 잔여 품질을 닫는다 — 포트 설정·런 락 정밀화·재투입 단일 버튼·설정 주석 보존
 - **포트 설정화 `[conductor] dashboard_port`**: 내장 기동 포트가 설정 가능(기본 7878, [1024,65535] 클램프), 설정 폼 노출. `porpoise dashboard --port`는 별도(우선)

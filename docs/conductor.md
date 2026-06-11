@@ -104,3 +104,34 @@ M21 라이브 재검증(3/3 PASS, false-negative 0)으로 아래 기준을 충�
 - [ ] (M22 검증 항목) `-ForceFallback`으로 폴백 경로를 라이브 1회 이상 발동 + false-positive 0
 
 승격 후에도 API 어댑터는 영향 없음(항상 legacy). 기존 사용자는 `mode = "legacy"`로 즉시 opt-out 가능.
+
+## halt 회복 지능 (M39)
+
+task 하나의 정지(halt)가 함대 전체를 멈추지 않는다.
+
+### 정지 task 파킹 + 핫-재큐
+- `max_redispatch` 소진으로 정지한 task는 런을 끝내는 대신 **파킹**되고, 나머지 ready task는
+  계속 진행된다(`[conductor] park_on_halt = true`, 기본). `false`면 구 동작(정지 시 런 종료).
+- 파킹된 task에 대시보드 **[재투입]**(M37 `redispatch-<id>.json`)이 도착하면 루프 상단에서
+  **un-park**되어 **같은 런에서** 재시도된다(핫-재큐). 오버라이드는 conduct 직전 소비되어 재투입
+  예산이 상향된다. 순차·병렬 루프 모두 적용. 순수 분리(`conductor::revive_parked`)로 단위 테스트.
+- 종료: ready(파킹 제외)가 비면 런 종료(파킹 task는 incomplete로 남아 다음 실행/재투입 대기).
+  병렬은 dispatch 오류도 시도 횟수에 누적해 결국 파킹되므로 무한 재시도가 없다.
+
+### 적응형 재계획 (옵트인)
+- `[conductor] auto_replan = true`(기본 false — LLM 비용)면, 정지 task를 파킹하기 전에 **분할**을
+  시도한다: 검증 피드백 + project.md를 컨텍스트로 LLM이 **2~4개 하위 task**를 제안하면
+  (`conductor::replan`), project.md에서 부모를 `- [x] {id}: [분할→S1,S2] {title}`로 치환하고
+  하위 task `{id}-S1`…를 **순차 deps 체인**으로 추가한다. 부모는 완료 처리되어 재시도 배제,
+  하위 task는 pending으로 일반 루프가 이어받는다.
+- 폴백: LLM 호출·파싱 실패나 2개 미만 제안이면 분할하지 않고 일반 파킹. 무한 분할 방지: `-S`
+  접미(이미 하위 task)는 재분할하지 않는다(**깊이 1**).
+
+### 대시보드
+- 파킹된 task는 라이브 패널에 **"정지·재투입 대기"**로 표시(터미널 종료가 아니라 회복 가능 상태).
+  기존 [재투입] 버튼이 그대로 핫-재큐를 트리거. `park_on_halt`·`auto_replan`은 설정 폼에서 편집.
+
+### 검증
+- 단위/합성(claude 불필요): `revive_parked`(오버라이드 있는 파킹만 un-park, 비소비), `replan`의
+  `insert_subtasks`(부모 치환·하위 체인·파서 왕복)·`parse_subtasks`(클램프·폴백), `is_replannable`.
+- **end-to-end 파킹·핫-재큐·LLM 분할**은 실제 conductor 런(claude)이 필요 → 운영자 라이브 검증 항목.

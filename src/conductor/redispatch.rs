@@ -49,6 +49,11 @@ pub fn effective_max_redispatch(base: u32, extra: u32) -> u32 {
     base.saturating_add(extra).min(MAX_EFFECTIVE_REDISPATCH)
 }
 
+/// task에 재투입 오버라이드가 대기 중인가 (M39 — 소비하지 않고 존재만 확인, 파킹 revive 판단용).
+pub fn has_override(path: &Path, task_id: &str) -> bool {
+    override_file(path, task_id).exists()
+}
+
 /// task의 재투입 오버라이드가 있으면 **소비(삭제)** 하고 extra_budget을 반환한다.
 /// 없으면 None. 소비 시 halt 힌트 파일도 함께 정리한다.
 pub fn consume_override(path: &Path, task_id: &str, logger: &Logger) -> Option<u32> {

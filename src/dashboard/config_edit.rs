@@ -25,6 +25,8 @@ pub const EDITABLE_KEYS: &[&str] = &[
     "verifier_model",
     "verdict_fallback",
     "dashboard_port",
+    "park_on_halt",
+    "auto_replan",
 ];
 
 /// 처리 결과 (상태코드 + 본문).
@@ -50,6 +52,8 @@ pub fn read_config_json(project: &Path) -> Value {
             "verifier_model": cfg.conductor_verifier_model().unwrap_or(""),
             "verdict_fallback": if cfg.conductor_verdict_fallback_halt() { "halt" } else { "pass_if_checks_pass" },
             "dashboard_port": cfg.conductor_dashboard_port(),
+            "park_on_halt": cfg.conductor_park_on_halt(),
+            "auto_replan": cfg.conductor_auto_replan(),
         }
     })
 }
@@ -81,7 +85,7 @@ pub fn validate_config_update(body: &str) -> Result<Vec<(String, toml::Value)>, 
             "max_parallel" => int_in_range(val, key, 1, 8)?,
             "max_redispatch" => int_in_range(val, key, 0, 20)?,
             "dashboard_port" => int_in_range(val, key, 1024, 65535)?,
-            "serve_dashboard" => {
+            "serve_dashboard" | "park_on_halt" | "auto_replan" => {
                 let b = val.as_bool().ok_or_else(|| format!("{} must be a boolean", key))?;
                 toml::Value::Boolean(b)
             }

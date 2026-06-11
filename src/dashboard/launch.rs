@@ -92,26 +92,52 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
-/// run.lock이 새 실행을 막는가 (M38) — live run_active와 별개의 **락 단독** 판정.
-/// - 실제 락(pid>0): 자식이 **살아있을 때만** 차단(죽었으면 런 종료/소멸 → 무시, 죽은 락 제거).
-/// - 선점 락(pid=0)·pid 누락: spawn~live::start 공백이므로 **시간 신선도**로 fallback.
+/// run.lock 판정 결과 (M39 — 순수 판정과 부수효과 분리).
+#[derive(Debug, PartialEq, Eq)]
+pub enum LockVerdict {
+    /// 차단 — 실행 중이거나 신선한 선점 락.
+    Blocked,
+    /// 무시 가능 — 만료된 선점 락·pid 없음.
+    Stale,
+    /// 무시 + 죽은 락 정리 — 실제 락이나 자식이 죽음.
+    DeadPrune,
+}
+
+/// **순수** 락 판정 (M39, M38-review 권장1): pid 생존 결과를 주입받아 shell-out 없이 분기한다.
+/// - 실제 락(pid>0): 자식이 살아있으면 `Blocked`, 죽었으면 `DeadPrune`.
+/// - 선점 락(pid=0)·pid 누락: 시간 신선도 — 신선하면 `Blocked`, 아니면 `Stale`.
+pub fn lock_verdict(
+    content: &str,
+    now: chrono::DateTime<chrono::Local>,
+    pid_alive: Option<bool>,
+) -> LockVerdict {
+    match parse_lock_pid(content) {
+        Some(pid) if pid > 0 => match pid_alive {
+            Some(true) => LockVerdict::Blocked,
+            _ => LockVerdict::DeadPrune,
+        },
+        _ => match parse_lock_time(content) {
+            Some(t) if lock_is_fresh(t, now, LOCK_FRESH_SECS) => LockVerdict::Blocked,
+            _ => LockVerdict::Stale,
+        },
+    }
+}
+
+/// run.lock이 새 실행을 막는가 (M38) — IO 래퍼: 파일 읽기 + pid 조회 + `lock_verdict` 적용.
+/// `DeadPrune`이면 죽은 락을 정리한다(부수효과는 여기로 격리).
 fn lock_blocks(project: &Path) -> bool {
     let Ok(content) = std::fs::read_to_string(run_lock_path(project)) else {
         return false;
     };
-    match parse_lock_pid(&content) {
-        Some(pid) if pid > 0 => {
-            if pid_alive(pid) {
-                true
-            } else {
-                let _ = std::fs::remove_file(run_lock_path(project)); // 죽은 락 정리
-                false
-            }
+    // pid 생존(shell-out)은 실제 락(pid>0)일 때만 조회
+    let pid_alive_res = parse_lock_pid(&content).filter(|p| *p > 0).map(pid_alive);
+    match lock_verdict(&content, chrono::Local::now(), pid_alive_res) {
+        LockVerdict::Blocked => true,
+        LockVerdict::DeadPrune => {
+            let _ = std::fs::remove_file(run_lock_path(project));
+            false
         }
-        _ => match parse_lock_time(&content) {
-            Some(t) => lock_is_fresh(t, chrono::Local::now(), LOCK_FRESH_SECS),
-            None => false,
-        },
+        LockVerdict::Stale => false,
     }
 }
 
@@ -284,6 +310,23 @@ mod tests {
         assert_eq!(parse_lock_pid("2026-01-01T00:00:00+00:00\npid=1234\n"), Some(1234));
         assert_eq!(parse_lock_pid("ts\npid=0\n"), Some(0));
         assert_eq!(parse_lock_pid("ts only"), None);
+    }
+
+    #[test]
+    fn lock_verdict_pure_branches() {
+        // M39: 순수 판정 — shell-out 없이 dead-PID/선점/신선도 3분기
+        let now = chrono::Local::now();
+        let fresh_ts = now.to_rfc3339();
+        let stale_ts = (now - chrono::Duration::seconds(120)).to_rfc3339();
+        // 실제 락(pid>0) — 살아있으면 Blocked, 죽었으면 DeadPrune
+        assert_eq!(lock_verdict(&format!("{}\npid=1234\n", fresh_ts), now, Some(true)), LockVerdict::Blocked);
+        assert_eq!(lock_verdict(&format!("{}\npid=1234\n", fresh_ts), now, Some(false)), LockVerdict::DeadPrune);
+        // 선점 락(pid=0) — 신선하면 Blocked, 만료면 Stale
+        assert_eq!(lock_verdict(&format!("{}\npid=0\n", fresh_ts), now, None), LockVerdict::Blocked);
+        assert_eq!(lock_verdict(&format!("{}\npid=0\n", stale_ts), now, None), LockVerdict::Stale);
+        // pid 없음 — 시간만으로
+        assert_eq!(lock_verdict(&fresh_ts, now, None), LockVerdict::Blocked);
+        assert_eq!(lock_verdict("garbage", now, None), LockVerdict::Stale);
     }
 
     #[test]

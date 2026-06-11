@@ -273,7 +273,8 @@
     if (task.phase === "merged")
       return '<span class="phase-step final-merged">MERGED</span>';
     if (task.phase === "halted")
-      return '<span class="phase-step final-halted">HALTED</span>';
+      // M39: 정지는 파킹(회복 가능) — [재투입]으로 핫-재큐 안내
+      return '<span class="phase-step final-halted" title="재투입 대기 — [재투입]으로 핫-재큐">정지·재투입 대기</span>';
     return PHASES.map(
       (p) => `<span class="phase-step${p === task.phase ? " active" : ""}">${p}</span>`
     ).join("");
@@ -492,6 +493,8 @@
       if (f.max_redispatch) f.max_redispatch.value = c.max_redispatch;
       if (f.dashboard_port) f.dashboard_port.value = c.dashboard_port;
       if (f.serve_dashboard) f.serve_dashboard.checked = !!c.serve_dashboard;
+      if (f.park_on_halt) f.park_on_halt.checked = !!c.park_on_halt;
+      if (f.auto_replan) f.auto_replan.checked = !!c.auto_replan;
       if (f.verifier_model) f.verifier_model.value = c.verifier_model || "";
     } catch (e) {
       console.error(e);
@@ -510,6 +513,8 @@
       max_redispatch: Number(f.max_redispatch.value),
       dashboard_port: Number(f.dashboard_port.value),
       serve_dashboard: f.serve_dashboard.checked,
+      park_on_halt: f.park_on_halt.checked,
+      auto_replan: f.auto_replan.checked,
       verifier_model: f.verifier_model.value,
     };
     try {

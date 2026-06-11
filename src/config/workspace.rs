@@ -102,6 +102,10 @@ pub struct WorkspaceConductor {
     pub serve_dashboard: Option<bool>,
     /// 대시보드 내장 기동 포트 (M38). 미설정 시 7878. `porpoise dashboard --port`는 별도(우선).
     pub dashboard_port: Option<u16>,
+    /// 정지(halt) 회복 (M39): 미설정/true = 정지 task를 파킹하고 함대 계속, false = 정지 시 런 종료(구 동작).
+    pub park_on_halt: Option<bool>,
+    /// 적응형 재계획 (M39, 옵트인): true면 반복 정지 task를 LLM으로 하위 task 분할. 기본 false(비용 유발).
+    pub auto_replan: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -501,6 +505,22 @@ reviewer_extra = ""
             .clamp(1024, 65535)
     }
 
+    /// 정지 task 파킹 여부 (M39). 기본 true(파킹·함대 계속). false면 정지 시 런 종료(구 동작).
+    pub fn conductor_park_on_halt(&self) -> bool {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.park_on_halt)
+            .unwrap_or(true)
+    }
+
+    /// 적응형 재계획 여부 (M39). 기본 false(옵트인 — LLM 분할 비용 유발).
+    pub fn conductor_auto_replan(&self) -> bool {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.auto_replan)
+            .unwrap_or(false)
+    }
+
     pub fn session_keep_completed(&self) -> bool {
         self.sessions
             .as_ref()
@@ -867,6 +887,18 @@ verify_timeout_secs = 30
         assert_eq!(cfg.conductor_max_redispatch(), 2);
         assert!(cfg.conductor_verifier_model().is_none());
         assert!(!cfg.conductor_verdict_fallback_halt());
+    }
+
+    #[test]
+    fn conductor_halt_recovery_defaults_and_overrides() {
+        // M39: park_on_halt 기본 true, auto_replan 기본 false
+        let def = WorkspaceConfig::default();
+        assert!(def.conductor_park_on_halt());
+        assert!(!def.conductor_auto_replan());
+        let cfg: WorkspaceConfig =
+            toml::from_str("[conductor]\npark_on_halt = false\nauto_replan = true\n").unwrap();
+        assert!(!cfg.conductor_park_on_halt());
+        assert!(cfg.conductor_auto_replan());
     }
 
     #[test]

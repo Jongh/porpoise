@@ -73,6 +73,10 @@ pub fn run_parallel(
     let mut attempts: HashMap<String, u32> = HashMap::new();
     // M37: 대시보드 재투입 오버라이드로 상향된 task별 추가 재투입 예산 (누적)
     let mut redispatch_bonus: HashMap<String, u32> = HashMap::new();
+    // M39: 정지 회복 — 시도 한도를 넘긴 task를 파킹하고 함대를 계속 진행한다.
+    let park_on_halt = workspace.conductor_park_on_halt();
+    let auto_replan = workspace.conductor_auto_replan();
+    let mut parked: HashSet<String> = HashSet::new();
     // 재투입 시 brief에 주입할 피드백 (충돌·FAIL 사유). 다음 라운드 에이전트가 맥락을 알도록 한다.
     let mut feedbacks: HashMap<String, String> = HashMap::new();
     let mut history: Vec<String> = Vec::new();
@@ -96,21 +100,35 @@ pub fn run_parallel(
             continue;
         }
 
-        // M24: 의존성이 모두 충족된 ready task만 배치 대상
-        let ready = schedule::ready_tasks(&pending, &completed_ids);
-        // M37: 대시보드 재투입 오버라이드 소비 — ready task의 재투입 한도를 상향
+        // M24: 의존성이 모두 충족된 ready task. M39: 핫-재큐 — 파킹된 task에 재투입이 오면 un-park.
+        let ready_all = schedule::ready_tasks(&pending, &completed_ids);
+        for id in super::revive_parked(path, &mut parked) {
+            println!("  {} [{}] 재투입 수신 — 파킹 해제(핫-재큐)", "↻".cyan(), id);
+        }
+        // M39: 파킹된 task는 배치 대상에서 제외
+        let ready: Vec<Task> = ready_all.into_iter().filter(|t| !parked.contains(&t.id)).collect();
+        // M37: 대시보드 재투입 오버라이드 소비 — ready task(un-park 포함)의 재투입 한도를 상향
         for t in &ready {
             if let Some(extra) = super::redispatch::consume_override(path, &t.id, logger) {
                 let b = redispatch_bonus.entry(t.id.clone()).or_insert(0);
                 *b = b.saturating_add(extra);
+                attempts.remove(&t.id); // 재투입 시 시도 횟수 리셋(상향된 예산으로 재시도)
                 println!("  {} [{}] 재투입 요청 수신 — 재투입 한도 +{}", "↻".cyan(), t.id, extra);
             }
         }
         if ready.is_empty() {
-            println!(
-                "{}",
-                "\n⚠ 실행 가능한(의존성 충족) task가 없습니다. 의존성 그래프(deps:)를 확인하세요. 중단합니다.".yellow().bold()
-            );
+            if !parked.is_empty() {
+                println!(
+                    "{}",
+                    format!("\n⏸ 정지(파킹)된 task {}개만 남았습니다: {} — 재투입을 보내면 같은 런에서 재시도합니다. 중단합니다.",
+                        parked.len(), parked.iter().cloned().collect::<Vec<_>>().join(", ")).yellow().bold()
+                );
+            } else {
+                println!(
+                    "{}",
+                    "\n⚠ 실행 가능한(의존성 충족) task가 없습니다. 의존성 그래프(deps:)를 확인하세요. 중단합니다.".yellow().bold()
+                );
+            }
             break;
         }
         // M28: 다음 배치 전 예산 가드 (진행 중 배치는 마치고 정지)
@@ -171,7 +189,7 @@ pub fn run_parallel(
 
         // ── Phase 3 (직렬): 그룹 출력 + 충돌 인지 통합 ──────────────────────
         let mut any_progress = false;
-        for (wt, run_result) in worktrees.into_iter().zip(runs) {
+        for ((task, wt), run_result) in batch.iter().zip(worktrees).zip(runs) {
             match run_result {
                 Ok(run) => {
                     let attempt = *attempts.get(&run.task_id).unwrap_or(&0);
@@ -238,7 +256,11 @@ pub fn run_parallel(
                     }
                 }
                 Err(e) => {
-                    println!("  {} 실행 오류: {}", "✗".red(), e);
+                    // M39: dispatch 오류도 시도 횟수에 누적 → 결국 파킹되어 무한 재시도 방지
+                    let c = attempts.entry(task.id.clone()).or_insert(0);
+                    *c += 1;
+                    println!("  {} [{}] 실행 오류 ({}회): {}", "✗".red(), task.id, c, e);
+                    history.push(format!("[{}] DISPATCH-ERR", task.id));
                     wt.remove();
                 }
             }
@@ -259,14 +281,44 @@ pub fn run_parallel(
             .map(|(id, _)| id.clone())
             .collect();
         if !stuck.is_empty() {
-            println!(
-                "{}",
-                format!("\n⚠ 다음 task가 시도 한도({})를 초과했습니다: {} — 사용자 개입이 필요합니다.",
-                    max_redispatch, stuck.join(", ")).yellow().bold()
-            );
-            break;
+            if !park_on_halt {
+                // 구 동작 — 시도 한도 초과 시 런 종료
+                println!(
+                    "{}",
+                    format!("\n⚠ 다음 task가 시도 한도({})를 초과했습니다: {} — 사용자 개입이 필요합니다.",
+                        max_redispatch, stuck.join(", ")).yellow().bold()
+                );
+                break;
+            }
+            // M39: 시도 한도 초과 task를 파킹(또는 적응형 재계획) 후 함대 계속
+            for id in &stuck {
+                let title = tasks.iter().find(|t| &t.id == id).map(|t| t.title.clone()).unwrap_or_default();
+                let feedback = feedbacks.get(id).cloned().unwrap_or_default();
+                let replanned = auto_replan
+                    && super::replan::is_replannable(id)
+                    && match super::replan::try_replan(
+                        runner, path, id, &title, &feedback, dispatch_model, logger,
+                    ) {
+                        Ok(ids) => {
+                            println!("  {} [{}] 적응형 재계획 — {}개 하위 task: {}", "🪓".cyan(), id, ids.len(), ids.join(", "));
+                            true
+                        }
+                        Err(e) => { logger.warn("conductor", &format!("재계획 실패(파킹 폴백): {}", e)); false }
+                    };
+                if !replanned {
+                    parked.insert(id.clone());
+                    super::live::set_task(path, id, &title, "halted", 0);
+                    println!("  {} [{}] 정지 task 파킹 — 함대 계속 ([재투입]으로 핫-재큐 가능)", "⏸".yellow(), id);
+                }
+                attempts.remove(id);
+                redispatch_bonus.remove(id);
+                feedbacks.remove(id);
+            }
+            // 파킹/재계획으로 진전을 만들었으니 계속 (종료는 상단 ready-empty가 담당)
+            continue;
         }
-        if !any_progress {
+        // park_on_halt에서는 진전 없어도 계속(task가 시도 한도까지 누적되어 결국 파킹됨 → ready-empty로 종료).
+        if !any_progress && !park_on_halt {
             println!("{}", "\n⚠ 이번 배치에서 진전이 없습니다. 중단합니다.".yellow().bold());
             break;
         }

@@ -18,6 +18,7 @@ pub mod integrate;
 pub mod live;
 pub mod parallel;
 pub mod redispatch;
+pub mod replan;
 pub mod report;
 pub mod schedule;
 pub mod verify;
@@ -181,6 +182,11 @@ fn run_conductor_inner(
     // M31: 라이브 상태 시작 (대시보드 관측 — 파일 매개, 결합 없음)
     live::start(path, "sequential", budget);
 
+    // M39: 정지 회복 — 정지(halt)한 task를 파킹하고 함대를 계속 진행한다.
+    let park_on_halt = workspace.conductor_park_on_halt();
+    let auto_replan = workspace.conductor_auto_replan();
+    let mut parked: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     loop {
         let tasks = parse_tasks_from_project_md(path);
         let completed_ids: std::collections::HashSet<String> =
@@ -193,14 +199,30 @@ fn run_conductor_inner(
             }
             continue;
         }
-        // M24: 의존성 충족 순서 — 첫 ready task (의존 위반 방지)
-        let task = match schedule::ready_tasks(&pending, &completed_ids).into_iter().next() {
+        // M39: 핫-재큐 — 파킹된 task에 재투입 오버라이드가 도착했으면 un-park(같은 런에서 재시도).
+        //       오버라이드는 아래 conduct 직전에 실제 소비되어 예산이 상향된다.
+        for id in revive_parked(path, &mut parked) {
+            println!("  {} [{}] 재투입 수신 — 파킹 해제(핫-재큐)", "↻".cyan(), id);
+        }
+        // M24+M39: 의존성 충족 + 파킹 제외 — 첫 ready task
+        let task = match schedule::ready_tasks(&pending, &completed_ids)
+            .into_iter()
+            .find(|t| !parked.contains(&t.id))
+        {
             Some(t) => t,
             None => {
-                println!(
-                    "{}",
-                    "\n⚠ 실행 가능한(의존성 충족) task가 없습니다. 의존성 그래프(deps:)를 확인하세요.".yellow().bold()
-                );
+                if !parked.is_empty() {
+                    println!(
+                        "{}",
+                        format!("\n⏸ 정지(파킹)된 task {}개만 남았습니다: {} — 재투입을 보내면 같은 런에서 재시도합니다. 종료합니다.",
+                            parked.len(), parked.iter().cloned().collect::<Vec<_>>().join(", ")).yellow().bold()
+                    );
+                } else {
+                    println!(
+                        "{}",
+                        "\n⚠ 실행 가능한(의존성 충족) task가 없습니다. 의존성 그래프(deps:)를 확인하세요.".yellow().bold()
+                    );
+                }
                 break;
             }
         };
@@ -293,9 +315,42 @@ fn run_conductor_inner(
             }
             TaskOutcome::Halted { feedback } => {
                 live::set_task(path, &task.id, "", "halted", 0);
-                println!("{}", "  ⚠ 검증 실패 — 재투입 한도 소진. 사용자 개입이 필요합니다.".yellow().bold());
+                println!("{}", "  ⚠ 검증 실패 — 재투입 한도 소진.".yellow().bold());
                 save_halt_hint(path, &task.id, &feedback, logger);
-                break;
+
+                // M39: 적응형 재계획(옵트인) — 정지 task를 하위 task로 분할. 실패/미설정 시 파킹 폴백.
+                let replanned = auto_replan
+                    && replan::is_replannable(&task.id)
+                    && match replan::try_replan(
+                        &runner, path, &task.id, &task.title, &feedback,
+                        dispatch_model.as_deref(), logger,
+                    ) {
+                        Ok(ids) => {
+                            println!(
+                                "  {} 적응형 재계획 — {}개 하위 task로 분할: {}",
+                                "🪓".cyan(), ids.len(), ids.join(", ")
+                            );
+                            true
+                        }
+                        Err(e) => {
+                            logger.warn("conductor", &format!("재계획 실패(파킹으로 폴백): {}", e));
+                            false
+                        }
+                    };
+
+                if replanned {
+                    // 부모는 [분할됨] 완료, 하위 task는 pending → 루프가 이어받음.
+                } else if park_on_halt {
+                    parked.insert(task.id.clone());
+                    println!(
+                        "{}",
+                        "  ⏸ 정지 task 파킹 — 함대는 계속 진행합니다. (대시보드 [재투입]으로 핫-재큐 가능)".yellow()
+                    );
+                } else {
+                    // park_on_halt=false — 구 동작(정지 시 런 종료)
+                    println!("{}", "  사용자 개입이 필요합니다. 세션을 종료합니다.".yellow());
+                    break;
+                }
             }
         }
     }
@@ -586,6 +641,23 @@ pub fn budget_exceeded(spent_usd: f64, budget_usd: Option<f64>) -> bool {
     }
 }
 
+/// 파킹된 task 중 재투입 오버라이드가 도착한 것을 un-park 한다 (M39 핫-재큐).
+/// 반환: 해제(un-park)된 task id 목록. 오버라이드 소비는 호출자의 conduct 직전에 일어난다.
+pub fn revive_parked(
+    path: &Path,
+    parked: &mut std::collections::HashSet<String>,
+) -> Vec<String> {
+    let revived: Vec<String> = parked
+        .iter()
+        .filter(|id| redispatch::has_override(path, id))
+        .cloned()
+        .collect();
+    for id in &revived {
+        parked.remove(id);
+    }
+    revived
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_audit_record(
     path: &Path,
@@ -718,6 +790,32 @@ mod tests {
         }
         // 이미 존재해도 무동작(에러 없음)
         ensure_runtime_dirs(path, &logger);
+    }
+
+    #[test]
+    fn revive_parked_unparks_tasks_with_override() {
+        use std::collections::HashSet;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        std::fs::create_dir_all(path.join(".porpoise").join("control")).unwrap();
+        let logger = crate::logger::Logger::new(path, false).unwrap();
+        let _ = &logger;
+
+        let mut parked: HashSet<String> =
+            ["M1-T01".to_string(), "M1-T02".to_string()].into_iter().collect();
+        // M1-T02에만 재투입 오버라이드 작성
+        std::fs::write(
+            redispatch::override_file(path, "M1-T02"),
+            r#"{"extra_budget":1}"#,
+        )
+        .unwrap();
+
+        let revived = revive_parked(path, &mut parked);
+        assert_eq!(revived, vec!["M1-T02".to_string()], "오버라이드 있는 task만 un-park");
+        assert!(parked.contains("M1-T01"), "오버라이드 없는 task는 파킹 유지");
+        assert!(!parked.contains("M1-T02"), "un-park됨");
+        // has_override는 소비하지 않음 — 파일은 그대로(conduct 직전 consume_override가 소비)
+        assert!(redispatch::has_override(path, "M1-T02"), "revive는 오버라이드를 소비하지 않음");
     }
 
     #[test]
