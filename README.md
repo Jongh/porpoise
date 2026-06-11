@@ -223,6 +223,15 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.35.0]
+- **런처 마감 (M38)**: M37 런처의 잔여 품질을 닫는다 — 포트 설정·런 락 정밀화·재투입 단일 버튼·설정 주석 보존
+- **포트 설정화 `[conductor] dashboard_port`**: 내장 기동 포트가 설정 가능(기본 7878, [1024,65535] 클램프), 설정 폼 노출. `porpoise dashboard --port`는 별도(우선)
+- **런 락 정밀화 + 강제 실행**: 차단 판정을 시간 기반 → **자식 PID 생존 기반**(죽은 자식 → 즉시 재실행, M37 quirk 해소). 선점 락(pid=0)만 신선도 fallback. `{"force":true}`로 stale 락 우회(단 `run_active=true`는 force여도 409 — 동시 실행 방지)
+- **재투입+실행 단일 버튼**: FAIL 행 [재투입] → 런 비활성 시 곧바로 함대 실행까지 한 번에(프런트엔드만). 런 활성 시엔 "다음 실행 적용"
+- **설정 주석 보존**: 설정 쓰기를 `toml`→**`toml_edit`**로 교체 — workspace.toml 주석·키 순서·서식 보존하며 `[conductor]` 키만 갱신
+- **검증**: 단위(실 `tasklist` PID 판정) + HTTP 하니스 확장 + **Unix 라이브 하니스 신규**(`dashboard-launch-live.sh` — `process_group(0)` detach)
+- **테스트**: 403개 (396 → 403, +7개)
+
 ### [v0.34.0]
 - **런처 — 함대 실행·halt 재투입·설정 편집 (M37)**: 대시보드가 관측·게이트를 넘어 **실행을 시작·관리**한다. 독립 대시보드가 conductor를 **detached spawn**(자식 수명 소유 — M35 내장 기동의 역전, M33부터 이월된 후속)
 - **함대 실행 `POST /api/launch`**: [▶ 함대 실행] 버튼 → `porpoise` detached spawn(대시보드를 종료해도 런 생존, stdout/stderr→`.porpoise/launch.log`). **런 락**(live `run_active` OR 30초 신선 `run.lock`, spawn 전 선점)으로 이중 기동 409. gate 모드 자식은 PortInUse로 기존 대시보드와 공존(M35)

@@ -24,6 +24,7 @@ pub const EDITABLE_KEYS: &[&str] = &[
     "serve_dashboard",
     "verifier_model",
     "verdict_fallback",
+    "dashboard_port",
 ];
 
 /// 처리 결과 (상태코드 + 본문).
@@ -48,6 +49,7 @@ pub fn read_config_json(project: &Path) -> Value {
             "serve_dashboard": cfg.conductor_serve_dashboard(),
             "verifier_model": cfg.conductor_verifier_model().unwrap_or(""),
             "verdict_fallback": if cfg.conductor_verdict_fallback_halt() { "halt" } else { "pass_if_checks_pass" },
+            "dashboard_port": cfg.conductor_dashboard_port(),
         }
     })
 }
@@ -78,6 +80,7 @@ pub fn validate_config_update(body: &str) -> Result<Vec<(String, toml::Value)>, 
             "verdict_fallback" => enum_str(val, key, &["pass_if_checks_pass", "halt"])?,
             "max_parallel" => int_in_range(val, key, 1, 8)?,
             "max_redispatch" => int_in_range(val, key, 0, 20)?,
+            "dashboard_port" => int_in_range(val, key, 1024, 65535)?,
             "serve_dashboard" => {
                 let b = val.as_bool().ok_or_else(|| format!("{} must be a boolean", key))?;
                 toml::Value::Boolean(b)
@@ -112,29 +115,49 @@ fn int_in_range(val: &Value, key: &str, lo: i64, hi: i64) -> Result<toml::Value,
     Ok(toml::Value::Integer(n))
 }
 
+/// 검증된 toml::Value를 toml_edit 항목으로 변환한다 (화이트리스트 타입만 — string·int·bool).
+fn to_edit_item(v: &toml::Value) -> toml_edit::Item {
+    match v {
+        toml::Value::String(s) => toml_edit::value(s.clone()),
+        toml::Value::Integer(i) => toml_edit::value(*i),
+        toml::Value::Boolean(b) => toml_edit::value(*b),
+        // 화이트리스트는 위 3종뿐 — 방어적 폴백
+        other => toml_edit::value(other.to_string()),
+    }
+}
+
 /// 기존 workspace.toml(없으면 빈)에 `[conductor]` 키만 갱신해 직렬화한다 (순수).
-/// 다른 섹션·값은 보존한다(주석은 toml round-trip 특성상 보존되지 않음 — 알려진 트레이드오프).
+/// M38: `toml_edit`로 교체 — **주석·키 순서·서식을 보존**하면서 해당 키만 set한다.
 pub fn apply_updates(existing: &str, updates: &[(String, toml::Value)]) -> Result<String, String> {
-    let mut root: toml::Table = if existing.trim().is_empty() {
-        toml::Table::new()
+    use toml_edit::{DocumentMut, Item, Table};
+
+    let mut doc: DocumentMut = if existing.trim().is_empty() {
+        DocumentMut::new()
     } else {
-        toml::from_str(existing).map_err(|e| format!("existing toml parse error: {}", e))?
+        existing.parse().map_err(|e| format!("existing toml parse error: {}", e))?
     };
 
+    let root = doc.as_table_mut();
     // [conductor] 테이블 확보 (없으면 생성, 다른 타입이면 거부)
-    let conductor = root
-        .entry("conductor".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-    let table = conductor
-        .as_table_mut()
+    if !root.contains_key("conductor") {
+        root.insert("conductor", Item::Table(Table::new()));
+    }
+    let table = root
+        .get_mut("conductor")
+        .and_then(|i| i.as_table_mut())
         .ok_or_else(|| "[conductor] is not a table".to_string())?;
 
     for (k, v) in updates {
-        table.insert(k.clone(), v.clone());
+        // 기존 키는 값만 교체(키의 prefix 주석·서식 보존), 없으면 새로 삽입.
+        match table.get_mut(k.as_str()) {
+            Some(item) => *item = to_edit_item(v),
+            None => {
+                table.insert(k, to_edit_item(v));
+            }
+        }
     }
 
-    toml::to_string_pretty(&toml::Value::Table(root))
-        .map_err(|e| format!("serialize error: {}", e))
+    Ok(doc.to_string())
 }
 
 /// `POST /api/config` — 검증 후 workspace.toml의 `[conductor]`를 갱신한다.
@@ -230,6 +253,44 @@ mod tests {
         assert!(cfg.conductor_gate_mode());
         // 다른 섹션 보존
         assert_eq!(cfg.language(), "en");
+    }
+
+    #[test]
+    fn apply_updates_preserves_comments_and_order() {
+        // M38: toml_edit — 주석·키 순서·서식 보존
+        let existing = "\
+# 작업 환경 설정
+[general]
+language = \"ko\"  # 작업 언어
+
+[conductor]
+# 동시 처리 task 수
+max_parallel = 1
+mode = \"conductor\"
+";
+        let updates = vec![("max_parallel".to_string(), toml::Value::Integer(4))];
+        let merged = apply_updates(existing, &updates).unwrap();
+        assert!(merged.contains("# 작업 환경 설정"), "최상단 주석 보존");
+        assert!(merged.contains("# 작업 언어"), "인라인 주석 보존");
+        assert!(merged.contains("# 동시 처리 task 수"), "[conductor] 주석 보존");
+        assert!(merged.contains("max_parallel = 4"), "값은 갱신");
+        // 갱신 후에도 유효 toml + 값 반영
+        let cfg: WorkspaceConfig = toml::from_str(&merged).unwrap();
+        assert_eq!(cfg.conductor_max_parallel(), 4);
+        assert_eq!(cfg.language(), "ko");
+    }
+
+    #[test]
+    fn dashboard_port_validation() {
+        // 유효 포트
+        assert!(validate_config_update(r#"{"dashboard_port":9000}"#).is_ok());
+        // 특권 포트(범위 외) 거부
+        assert!(validate_config_update(r#"{"dashboard_port":80}"#).is_err());
+        assert!(validate_config_update(r#"{"dashboard_port":70000}"#).is_err());
+        // GET에 노출
+        let tmp = project_dir();
+        let v = read_config_json(tmp.path());
+        assert_eq!(v["conductor"]["dashboard_port"], 7878);
     }
 
     #[test]

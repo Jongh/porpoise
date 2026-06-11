@@ -24,6 +24,7 @@
     <section class="panel" id="live-panel">
       <h2>라이브 <span id="live-badge" class="live-badge idle">IDLE</span>
         <button id="launch-fleet" class="btn-launch hidden" title="대시보드에서 conductor 런을 기동합니다">▶ 함대 실행</button>
+        <button id="force-launch" class="btn-launch hidden" title="남아있는 런 락을 무시하고 강제 기동 (실행 중이 아닐 때만)">강제 실행</button>
         <button id="stop-next" class="btn-stop hidden" title="진행 중인 task를 마친 뒤 다음 게이트에서 정지">다음 게이트에서 정지</button>
         <span id="launch-msg" class="launch-msg hidden"></span>
       </h2>
@@ -80,6 +81,9 @@
         </label>
         <label>max_redispatch
           <input type="number" name="max_redispatch" min="0" max="20" step="1" />
+        </label>
+        <label>dashboard_port
+          <input type="number" name="dashboard_port" min="1024" max="65535" step="1" />
         </label>
         <label class="cb">serve_dashboard
           <input type="checkbox" name="serve_dashboard" />

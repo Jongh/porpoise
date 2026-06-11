@@ -100,6 +100,8 @@ pub struct WorkspaceConductor {
     pub approval_mode: Option<String>,
     /// 대시보드 내장 기동 (M35): 미설정 = gate 모드면 자동 기동, false = 끔, true = 항상 기동.
     pub serve_dashboard: Option<bool>,
+    /// 대시보드 내장 기동 포트 (M38). 미설정 시 7878. `porpoise dashboard --port`는 별도(우선).
+    pub dashboard_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -490,6 +492,15 @@ reviewer_extra = ""
             .unwrap_or_else(|| self.conductor_gate_mode())
     }
 
+    /// 대시보드 내장 기동 포트 (M38). 기본 7878, [1024, 65535] 범위로 클램프.
+    pub fn conductor_dashboard_port(&self) -> u16 {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.dashboard_port)
+            .unwrap_or(7878)
+            .clamp(1024, 65535)
+    }
+
     pub fn session_keep_completed(&self) -> bool {
         self.sessions
             .as_ref()
@@ -856,6 +867,18 @@ verify_timeout_secs = 30
         assert_eq!(cfg.conductor_max_redispatch(), 2);
         assert!(cfg.conductor_verifier_model().is_none());
         assert!(!cfg.conductor_verdict_fallback_halt());
+    }
+
+    #[test]
+    fn conductor_dashboard_port_default_and_clamp() {
+        // 기본 7878
+        assert_eq!(WorkspaceConfig::default().conductor_dashboard_port(), 7878);
+        // 설정값 사용
+        let cfg: WorkspaceConfig = toml::from_str("[conductor]\ndashboard_port = 9000\n").unwrap();
+        assert_eq!(cfg.conductor_dashboard_port(), 9000);
+        // 하한 1024로 클램프 (특권 포트 거부)
+        let lo: WorkspaceConfig = toml::from_str("[conductor]\ndashboard_port = 80\n").unwrap();
+        assert_eq!(lo.conductor_dashboard_port(), 1024);
     }
 
     #[test]

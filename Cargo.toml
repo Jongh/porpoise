@@ -1,6 +1,6 @@
 [package]
 name = "porpoise"
-version = "0.34.0"
+version = "0.35.0"
 edition = "2021"
 description = "Software development orchestration tool powered by Claude Code"
 authors = ["김종현"]
@@ -17,6 +17,7 @@ ignore      = "0.4"
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
 toml        = "0.8"
+toml_edit   = "0.22"
 chrono      = { version = "0.4", features = ["serde"] }
 anyhow      = "1"
 colored     = "2"

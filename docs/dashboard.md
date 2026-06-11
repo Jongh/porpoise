@@ -231,3 +231,40 @@ console 모드·`--yes`는 기존 동작 유지.
 `scripts/dashboard-launch-validate.ps1`: 런 락 409·Origin 403·미등록 404, 재투입 오버라이드 작성,
 설정 GET/POST 왕복(화이트리스트 위반 거부·타 섹션 보존)을 HTTP 수준에서 검증. claude 불필요.
 실제 detached spawn([함대 실행] 성공 경로)은 실제 conductor 런을 띄우므로 **운영자 라이브 검증** 항목.
+
+## 런처 마감 (M38)
+
+M37 런처의 잔여 품질을 닫는다.
+
+### 대시보드 포트 설정 — `[conductor] dashboard_port`
+- 내장 기동(M35)·gate 재실행 경로의 포트가 **설정 가능**(기본 7878, [1024, 65535] 클램프). 설정
+  편집 폼에도 노출. `porpoise dashboard --port`는 별도(우선) — 독립 대시보드의 포트는 CLI가 정한다.
+- **공존 주의**: 독립 대시보드를 `--port X`로 띄우고 launch로 spawn된 conductor의 `dashboard_port`가
+  `Y(≠X)`면 두 번째 대시보드가 뜬다. 런처 흐름에선 spawn될 conductor의 `serve_dashboard = false`
+  권장(폼에서 설정) — 자식이 자기 대시보드를 띄우지 않게.
+
+### 런 락 정밀화 + 강제 실행
+- run.lock 차단 판정을 **자식 PID 생존 기반**으로 정밀화: 실제 락(pid>0)은 자식이 **살아있을 때만**
+  차단하고, 죽었으면(런 종료/소멸) 무시하고 죽은 락을 정리한다 → 30초 안에 끝난 런 직후에도 **즉시
+  재실행** 가능(M37의 시간 기반 quirk 해소). 선점 락(pid=0, spawn~`live::start` 공백)만 시간 신선도로
+  fallback. PID 생존 확인은 플랫폼 격리(Windows `tasklist`, Unix `kill -0`)·conductor 무결합 유지.
+- **강제 실행** `POST /api/launch {"force":true}`: 잔존(stale) 락을 무시하고 기동. 단 live.json
+  `run_active==true`(진짜 실행 중)는 force여도 **409**(동시 실행 방지). 409 응답 시 UI에 [강제 실행]
+  보조 버튼 노출.
+
+### 재투입 + 실행 단일 버튼
+- 리포트 FAIL 행 [재투입]을 누르면 오버라이드를 기록하고, 런이 **비활성이면 곧바로 [함대 실행]**까지
+  한 번에 수행(프런트엔드 체이닝, 백엔드 무변경). 런이 **활성이면** 끼어들지 않고 "다음 실행에서
+  적용"으로 안내(M37 범위 유지).
+
+### 설정 편집 주석·서식 보존
+- 설정 쓰기를 `toml`(round-trip) → **`toml_edit`**로 교체. workspace.toml의 **주석·키 순서·서식을
+  보존**하면서 `[conductor]` 화이트리스트 키만 갱신한다(기존 키는 값만 교체해 그 키의 prefix 주석도
+  유지). 검증·원자성(실패 시 무쓰기)·화이트리스트는 M37과 동일.
+
+### 검증
+- `scripts/dashboard-launch-validate.ps1`(확장): dashboard_port GET/POST·범위 위반 400, 설정 주석
+  보존, run_active+force→409, 신선한 선점 락→409 (모두 비-spawn 경로, claude 불필요).
+- `scripts/dashboard-launch-live.sh`(신규, Unix): gate 샌드박스에서 [함대 실행]→ 자식 게이트 블록→
+  **대시보드 종료 후 자식 생존(`process_group(0)` detach 증명)**→ 우아한 정지→ **종료 후 즉시
+  재실행 200**(죽은 PID 락 무시). Unix detach 실측용(운영자 환경).

@@ -4,6 +4,15 @@
 
 ---
 
+### [v0.35.0]
+- **런처 마감 — 포트 설정·런 락 정밀화·재투입 단일 버튼·설정 주석 보존 (M38)**: M37 런처가 review·impl에 남긴 비차단 후속을 한 묶음으로 닫는다
+- **대시보드 포트 설정화 `[conductor] dashboard_port`**: 내장 기동(M35)·gate 재실행 경로의 포트가 **설정 가능**(기본 7878, [1024, 65535] 클램프). 설정 편집 폼에도 노출. `porpoise dashboard --port`는 별도(우선) — 독립 대시보드 포트는 CLI가 정함. 공존 주의: 독립 대시보드 `--port X`와 spawn된 자식 `dashboard_port Y(≠X)`면 두 번째 대시보드가 뜬다 → 런처 흐름에선 자식 `serve_dashboard = false` 권장(폼에서 설정)
+- **런 락 정밀화 + 강제 실행**: run.lock 차단 판정을 시간 기반 → **자식 PID 생존 기반**으로 정밀화. 실제 락(pid>0)은 자식이 **살아있을 때만** 차단, 죽었으면(런 종료/소멸) 무시하고 죽은 락 정리 → 30초 안에 끝난 런 직후에도 **즉시 재실행** 가능(M37 시간 기반 quirk 해소). 선점 락(pid=0, spawn~`live::start` 공백)만 시간 신선도로 fallback. PID 생존 확인은 플랫폼 격리(Windows `tasklist`, Unix `kill -0`)·conductor 무결합. `POST /api/launch {"force":true}`로 **stale 락 우회**(단 live `run_active==true`는 force여도 **409** — 동시 실행 방지), 409 시 UI [강제 실행] 버튼 노출
+- **재투입 + 실행 단일 버튼**: 리포트 FAIL 행 [재투입]이 오버라이드 기록 후 **런 비활성이면 곧바로 [함대 실행]**까지 한 번에 수행(프런트엔드 체이닝, 백엔드 무변경). 런 활성 시엔 끼어들지 않고 "다음 실행에서 적용"으로 안내(M37 범위 유지)
+- **설정 편집 주석·서식 보존**: 설정 쓰기를 `toml`(round-trip) → **`toml_edit`**로 교체. workspace.toml의 **주석·키 순서·서식을 보존**하면서 `[conductor]` 화이트리스트 키만 갱신한다(기존 키는 값만 in-place 교체해 그 키의 prefix 주석도 유지 — round-trip이 주석을 날리던 문제 해소). 검증·원자성(실패 시 무쓰기)·화이트리스트는 무변경
+- **검증**: 단위(포트 기본·클램프, 선점 락 신선도, **실 `tasklist` PID 생존 판정**(죽은 PID 무차단·죽은 락 정리), `parse_force`, **주석 보존**) + HTTP 하니스 확장(`dashboard-launch-validate.ps1`: 포트 GET/POST·범위 400, 주석 보존, run_active+force→409, 선점 락→409) + **Unix 라이브 하니스 신규**(`dashboard-launch-live.sh`: `process_group(0)` detach 생존 + 종료 후 즉시 재실행). Windows 라이브 detach 무회귀 확인
+- **테스트**: 403개 (396 → 403, +7개)
+
 ### [v0.34.0]
 - **런처 — 대시보드에서 함대 실행·halt 재투입·설정 편집 (M37)**: 대시보드가 관측·게이트 제어를 넘어 **실행을 시작·관리**하는 통제실이 된다. M35까지 conductor가 대시보드를 내장 기동했으나, 런처는 방향을 역전해 **독립 실행 중인 대시보드가 conductor 프로세스를 detached spawn**한다(대시보드가 자식 프로세스의 수명 소유 — M33부터 이월된 후속). 실행 백엔드 외 통신은 여전히 파일 매개·무결합
 - **함대 실행 `POST /api/launch`**: 라이브 패널 [▶ 함대 실행] 버튼 → `current_exe`로 `porpoise`를 프로젝트 디렉터리에서 detached spawn(stdin=null, stdout/stderr→`.porpoise/launch.log`; Windows `CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW`, Unix `process_group(0)`). **런 락**(live.json `run_active` OR 30초 신선 `.porpoise/run.lock`)으로 이중 기동을 409 차단 — 락은 spawn 전 선점으로 TOCTOU 창을 닫고 시간 기반 자가 만료. spawn된 gate 모드 conductor는 PortInUse로 기존(런처) 대시보드와 공존(M35)

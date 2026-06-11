@@ -119,7 +119,44 @@ if ((PostCode "$base/api/config" '{"max_parallel":99}' @{}) -ne 400) { Fail "out
 if ((PostCode "$base/api/config" '{"approval_mode":"nuke"}' @{}) -ne 400) { Fail "bad enum should be 400" }
 Ok "out-of-range / bad-enum config values -> 400"
 
+# === M38 추가 검증 (모두 비-spawn 경로) ===
+
+# 5. dashboard_port GET default + POST update + range violation
+$cfgp = Invoke-RestMethod "$base/api/config"
+if ($cfgp.conductor.dashboard_port -ne 7878) { Fail "dashboard_port default should be 7878" }
+$rp = Invoke-RestMethod -Method Post -Uri "$base/api/config" -ContentType "application/json" -Body '{"dashboard_port":9001}'
+if (-not $rp.ok) { Fail "dashboard_port POST not ok" }
+$cfgp2 = Invoke-RestMethod "$base/api/config"
+if ($cfgp2.conductor.dashboard_port -ne 9001) { Fail "dashboard_port not updated" }
+if ((PostCode "$base/api/config" '{"dashboard_port":80}' @{}) -ne 400) { Fail "privileged port should be 400" }
+Ok "dashboard_port GET/POST + range violation 400 (M38)"
+
+# 6. 설정 편집 주석 보존 (toml_edit)
+$wsComment = "# top comment`n[general]`nlanguage = `"en`"  # inline`n`n[conductor]`n# conductor comment`nmax_parallel = 1`n"
+WriteUtf8 (Join-Path $porpoise "workspace.toml") $wsComment
+$rc = Invoke-RestMethod -Method Post -Uri "$base/api/config" -ContentType "application/json" -Body '{"max_parallel":6}'
+if (-not $rc.ok) { Fail "config POST (comment file) not ok" }
+$wsAfter = Get-Content (Join-Path $porpoise "workspace.toml") -Raw
+if ($wsAfter -notmatch "# top comment") { Fail "top comment lost" }
+if ($wsAfter -notmatch "# conductor comment") { Fail "[conductor] key comment lost" }
+if ($wsAfter -notmatch "max_parallel = 6") { Fail "value not updated" }
+Ok "config edit preserves comments + updates value (M38 toml_edit)"
+
+# 7. run_active + force -> 409 (force는 진짜 동시 실행을 막지 못함)
+$liveActive = @{ schema_version="live-1"; run_active=$true; started_at="t"; updated_at="t"; mode="sequential"; total_cost_usd=0.0; budget_usd=$null; tasks=@() } | ConvertTo-Json -Depth 6
+WriteUtf8 (Join-Path $porpoise "live.json") $liveActive
+if ((PostCode "$base/api/launch" '{"force":true}' @{}) -ne 409) { Fail "force while run_active should still be 409" }
+Ok "force launch while run_active -> 409 (no concurrent run)"
+Remove-Item (Join-Path $porpoise "live.json") -Force
+
+# 8. 신선한 선점 락(pid=0) -> 409 (spawn~start 공백 보호)
+$lockBody = "$(([DateTime]::Now).ToString('o'))`npid=0`n"
+WriteUtf8 (Join-Path $porpoise "run.lock") $lockBody
+if ((PostCode "$base/api/launch" '{}' @{}) -ne 409) { Fail "fresh preempt lock should block with 409" }
+Ok "fresh preempt lock (pid=0) -> 409 (TOCTOU window guard)"
+Remove-Item (Join-Path $porpoise "run.lock") -Force
+
 Cleanup
-Write-Host "`nM37 LAUNCHER VALIDATION: PASS" -ForegroundColor Green
-Write-Host "Launch guards, redispatch channel, and config writes enforced at HTTP level." -ForegroundColor Green
-Write-Host "NOTE: real [함대 실행] detached spawn is an operator live check (starts a real fleet)." -ForegroundColor Yellow
+Write-Host "`nM37+M38 LAUNCHER VALIDATION: PASS" -ForegroundColor Green
+Write-Host "Launch guards, redispatch, config (port/comment-preserving), run lock enforced at HTTP level." -ForegroundColor Green
+Write-Host "NOTE: real detached spawn / force-success / immediate relaunch are operator live checks (start a real fleet)." -ForegroundColor Yellow

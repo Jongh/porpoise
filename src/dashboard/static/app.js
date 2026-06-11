@@ -266,6 +266,8 @@
   // ── M31: 라이브 패널 ──────────────────────────────────────────────
   const PHASES = ["brief", "dispatch", "verify", "integrate"];
   let wasActive = false;
+  // M38: 마지막 run_active — 재투입+실행 단일 버튼 판단용
+  let lastRunActive = false;
 
   function phaseSteps(task) {
     if (task.phase === "merged")
@@ -359,9 +361,12 @@
       $("#gate-error").classList.add("hidden");
     }
     // M37: 함대 실행 버튼 — 런이 비활성이고 대기 게이트도 없을 때만 노출
+    lastRunActive = !!live.run_active;
     const launchBtn = $("#launch-fleet");
     const canLaunch = !live.run_active && !live.pending_gate;
     launchBtn.classList.toggle("hidden", !canLaunch);
+    // M38: 강제 실행 버튼 — 런이 활성이면 항상 숨김(강제로도 동시 실행 불가)
+    if (live.run_active) $("#force-launch").classList.add("hidden");
 
     // 실행 중 상시 사전 정지 버튼 (M34: 정지 예약 가시화 — 서버 진실 stop_pending)
     const stopBtn = $("#stop-next");
@@ -408,33 +413,42 @@
     setTimeout(() => el.classList.add("hidden"), 4000);
   }
 
-  async function launchFleet() {
+  // M38: force=true면 stale 런 락 무시. 반환값 = 성공 여부(단일 버튼 체이닝용).
+  async function launchFleet(force) {
     const msg = $("#launch-msg");
     const btn = $("#launch-fleet");
+    const forceBtn = $("#force-launch");
     btn.disabled = true;
     try {
       const r = await fetch(withProject("/api/launch"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: "{}",
+        body: JSON.stringify(force ? { force: true } : {}),
       });
       const data = await r.json().catch(() => ({}));
       if (r.ok) {
+        forceBtn.classList.add("hidden");
         flashMsg(msg, "함대 기동 — PID " + (data.pid || "?"), false);
         setTimeout(() => getJSON("/api/live").then(renderLive).catch(() => {}), 1200);
+        return true;
       } else if (r.status === 409) {
-        flashMsg(msg, "이미 실행 중입니다", true);
+        // 락 잔존(실행 중 아님) 가능성 → 강제 실행 버튼 노출. 진짜 실행 중이면 live 갱신이 숨김.
+        flashMsg(msg, force ? "기동 실패 (409) " + (data.error || "") : "기동 불가 (409) " + (data.error || ""), true);
+        if (!force) forceBtn.classList.remove("hidden");
+        return false;
       } else {
         flashMsg(msg, "실행 실패 (" + r.status + ") " + (data.error || ""), true);
+        return false;
       }
     } catch (e) {
       flashMsg(msg, "실행 실패: " + e, true);
+      return false;
     } finally {
       btn.disabled = false;
     }
   }
 
-  // ── M37: halt task 재투입 ──────────────────────────────────────────
+  // ── M37/M38: halt task 재투입 (+ M38 단일 버튼: 런 비활성 시 즉시 실행) ───────
   async function redispatchTask(taskId, btn) {
     btn.disabled = true;
     try {
@@ -443,13 +457,21 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gate_id: taskId, decision: "redispatch" }),
       });
-      if (r.ok) {
-        btn.textContent = "재투입 예약됨";
-        flashMsg($("#launch-msg"), taskId + " 재투입 예약 — 다음 함대 실행에서 재시도", false);
-      } else {
+      if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         btn.disabled = false;
         flashMsg($("#launch-msg"), "재투입 실패 (" + r.status + ") " + (data.error || ""), true);
+        return;
+      }
+      // M38: 런이 비활성이면 곧바로 함대 실행(한 번 클릭으로 재투입+실행).
+      //      진행 중이면 끼어들지 않고 다음 실행에서 적용(M37 범위 유지).
+      if (!lastRunActive) {
+        btn.textContent = "재투입+실행";
+        const ok = await launchFleet(false);
+        flashMsg($("#launch-msg"), ok ? taskId + " 재투입 후 함대 실행" : taskId + " 재투입 예약 — 실행은 수동", false);
+      } else {
+        btn.textContent = "재투입 예약됨";
+        flashMsg($("#launch-msg"), taskId + " 재투입 예약 — 진행 중 함대 종료 후 다음 실행에서 재시도", false);
       }
     } catch (e) {
       btn.disabled = false;
@@ -468,6 +490,7 @@
       });
       if (f.max_parallel) f.max_parallel.value = c.max_parallel;
       if (f.max_redispatch) f.max_redispatch.value = c.max_redispatch;
+      if (f.dashboard_port) f.dashboard_port.value = c.dashboard_port;
       if (f.serve_dashboard) f.serve_dashboard.checked = !!c.serve_dashboard;
       if (f.verifier_model) f.verifier_model.value = c.verifier_model || "";
     } catch (e) {
@@ -485,6 +508,7 @@
       verdict_fallback: f.verdict_fallback.value,
       max_parallel: Number(f.max_parallel.value),
       max_redispatch: Number(f.max_redispatch.value),
+      dashboard_port: Number(f.dashboard_port.value),
       serve_dashboard: f.serve_dashboard.checked,
       verifier_model: f.verifier_model.value,
     };
@@ -564,7 +588,9 @@
     projSel.addEventListener("change", switchProject);
     $("#refresh").addEventListener("click", refresh);
     // M37: 런처 — 함대 실행 / 설정 편집
-    $("#launch-fleet").addEventListener("click", launchFleet);
+    $("#launch-fleet").addEventListener("click", () => launchFleet(false));
+    // M38: 강제 실행(stale 락 우회)
+    $("#force-launch").addEventListener("click", () => launchFleet(true));
     $("#config-toggle").addEventListener("click", () => {
       $("#config-form").classList.toggle("hidden");
     });

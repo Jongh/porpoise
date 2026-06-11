@@ -149,7 +149,7 @@ pub fn run(path: &Path, args: &Args, config: &Config) -> Result<()> {
             if conductor_active && workspace.conductor_gate_mode() && !args.yes {
                 // 게이트 무한 대기 방지: 대시보드를 먼저 보장(이미 떠 있으면 공존)
                 use crate::dashboard::ServeOutcome;
-                match crate::dashboard::serve_in_background(path, 7878) {
+                match crate::dashboard::serve_in_background(path, workspace.conductor_dashboard_port()) {
                     ServeOutcome::Started(url) | ServeOutcome::PortInUse(url) => {
                         println!("  {} 대시보드: {}", "▶".green(), url.cyan());
                         let _ = webbrowser::open(&url);

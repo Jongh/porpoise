@@ -124,7 +124,7 @@ fn run_conductor_inner(
     // 같은 프로세스여도 통신은 파일 매개(live.json·control/) 그대로(무결합 불변).
     if workspace.conductor_serve_dashboard() {
         use crate::dashboard::ServeOutcome;
-        match crate::dashboard::serve_in_background(path, 7878) {
+        match crate::dashboard::serve_in_background(path, workspace.conductor_dashboard_port()) {
             ServeOutcome::Started(url) => {
                 println!("  {} 대시보드 내장 기동: {}", "▶".green(), url.cyan());
                 println!("{}", "    (conductor 종료 시 함께 닫힙니다)".dimmed());
