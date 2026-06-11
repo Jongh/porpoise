@@ -223,6 +223,14 @@ prev_target: development
 
 ## CHANGELOG
 
+### [v0.37.0]
+- **비용 관측·라우팅 (M40)**: retro 뿌리 B("비용이 절반만 보인다") 해소 — 검증자 비용 계측 + 저비용 우선 모델 승급 (A=M39와 함께 두 뿌리 완료)
+- **검증자 비용 계측 (conductor-5)**: `run_verification`을 metered화 → 그동안 소실되던 검증자 LLM 비용을 계측·합산. 감사 스키마 conductor-5(구 레코드 하위호환). 라이브로 verdict 파싱 무회귀 확인
+- **⚠️ `total_cost` 정밀화**: 총비용 = **dispatch + verifier**(그동안 dispatch만). 구 레코드는 dispatch만(과거 수치 불변), 리포트는 dispatch/verifier 분리도 노출
+- **저비용 우선 라우팅**: `dispatch_model_fast`·`verifier_model_fast` 설정 시 첫 시도 fast·재투입 strong 승급(`route_model`). 미설정 시 기존(항상 strong)
+- **대시보드**: 검증자 비용 카드·작업/검증 분리, 설정 폼에 `*_model_fast`
+- **테스트**: 414개 (411 → 414, +3개)
+
 ### [v0.36.0]
 - **halt 회복 지능 (M39)**: task 정지(halt)가 함대 전체를 멈추지 않는다 — 파킹·핫-재큐·적응형 재계획
 - **⚠️ 동작 변경 — 정지 task 파킹 (`[conductor] park_on_halt` 기본 true)**: 정지 task는 런 종료 대신 **파킹**되고 나머지 ready task가 계속 진행된다(순차·병렬). 구 동작은 `park_on_halt=false`로 복원

@@ -184,7 +184,7 @@ pub fn run_parallel(
         println!("  {} {}개 task 동시 dispatch·verify 중... (출력은 완료 후 그룹 표시)", "→".cyan(), batch.len());
         let runs = dispatch_batch_parallel(
             &worktrees, &batch, path, workspace, runner, dispatch_model, verifier_model,
-            dod, fallback_halt, &verify_cmds, &allowed, timeout, &feedbacks,
+            dod, fallback_halt, &verify_cmds, &allowed, timeout, &feedbacks, &attempts,
         );
 
         // ── Phase 3 (직렬): 그룹 출력 + 충돌 인지 통합 ──────────────────────
@@ -199,6 +199,8 @@ pub fn run_parallel(
                         &run.outcome, &run.agent_run.output, &run.agent_run, logger,
                     );
                     total_cost += run.agent_run.cost_usd.unwrap_or(0.0);
+                    // M40: 검증자 비용도 합산 (그동안 누락)
+                    total_cost += run.outcome.verifier_cost_usd.unwrap_or(0.0);
                     super::live::set_total_cost(path, total_cost);
 
                     if run.outcome.verdict.pass {
@@ -348,7 +350,11 @@ fn dispatch_batch_parallel(
     allowed: &[String],
     timeout: u32,
     feedbacks: &HashMap<String, String>,
+    attempts: &HashMap<String, u32>,
 ) -> Vec<Result<TaskRun>> {
+    // M40: 저비용 우선 라우팅 — task별 시도 횟수(attempts)로 fast↔strong 선택
+    let dispatch_fast = workspace.conductor_dispatch_model_fast();
+    let verifier_fast = workspace.conductor_verifier_model_fast();
     std::thread::scope(|scope| {
         let handles: Vec<_> = worktrees
             .iter()
@@ -360,7 +366,11 @@ fn dispatch_batch_parallel(
                     if let Some(fb) = feedbacks.get(&task.id) {
                         brief = brief.with_feedback(fb);
                     }
-                    let agent_run = wt.run_agent(runner, &brief, dispatch_model, false)?;
+                    // M40: 시도 횟수에 따른 모델 라우팅 (0=fast, 재투입=strong)
+                    let attempt = *attempts.get(&task.id).unwrap_or(&0);
+                    let routed_dispatch = super::route_model(dispatch_model, dispatch_fast, attempt);
+                    let routed_verifier = super::route_model(verifier_model, verifier_fast, attempt);
+                    let agent_run = wt.run_agent(runner, &brief, routed_dispatch, false)?;
                     let diff = wt.capture_diff();
                     let command_results = if verify_cmds.is_empty() {
                         vec![]
@@ -369,7 +379,7 @@ fn dispatch_batch_parallel(
                     };
                     let outcome = verify::run_verification(
                         &wt.path, &task.id, &task.title, dod, &diff, &command_results,
-                        runner, verifier_model, fallback_halt, false,
+                        runner, routed_verifier, fallback_halt, false,
                     )?;
                     Ok(TaskRun {
                         task_id: task.id.clone(),

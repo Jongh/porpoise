@@ -41,6 +41,17 @@ pub struct VerifyOutcome {
     /// 검증자 verdict 파싱 실패로 **객관 증거 폴백**(또는 halt)이 발동됐는지.
     /// true + verdict.pass면 "검증자 판정 없이 객관 증거로 통과" → 검토 권장 신호 (M22).
     pub fallback_used: bool,
+    /// M40: 검증자 LLM 비용(USD). LLM 미호출(diff 없음·명령 실패·chaos)이면 None.
+    /// 1차 심사 + 재질의의 합산.
+    pub verifier_cost_usd: Option<f64>,
+}
+
+/// 두 비용을 합산한다 — 하나라도 값이 있으면 Some(합). 둘 다 None이면 None (M40).
+pub fn add_cost(a: Option<f64>, b: Option<f64>) -> Option<f64> {
+    match (a, b) {
+        (None, None) => None,
+        _ => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+    }
 }
 
 /// 검증자 LLM 원문에서 판정을 추출한다. 추출 불가면 None.
@@ -288,7 +299,7 @@ pub fn run_verification(
     fallback_halt: bool,
     stream: bool,
 ) -> Result<VerifyOutcome> {
-    // 변경이 전혀 없으면 작업 미수행 — 즉시 FAIL
+    // 변경이 전혀 없으면 작업 미수행 — 즉시 FAIL (LLM 미호출 → 비용 None)
     if diff.trim().is_empty() {
         return Ok(VerifyOutcome {
             verdict: Verdict::fail(
@@ -296,31 +307,37 @@ pub fn run_verification(
             ),
             verifier_raw: String::new(),
             fallback_used: false,
+            verifier_cost_usd: None,
         });
     }
 
-    // 객관 증거 우선: 검증 명령이 하나라도 실패하면 LLM 판단 없이 FAIL
+    // 객관 증거 우선: 검증 명령이 하나라도 실패하면 LLM 판단 없이 FAIL (비용 None)
     if let Some(summary) = summarize_command_failures(command_results) {
         return Ok(VerifyOutcome {
             verdict: Verdict::fail(summary),
             verifier_raw: String::new(),
             fallback_used: false,
+            verifier_cost_usd: None,
         });
     }
 
     let chaos = chaos_active();
+    // M40: 검증자 비용 누적 (1차 + 재질의). chaos는 LLM 미호출이라 None 유지.
+    let mut verifier_cost: Option<f64> = None;
 
     // 1차 심사 (chaos면 LLM 호출을 건너뛰고 파싱 불가 응답 주입)
     let prompt = build_verify_prompt(task_id, task_title, dod, diff, command_results);
     let raw = if chaos {
         chaos_response()
     } else {
-        runner
-            .run_agentic(&prompt, worktree_path, verifier_model, stream)
-            .context("검증자 실행 실패")?
+        let run = runner
+            .run_agentic_metered(&prompt, worktree_path, verifier_model, stream)
+            .context("검증자 실행 실패")?;
+        verifier_cost = add_cost(verifier_cost, run.cost_usd);
+        run.output
     };
     if let Some(verdict) = try_parse_verdict(&raw) {
-        return Ok(VerifyOutcome { verdict, verifier_raw: raw, fallback_used: false });
+        return Ok(VerifyOutcome { verdict, verifier_raw: raw, fallback_used: false, verifier_cost_usd: verifier_cost });
     }
 
     // 재질의 1회 (파싱 가능한 verdict만 다시 요청)
@@ -328,12 +345,14 @@ pub fn run_verification(
     let raw2 = if chaos {
         chaos_response()
     } else {
-        runner
-            .run_agentic(&reask, worktree_path, verifier_model, stream)
-            .context("검증자 재질의 실패")?
+        let run = runner
+            .run_agentic_metered(&reask, worktree_path, verifier_model, stream)
+            .context("검증자 재질의 실패")?;
+        verifier_cost = add_cost(verifier_cost, run.cost_usd);
+        run.output
     };
     if let Some(verdict) = try_parse_verdict(&raw2) {
-        return Ok(VerifyOutcome { verdict, verifier_raw: raw2, fallback_used: false });
+        return Ok(VerifyOutcome { verdict, verifier_raw: raw2, fallback_used: false, verifier_cost_usd: verifier_cost });
     }
 
     // 여전히 파싱 불가 → 정책에 따른 폴백 (기본: 객관 증거 PASS, halt: 보수 FAIL)
@@ -342,6 +361,7 @@ pub fn run_verification(
         verdict: resolve_fallback(command_results, fallback_halt),
         verifier_raw: combined,
         fallback_used: true,
+        verifier_cost_usd: verifier_cost,
     })
 }
 

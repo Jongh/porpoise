@@ -4,6 +4,17 @@
 
 ---
 
+### [v0.37.0]
+- **비용 관측·라우팅 — 검증자 비용 계측 + 저비용 우선 모델 승급 (M40)**: retro 뿌리 B("비용이 절반만 보인다")를 닫는다 (A=M39 halt 회복과 함께 두 뿌리 모두 해소)
+- **검증자(verifier) 비용 계측 (conductor-5)**: 그동안 `run_verification`이 **비메터드** 호출이라 검증자 LLM 비용이 전부 소실됐다. 이제 `run_agentic_metered`로 1차 심사 + 재질의 비용을 누적해 `VerifyOutcome.verifier_cost_usd`로 반환하고, task 비용·live 누적·감사 기록에 **dispatch + verifier**를 합산한다. 감사 스키마 `conductor-4` → **`conductor-5`**(verifier_cost_usd 추가, 구 레코드는 None으로 하위호환). 라이브 검증으로 metered 전환이 verdict 파싱을 깨지 않음을 확인(폴백 아닌 정상 파싱)
+- **⚠️ `total_cost` 정밀화**: 리포트 총비용이 **dispatch + verifier 합**으로 정의된다(그동안 dispatch 비용만 보였음). 구 conductor-4 레코드는 verifier None → dispatch만(과거 마일스톤 수치 불변), 신규 런만 검증자 비용 포함. 리포트는 `total_dispatch_cost`·`total_verifier_cost`로 분리도 노출
+- **저비용 우선 모델 라우팅**: `[conductor] dispatch_model_fast`·`verifier_model_fast` 설정 시 **첫 시도는 fast(싼) 모델, 재투입은 strong으로 승급**(`route_model`, 순수 함수). 쉬운 작업은 싸게 끝내고 실패한(어려운) 작업만 강한 모델로 다시 푼다 — M37/M39 재투입 신호를 승급 트리거로 재사용. 미설정이면 항상 strong(기존 동작). 순차·병렬 양 경로
+- **대시보드**: 리포트 롤업에 "검증자 비용" 카드, task 상세에 작업/검증 비용 분리. 설정 폼에 `dispatch_model_fast`·`verifier_model_fast` 추가
+- **정리**: verifier 전환으로 무용이 된 비메터드 `run_agentic` 제거(dead-code 경고 0 유지)
+- **하위호환**: 감사 스키마 가산(구 레코드 verifier None), 라우팅 미설정 시 무변경, live.json·control·API 가산적. `total_cost` 의미만 정밀화(과거 수치 불변)
+- **검증**: 단위(`route_model` 승급 경계·`add_cost`·report 분리 집계·하위호환·conductor-5 감사) + HTTP 하니스(합성 conductor-5 → `/api/report` 분리 집계·`/api/task` verifier 노출·라우팅 설정 키) + **라이브**(실 conductor 1 task → verdict가 metered 출력에서 정상 파싱·비용 캡처)
+- **테스트**: 414개 (411 → 414, +3개)
+
 ### [v0.36.0]
 - **halt 회복 지능 — 정지 task 파킹·핫-재큐·적응형 재계획 (M39)**: task 하나의 정지(halt)가 함대 전체를 멈추지 않는다. retro 뿌리 A("halt 이후가 빈약하다")·M37부터 최장 이월된 핫-재큐를 닫는다
 - **⚠️ 동작 변경 — 정지 task 파킹 (`[conductor] park_on_halt`, 기본 true)**: max_redispatch 소진으로 정지한 task는 런을 끝내는 대신 **파킹**되고 나머지 ready task가 계속 진행된다(순차·병렬). 이전의 "정지 시 런 종료"는 `park_on_halt = false`로 복원 가능

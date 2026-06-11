@@ -116,24 +116,6 @@ impl ClaudeRunner {
         self.execute_claude(&prompt, output_file, model, None, true)
     }
 
-    /// Run claude as a full agentic session inside `working_dir`.
-    ///
-    /// Unlike `run_with_prompt_str`, this sets the child process's current
-    /// directory so the agent reads and writes files relative to an isolated
-    /// worktree. The agent is free to plan, edit, and run tools on its own —
-    /// Porpoise does not constrain it to a single phase. Returns the captured
-    /// stdout (the agent's final narration), not a structured report.
-    /// `stream=true`면 에이전트 출력을 라인 단위로 즉시 출력(순차), `false`면 캡처만(병렬, M23).
-    pub fn run_agentic(
-        &self,
-        prompt: &str,
-        working_dir: &Path,
-        model: Option<&str>,
-        stream: bool,
-    ) -> Result<String> {
-        self.execute_claude(prompt, None, model, Some(working_dir), stream)
-    }
-
     /// 비용 계측 에이전트 실행 — `--output-format stream-json`으로 호출해 출력과 함께
     /// 비용·토큰을 캡처한다(M28). 스트리밍 표시는 유지하며, CLI가 stream-json/비용을
     /// 지원하지 않으면 평문 폴백 + 비용 `None`으로 graceful 저하한다.

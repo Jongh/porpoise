@@ -418,6 +418,9 @@ fn conduct_in_worktree(
     let allowed = workspace.allowed_command_prefixes();
     let timeout = workspace.verify_timeout_secs();
     let fallback_halt = workspace.conductor_verdict_fallback_halt();
+    // M40: 저비용 우선 라우팅 — 첫 시도 fast, 재투입 시 strong으로 승급 (미설정이면 항상 strong)
+    let dispatch_fast = workspace.conductor_dispatch_model_fast();
+    let verifier_fast = workspace.conductor_verifier_model_fast();
 
     let mut redispatch = 0u32;
     let mut task_cost = 0.0f64; // M28: 이 task가 쓴 누적 비용(재투입 합산)
@@ -425,12 +428,21 @@ fn conduct_in_worktree(
     loop {
         // ── Dispatch ──────────────────────────────────────────────────────
         save_phase(path, task_id, task_title, "dispatch", redispatch, logger);
+        // M40: 시도 횟수에 따라 모델 선택 (0=fast, 재투입=strong 승급)
+        let routed_dispatch = route_model(dispatch_model, dispatch_fast, redispatch);
+        let routed_verifier = route_model(verifier_model, verifier_fast, redispatch);
+        let upgrade_note = if redispatch == 1 && (dispatch_fast.is_some() || verifier_fast.is_some()) {
+            " ↑모델 승급".to_string()
+        } else {
+            String::new()
+        };
         println!(
-            "  {} Dispatch{} — 에이전트에게 위임 중...",
+            "  {} Dispatch{}{} — 에이전트에게 위임 중...",
             "→".cyan(),
-            if redispatch > 0 { format!(" (재투입 {})", redispatch) } else { String::new() }
+            if redispatch > 0 { format!(" (재투입 {})", redispatch) } else { String::new() },
+            upgrade_note.cyan()
         );
-        let agent_run = wt.run_agent(runner, &brief, dispatch_model, true)?;
+        let agent_run = wt.run_agent(runner, &brief, routed_dispatch, true)?;
         task_cost += agent_run.cost_usd.unwrap_or(0.0);
         let agent_out = agent_run.output.clone();
         logger.info(
@@ -459,9 +471,11 @@ fn conduct_in_worktree(
         save_phase(path, task_id, task_title, "verify", redispatch, logger);
         println!("  {} Verify — 독립 검증자 심사 중...", "→".cyan());
         let outcome = verify::run_verification(
-            &wt.path, task_id, task_title, dod, &diff, &command_results, runner, verifier_model,
+            &wt.path, task_id, task_title, dod, &diff, &command_results, runner, routed_verifier,
             fallback_halt, true,
         )?;
+        // M40: 검증자 LLM 비용도 task 비용에 합산 (그동안 누락됐던 비용)
+        task_cost += outcome.verifier_cost_usd.unwrap_or(0.0);
 
         write_audit_record(
             path, task_id, redispatch, &diff, &command_results, &outcome, &agent_out, &agent_run,
@@ -641,6 +655,15 @@ pub fn budget_exceeded(spent_usd: f64, budget_usd: Option<f64>) -> bool {
     }
 }
 
+/// 비용 기반 모델 라우팅 (M40, 순수): 첫 시도(attempt 0)엔 저비용(fast), 재투입(attempt>0)엔 strong.
+/// fast 미설정이면 항상 strong (라우팅 비활성 = 기존 동작).
+pub fn route_model<'a>(strong: Option<&'a str>, fast: Option<&'a str>, attempt: u32) -> Option<&'a str> {
+    match fast {
+        Some(f) if attempt == 0 => Some(f),
+        _ => strong,
+    }
+}
+
 /// 파킹된 task 중 재투입 오버라이드가 도착한 것을 un-park 한다 (M39 핫-재큐).
 /// 반환: 해제(un-park)된 task id 목록. 오버라이드 소비는 호출자의 conduct 직전에 일어난다.
 pub fn revive_parked(
@@ -678,8 +701,9 @@ fn write_audit_record(
     let now = Local::now();
     let verdict = &outcome.verdict;
     let record = serde_json::json!({
-        // M28: 비용·토큰 필드 추가 (conductor-4). 구 파서는 없는 필드를 None/0으로 처리(하위호환).
-        "schema_version": "conductor-4",
+        // M28: 비용·토큰 필드 (conductor-4). M40: verifier_cost_usd 추가 (conductor-5).
+        // 구 파서는 없는 필드를 None/0으로 처리(하위호환).
+        "schema_version": "conductor-5",
         "task_id": task_id,
         "redispatch": redispatch,
         "timestamp": now.to_rfc3339(),
@@ -693,10 +717,12 @@ fn write_audit_record(
         "feedback": verdict.feedback,
         // M22: 검증자 판정 파싱 실패로 객관 증거 폴백이 발동했는지 (false-positive 추적용)
         "fallback_used": outcome.fallback_used,
-        // M28: 에이전트 실행 비용·토큰 (CLI 미지원 시 null)
+        // M28: 에이전트(dispatch) 실행 비용·토큰 (CLI 미지원 시 null)
         "cost_usd": agent_run.cost_usd,
         "input_tokens": agent_run.input_tokens,
         "output_tokens": agent_run.output_tokens,
+        // M40: 검증자 LLM 비용 (그동안 누락 — conductor-5). 구 레코드엔 없으므로 파서가 None 처리.
+        "verifier_cost_usd": outcome.verifier_cost_usd,
         "verifier_raw": truncate_chars(&outcome.verifier_raw, 4000),
         "dispatch_output": truncate_chars(dispatch_output, 4000),
     });
@@ -793,6 +819,22 @@ mod tests {
     }
 
     #[test]
+    fn route_model_fast_first_then_strong() {
+        // M40: fast 설정 시 첫 시도(0)는 fast, 재투입(>0)은 strong
+        assert_eq!(route_model(Some("strong"), Some("fast"), 0), Some("fast"));
+        assert_eq!(route_model(Some("strong"), Some("fast"), 1), Some("strong"));
+        assert_eq!(route_model(Some("strong"), Some("fast"), 2), Some("strong"));
+        // fast 미설정 → 항상 strong (라우팅 비활성)
+        assert_eq!(route_model(Some("strong"), None, 0), Some("strong"));
+        assert_eq!(route_model(Some("strong"), None, 3), Some("strong"));
+        // strong도 없으면 None(어댑터 기본)
+        assert_eq!(route_model(None, None, 0), None);
+        // fast만 있고 strong None → 0은 fast, 재투입은 None
+        assert_eq!(route_model(None, Some("fast"), 0), Some("fast"));
+        assert_eq!(route_model(None, Some("fast"), 1), None);
+    }
+
+    #[test]
     fn revive_parked_unparks_tasks_with_override() {
         use std::collections::HashSet;
         let tmp = tempfile::tempdir().unwrap();
@@ -879,6 +921,7 @@ mod tests {
             verdict: Verdict::fail("사유 설명"),
             verifier_raw: long_raw,
             fallback_used: false,
+            verifier_cost_usd: Some(0.0080),
         };
         let cmds = vec![cmd_ok()];
         let agent_run = crate::claude::runner::AgentRun {
@@ -907,12 +950,14 @@ mod tests {
         assert_eq!(v["dispatch_output"], "dispatch 출력");
         assert_eq!(v["verify_commands"][0]["command"], "cargo");
         assert_eq!(v["verify_commands"][0]["exit_code"], 0);
-        assert_eq!(v["schema_version"], "conductor-4");
+        assert_eq!(v["schema_version"], "conductor-5");
         assert_eq!(v["fallback_used"], false);
         // M28: 비용·토큰 기록
         assert_eq!(v["cost_usd"], 0.0321);
         assert_eq!(v["input_tokens"], 1200);
         assert_eq!(v["output_tokens"], 340);
+        // M40: 검증자 비용 기록
+        assert_eq!(v["verifier_cost_usd"], 0.0080);
         // 검증자 원문이 잘림 표시와 함께 포함
         assert!(
             v["verifier_raw"].as_str().unwrap().contains("chars 생략"),
@@ -931,6 +976,7 @@ mod tests {
             verdict: Verdict::pass_with_note("객관 증거 기반"),
             verifier_raw: "prose".to_string(),
             fallback_used: true,
+            verifier_cost_usd: None,
         };
         write_audit_record(
             path, "M2-T01", 0, "d", &[cmd_ok()], &outcome, "",
@@ -951,7 +997,7 @@ mod tests {
         let path = tmp.path();
         std::fs::create_dir_all(path.join(".porpoise")).unwrap();
         let logger = crate::logger::Logger::new(path, false).unwrap();
-        let outcome = VerifyOutcome { verdict: Verdict::pass(), verifier_raw: String::new(), fallback_used: false };
+        let outcome = VerifyOutcome { verdict: Verdict::pass(), verifier_raw: String::new(), fallback_used: false, verifier_cost_usd: None };
 
         // 서로 다른 redispatch 인덱스는 파일명이 구분되어 이력이 보존됨
         let ar = crate::claude::runner::AgentRun::default();

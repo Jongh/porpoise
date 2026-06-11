@@ -168,6 +168,23 @@ if ($hc2.conductor.auto_replan -ne $true) { Fail "auto_replan not updated" }
 if ((PostCode "$base/api/config" '{"park_on_halt":"yes"}' @{}) -ne 400) { Fail "non-bool park_on_halt should be 400" }
 Ok "M39 halt-recovery config (park_on_halt/auto_replan) GET/POST + type check"
 
+# 10. M40: 검증자 비용 계측 — 합성 conductor-5 감사 레코드 → /api/report 분리 집계 + /api/task 노출
+$audit5 = @{ schema_version="conductor-5"; task_id="M1-T01"; redispatch=0; timestamp="2026-06-11T10:00:00Z"; verdict="PASS"; feedback="ok"; dispatch_output="did work"; verifier_raw="raw"; fallback_used=$false; cost_usd=0.10; verifier_cost_usd=0.02; input_tokens=100; output_tokens=50 } | ConvertTo-Json
+WriteUtf8 (Join-Path $porpoise "sessions\M1-T01-conductor-20260611-100000-R0.json") $audit5
+$rep = Invoke-RestMethod "$base/api/report"
+if ([math]::Abs([double]$rep.total_verifier_cost - 0.02) -gt 1e-6) { Fail "total_verifier_cost should be 0.02, got $($rep.total_verifier_cost)" }
+if ([math]::Abs([double]$rep.total_cost - 0.12) -gt 1e-6) { Fail "total_cost should be dispatch+verifier=0.12, got $($rep.total_cost)" }
+$td = Invoke-RestMethod "$base/api/task?id=M1-T01"
+if ([math]::Abs([double]$td.rounds[0].verifier_cost_usd - 0.02) -gt 1e-6) { Fail "/api/task verifier_cost_usd not exposed" }
+Ok "M40 verifier cost — conductor-5 split aggregation (/api/report) + per-round (/api/task)"
+
+# 11. M40: 라우팅 설정 키 (dispatch_model_fast/verifier_model_fast) GET/POST
+$rc40 = Invoke-RestMethod -Method Post -Uri "$base/api/config" -ContentType "application/json" -Body '{"dispatch_model_fast":"claude-haiku-4-5","verifier_model_fast":"claude-haiku-4-5"}'
+if (-not $rc40.ok) { Fail "routing config POST not ok" }
+$cfg40 = Invoke-RestMethod "$base/api/config"
+if ($cfg40.conductor.dispatch_model_fast -ne "claude-haiku-4-5") { Fail "dispatch_model_fast not updated" }
+Ok "M40 routing config (dispatch_model_fast/verifier_model_fast) GET/POST"
+
 Cleanup
 Write-Host "`nM37+M38 LAUNCHER VALIDATION: PASS" -ForegroundColor Green
 Write-Host "Launch guards, redispatch, config (port/comment-preserving), run lock enforced at HTTP level." -ForegroundColor Green

@@ -106,6 +106,10 @@ pub struct WorkspaceConductor {
     pub park_on_halt: Option<bool>,
     /// 적응형 재계획 (M39, 옵트인): true면 반복 정지 task를 LLM으로 하위 task 분할. 기본 false(비용 유발).
     pub auto_replan: Option<bool>,
+    /// 저비용 우선 dispatch 모델 (M40): 첫 시도에 쓸 싼 모델. 미설정 시 라우팅 비활성(항상 strong).
+    pub dispatch_model_fast: Option<String>,
+    /// 저비용 우선 검증자 모델 (M40): 첫 시도에 쓸 싼 검증자 모델. 미설정 시 항상 strong.
+    pub verifier_model_fast: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -519,6 +523,22 @@ reviewer_extra = ""
             .as_ref()
             .and_then(|c| c.auto_replan)
             .unwrap_or(false)
+    }
+
+    /// 저비용 우선 dispatch 모델 (M40). 빈 값/미설정이면 None(라우팅 비활성).
+    pub fn conductor_dispatch_model_fast(&self) -> Option<&str> {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.dispatch_model_fast.as_deref())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// 저비용 우선 검증자 모델 (M40). 빈 값/미설정이면 None.
+    pub fn conductor_verifier_model_fast(&self) -> Option<&str> {
+        self.conductor
+            .as_ref()
+            .and_then(|c| c.verifier_model_fast.as_deref())
+            .filter(|s| !s.is_empty())
     }
 
     pub fn session_keep_completed(&self) -> bool {

@@ -135,3 +135,32 @@ task 하나의 정지(halt)가 함대 전체를 멈추지 않는다.
 - 단위/합성(claude 불필요): `revive_parked`(오버라이드 있는 파킹만 un-park, 비소비), `replan`의
   `insert_subtasks`(부모 치환·하위 체인·파서 왕복)·`parse_subtasks`(클램프·폴백), `is_replannable`.
 - **end-to-end 파킹·핫-재큐·LLM 분할**은 실제 conductor 런(claude)이 필요 → 운영자 라이브 검증 항목.
+
+## 비용 관측·라우팅 (M40)
+
+함대의 전체 비용이 보이고, 비용에 따라 모델을 자동 선택한다.
+
+### 검증자 비용 계측 (conductor-5)
+- 그동안 `run_verification`이 **비메터드** 호출이라 검증자 LLM 비용이 소실됐다. 이제
+  `run_agentic_metered`로 1차 심사 + 재질의 비용을 누적해 `VerifyOutcome.verifier_cost_usd`로 반환한다.
+- task 비용(`task_cost`)·live 누적·감사 기록에 **dispatch + verifier**가 합산된다. 감사 스키마는
+  `conductor-5`(verifier_cost_usd 추가). 구 `conductor-4` 이하 레코드는 verifier 비용 None으로 하위호환.
+- 리포트는 총비용을 **dispatch / verifier로 분리** 집계(`total_dispatch_cost`·`total_verifier_cost`,
+  `total_cost`=합). LLM 미호출 경로(diff 없음·검증 명령 실패·chaos)는 verifier 비용 None.
+
+### 저비용 우선 모델 라우팅
+- `[conductor] dispatch_model_fast`·`verifier_model_fast` 설정 시, **첫 시도(attempt 0)는 fast(싼)
+  모델**, 재투입(attempt>0)은 strong 모델로 **승급**한다(`conductor::route_model`, 순수 함수). 쉬운
+  작업은 싸게 끝내고, 실패한(어려운) 작업만 강한 모델로 다시 푼다 — M37/M39 재투입 신호를 승급 트리거로 재사용.
+- 미설정이면 라우팅 비활성(항상 strong = 기존 동작). 순차·병렬 양 경로 적용(병렬은 task별 attempts로 라우팅).
+- strong dispatch 모델은 `effective_model`(CLI/설정), strong verifier는 `verifier_model`.
+
+### 대시보드
+- 리포트 롤업에 **검증자 비용** 카드, task 상세 라운드에 "작업/검증" 비용 분리 표시. 설정 폼에
+  `dispatch_model_fast`·`verifier_model_fast` 추가(화이트리스트·text 검증 상속).
+
+### 검증
+- 단위: `add_cost`(비용 합산), `route_model`(승급 경계·fast 미설정 폴백), report 분리 집계·하위호환
+  (구 레코드 verifier None → total_cost=dispatch만), 감사 conductor-5 기록.
+- 합성 하니스: conductor-5 감사 레코드 → `/api/report` 분리 집계·`/api/task` verifier_cost 노출,
+  `*_model_fast` 설정 키 GET/POST. **실 verifier 비용·실 승급**은 conductor 런(claude) 필요 → 운영자 라이브.

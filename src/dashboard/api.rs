@@ -66,6 +66,9 @@ pub fn report_json(path: &Path, milestone: Option<u32>) -> Value {
         "total_redispatches": report.total_redispatches(),
         "fallback_count": report.fallback_count(),
         "total_cost": report.total_cost(),
+        // M40: 총비용을 dispatch / verifier로 분리 노출
+        "total_dispatch_cost": report.total_dispatch_cost(),
+        "total_verifier_cost": report.total_verifier_cost(),
         "total_input_tokens": report.total_input_tokens(),
         "total_output_tokens": report.total_output_tokens(),
         "parse_errors": report.parse_errors,
@@ -100,6 +103,7 @@ pub fn task_detail_json(path: &Path, task_id: &str) -> Value {
                 "fallback_used": r.fallback_used,
                 "diff_lines": r.diff_lines,
                 "cost_usd": r.cost_usd,
+                "verifier_cost_usd": r.verifier_cost_usd,
                 "feedback": truncate_chars(&r.feedback, DETAIL_MAX_CHARS),
                 "dispatch_output": truncate_chars(&r.dispatch_output, DETAIL_MAX_CHARS),
                 "verifier_raw": truncate_chars(&r.verifier_raw, DETAIL_MAX_CHARS),

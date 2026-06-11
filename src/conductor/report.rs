@@ -35,6 +35,9 @@ pub struct AuditRecord {
     pub input_tokens: Option<u64>,
     #[serde(default)]
     pub output_tokens: Option<u64>,
+    // M40: 검증자 LLM 비용 (conductor-5). 구 기록(conductor-4 이하)엔 없으므로 default None.
+    #[serde(default)]
+    pub verifier_cost_usd: Option<f64>,
     // M36: task 상세 보기용 본문 필드 — 검증 피드백·에이전트 최종 보고·검증자 원문.
     #[serde(default)]
     pub feedback: String,
@@ -89,8 +92,10 @@ pub struct TaskRunSummary {
     pub last_timestamp: String,
     /// 최종 라운드의 verify 명령이 (1개 이상 있고) 모두 exit 0이면 true.
     pub verify_all_passed: bool,
-    /// M28: 최신 run의 누적 비용(USD). 비용 미가용이면 None.
+    /// M28: 최신 run의 누적 **dispatch** 비용(USD). 비용 미가용이면 None.
     pub cost_usd: Option<f64>,
+    /// M40: 최신 run의 누적 **검증자** 비용(USD). 미가용(구 기록·LLM 미호출)이면 None.
+    pub verifier_cost_usd: Option<f64>,
     /// M28: 최신 run의 누적 입력/출력 토큰. 미가용이면 None.
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -129,9 +134,21 @@ impl MilestoneRunReport {
     pub fn fallback_count(&self) -> usize {
         self.tasks.iter().filter(|t| t.fallback_used).count()
     }
-    /// M28: 마일스톤 총비용(USD). 비용이 하나도 없으면 None.
+    /// M28/M40: 마일스톤 총비용(USD) = dispatch + verifier. 비용이 하나도 없으면 None.
     pub fn total_cost(&self) -> Option<f64> {
+        sum_opt_f64(
+            self.tasks
+                .iter()
+                .map(|t| crate::conductor::verify::add_cost(t.cost_usd, t.verifier_cost_usd)),
+        )
+    }
+    /// M40: dispatch 비용만 (총비용에서 검증자 비용 분리 노출용).
+    pub fn total_dispatch_cost(&self) -> Option<f64> {
         sum_opt_f64(self.tasks.iter().map(|t| t.cost_usd))
+    }
+    /// M40: 검증자(verifier) 비용만.
+    pub fn total_verifier_cost(&self) -> Option<f64> {
+        sum_opt_f64(self.tasks.iter().map(|t| t.verifier_cost_usd))
     }
     /// M28: 총 입력/출력 토큰.
     pub fn total_input_tokens(&self) -> Option<u64> {
@@ -194,8 +211,9 @@ pub fn aggregate(records: &[AuditRecord]) -> Vec<TaskRunSummary> {
         let max_redispatch = latest_run.iter().map(|r| r.redispatch).max().unwrap_or(0);
         let verify_all_passed = !final_rec.verify_commands.is_empty()
             && final_rec.verify_commands.iter().all(|c| c.exit_code == 0);
-        // M28: 최신 run의 비용·토큰 합산 (전부 None이면 None)
+        // M28/M40: 최신 run의 비용·토큰 합산 (전부 None이면 None)
         let cost_usd = sum_opt_f64(latest_run.iter().map(|r| r.cost_usd));
+        let verifier_cost_usd = sum_opt_f64(latest_run.iter().map(|r| r.verifier_cost_usd));
         let input_tokens = sum_opt_u64(latest_run.iter().map(|r| r.input_tokens));
         let output_tokens = sum_opt_u64(latest_run.iter().map(|r| r.output_tokens));
 
@@ -209,6 +227,7 @@ pub fn aggregate(records: &[AuditRecord]) -> Vec<TaskRunSummary> {
             last_timestamp: final_rec.timestamp.clone(),
             verify_all_passed,
             cost_usd,
+            verifier_cost_usd,
             input_tokens,
             output_tokens,
         });
@@ -516,6 +535,36 @@ mod tests {
         // 구 기록(비용 없음) → None
         let out = aggregate(&[rec("M1-T01", 0, "t", "PASS", false)]);
         assert_eq!(out[0].cost_usd, None);
+    }
+
+    #[test]
+    fn report_splits_dispatch_and_verifier_cost() {
+        // M40: dispatch + verifier 분리 집계, total_cost는 합
+        let r1 = AuditRecord {
+            cost_usd: Some(0.10),
+            verifier_cost_usd: Some(0.02),
+            ..rec("M1-T01", 0, "t", "PASS", false)
+        };
+        let report = MilestoneRunReport {
+            milestone: None,
+            tasks: aggregate(&[r1]),
+            parse_errors: 0,
+        };
+        assert_eq!(report.total_dispatch_cost(), Some(0.10));
+        assert_eq!(report.total_verifier_cost(), Some(0.02));
+        assert!((report.total_cost().unwrap() - 0.12).abs() < 1e-9, "총비용 = dispatch+verifier");
+    }
+
+    #[test]
+    fn report_total_cost_backward_compat_no_verifier() {
+        // M40: 구 conductor-4 레코드(verifier_cost 없음) → verifier None, total_cost = dispatch만
+        let report = MilestoneRunReport {
+            milestone: None,
+            tasks: aggregate(&[rec_cost("M1-T01", 0, "t", "PASS", 0.20)]),
+            parse_errors: 0,
+        };
+        assert_eq!(report.total_verifier_cost(), None, "구 레코드는 verifier 비용 None");
+        assert!((report.total_cost().unwrap() - 0.20).abs() < 1e-9, "총비용 = dispatch만");
     }
 
     #[test]

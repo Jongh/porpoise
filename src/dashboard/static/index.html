@@ -97,6 +97,12 @@
         <label>verifier_model
           <input type="text" name="verifier_model" maxlength="200" placeholder="(비워두면 dispatch와 동일)" />
         </label>
+        <label>dispatch_model_fast
+          <input type="text" name="dispatch_model_fast" maxlength="200" placeholder="(저비용 우선 — 첫 시도용, 비우면 비활성)" />
+        </label>
+        <label>verifier_model_fast
+          <input type="text" name="verifier_model_fast" maxlength="200" placeholder="(검증자 저비용 — 첫 시도용)" />
+        </label>
         <div class="config-actions">
           <button type="submit" class="btn-approve">저장</button>
           <span id="config-msg" class="launch-msg hidden"></span>

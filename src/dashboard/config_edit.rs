@@ -27,6 +27,8 @@ pub const EDITABLE_KEYS: &[&str] = &[
     "dashboard_port",
     "park_on_halt",
     "auto_replan",
+    "dispatch_model_fast",
+    "verifier_model_fast",
 ];
 
 /// 처리 결과 (상태코드 + 본문).
@@ -54,6 +56,8 @@ pub fn read_config_json(project: &Path) -> Value {
             "dashboard_port": cfg.conductor_dashboard_port(),
             "park_on_halt": cfg.conductor_park_on_halt(),
             "auto_replan": cfg.conductor_auto_replan(),
+            "dispatch_model_fast": cfg.conductor_dispatch_model_fast().unwrap_or(""),
+            "verifier_model_fast": cfg.conductor_verifier_model_fast().unwrap_or(""),
         }
     })
 }
@@ -89,7 +93,7 @@ pub fn validate_config_update(body: &str) -> Result<Vec<(String, toml::Value)>, 
                 let b = val.as_bool().ok_or_else(|| format!("{} must be a boolean", key))?;
                 toml::Value::Boolean(b)
             }
-            "verifier_model" => {
+            "verifier_model" | "dispatch_model_fast" | "verifier_model_fast" => {
                 let s = val.as_str().ok_or_else(|| format!("{} must be a string", key))?;
                 if !text_safe(s) {
                     return Err(format!("{} too long or contains control chars", key));

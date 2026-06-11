@@ -76,6 +76,8 @@
       card("재투입", rep.total_redispatches),
       card("폴백", rep.fallback_count),
       card("총비용", money(rep.total_cost)),
+      // M40: 비용을 dispatch / verifier로 분리 노출
+      card("검증자 비용", money(rep.total_verifier_cost)),
     ].join("");
 
     // 표
@@ -156,7 +158,8 @@
           const head =
             `<div class="round-head"><span class="tag ${v}">${v}</span>` +
             `<span class="muted"> R${r.redispatch} · diff ${r.diff_lines}줄` +
-            (r.cost_usd != null ? " · " + money(r.cost_usd) : "") +
+            (r.cost_usd != null ? " · 작업 " + money(r.cost_usd) : "") +
+            (r.verifier_cost_usd != null ? " · 검증 " + money(r.verifier_cost_usd) : "") +
             (r.fallback_used ? " · 폴백" : "") +
             `</span></div>`;
           const feedback = r.feedback
@@ -496,6 +499,8 @@
       if (f.park_on_halt) f.park_on_halt.checked = !!c.park_on_halt;
       if (f.auto_replan) f.auto_replan.checked = !!c.auto_replan;
       if (f.verifier_model) f.verifier_model.value = c.verifier_model || "";
+      if (f.dispatch_model_fast) f.dispatch_model_fast.value = c.dispatch_model_fast || "";
+      if (f.verifier_model_fast) f.verifier_model_fast.value = c.verifier_model_fast || "";
     } catch (e) {
       console.error(e);
     }
@@ -516,6 +521,8 @@
       park_on_halt: f.park_on_halt.checked,
       auto_replan: f.auto_replan.checked,
       verifier_model: f.verifier_model.value,
+      dispatch_model_fast: f.dispatch_model_fast.value,
+      verifier_model_fast: f.verifier_model_fast.value,
     };
     try {
       const r = await fetch(withProject("/api/config"), {
