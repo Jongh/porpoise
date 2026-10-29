@@ -27,7 +27,7 @@
 
 ## 버전 파일
 
-- 정본 버전: **`Cargo.toml`** 의 `[package] version` (현재 `0.33.0`).
+- 정본 버전: **`Cargo.toml`** 의 `[package] version` (숫자는 여기에 복제하지 않는다).
 - 릴리즈 시 동기화 대상: `Cargo.toml` → `CHANGELOG.md` / `README.md`(`## CHANGELOG` 섹션) → commit → tag → push.
 
 ## 기존 `.porpoise/` 워크플로우와의 공존

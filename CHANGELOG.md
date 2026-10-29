@@ -4,6 +4,14 @@
 
 ---
 
+### [v0.38.0] — 최종 릴리즈
+- **프로젝트 종료 · tide로 이전 (M41)**: porpoise는 이 버전을 끝으로 개발을 종료한다. 개발 방법론(마일스톤 → 구현 → 리뷰 → 릴리즈, 독립 검증, 부수효과 격리, 함대 운용)은 Claude Code 플러그인 [tide](https://github.com/Jongh/tide)로 이전됐다 (문서: https://jongh.github.io/tide/)
+- **README**: 최상단 종료 안내(tide 저장소·문서·설치 명령), porpoise ↔ tide 이전 매핑 표와 미이전 목록 추가
+- **종료 회고 `docs/retrospective.md`**: 7.5주·97커밋·56태그의 궤적, 워커 → 지휘자 → 관제탑 세 정체성, 남긴 의미, 종료 이유, tide 이전 내역
+- **문서 정정**: README 실행 모드 서술을 실제 동작에 맞춤 — v0.22.0부터 claude_code 기본은 conductor, legacy는 API 어댑터(항상)·mode 미설정 비-git(자동 폴백)·`mode = "legacy"`. `docs/project-context.md`·`docs/conventions.md`의 버전 숫자 복제(0.33.0) 제거
+- **기능 변경 없음** — 코드 무변경. 바이너리는 v0.37.0과 동일 동작
+- **테스트**: 414개 (변동 없음)
+
 ### [v0.37.0]
 - **비용 관측·라우팅 — 검증자 비용 계측 + 저비용 우선 모델 승급 (M40)**: retro 뿌리 B("비용이 절반만 보인다")를 닫는다 (A=M39 halt 회복과 함께 두 뿌리 모두 해소)
 - **검증자(verifier) 비용 계측 (conductor-5)**: 그동안 `run_verification`이 **비메터드** 호출이라 검증자 LLM 비용이 전부 소실됐다. 이제 `run_agentic_metered`로 1차 심사 + 재질의 비용을 누적해 `VerifyOutcome.verifier_cost_usd`로 반환하고, task 비용·live 누적·감사 기록에 **dispatch + verifier**를 합산한다. 감사 스키마 `conductor-4` → **`conductor-5`**(verifier_cost_usd 추가, 구 레코드는 None으로 하위호환). 라이브 검증으로 metered 전환이 verdict 파싱을 깨지 않음을 확인(폴백 아닌 정상 파싱)

@@ -1,6 +1,32 @@
 # Porpoise
 
+> [!IMPORTANT]
+> **개발 종료 (v0.38.0이 최종 릴리즈)** — porpoise는 더 이상 개발되지 않습니다.
+> porpoise의 개발 방법론(마일스톤 → 구현 → 리뷰 → 릴리즈, 독립 검증, 부수효과 격리, 함대 운용)은
+> Claude Code 플러그인 **[tide](https://github.com/Jongh/tide)** 로 이전되었습니다.
+>
+> - tide 저장소: <https://github.com/Jongh/tide>
+> - tide 문서: <https://jongh.github.io/tide/>
+> - 설치: `/plugin marketplace add Jongh/tide` → `/plugin install tide@tide`
+> - 종료 회고(이 프로그램의 의미와 이전 내역): [docs/retrospective.md](docs/retrospective.md)
+>
+> 아래 문서는 기록 보존용이며, 기존 바이너리는 [Releases](https://github.com/Jongh/porpoise/releases)에서 계속 받을 수 있습니다.
+
 AI 기반 소프트웨어 개발 오케스트레이션 도구 — Claude Code 또는 OpenAI 호환 API로 **Planning → Development → Testing → Review** 사이클을 자동화합니다.
+
+## tide로 이전된 아이디어
+
+| porpoise | tide |
+|----------|------|
+| 마일스톤 단위 사이클 (Planning → Development → Testing → Review) | `/tide:milestone` → `/tide:impl` → `/tide:review` → `/tide:release` |
+| Review 판정(NEXT/PREV) · conductor 독립 검증자 | `/tide:review` — 반증 시도 후 릴리즈 판정 |
+| JSON 세션 · 감사 기록 | `docs/reports/M{N}-impl.md`·`-review.md` 보고서 |
+| 커밋은 통합 단계에서만 · worktree 격리 | git 작업은 `release`에서만 — tide-guard hook으로 강제 |
+| `(deps:)` 의존성 DAG · 병렬 함대 | `/tide:cycle` — deps 기반 서브에이전트 병렬/순차 |
+| 멀티 프로젝트 대시보드 · 함대 관제 | `/tide:fleet` · `/tide:fleet-cycle` · `/tide:fleet-verify` |
+| `porpoise status` · 실행 리포트 · 회고 | `/tide:status` · `/tide:retro` |
+
+이전되지 않은 것(다중 LLM 어댑터, 웹 대시보드·런처, 비용 계측·라우팅, 설치 패키지)은 이 저장소에 기록으로 남습니다. 자세한 내용은 [종료 회고](docs/retrospective.md)를 참고하세요.
 
 ## Overview
 
@@ -12,10 +38,10 @@ Porpoise는 두 가지 실행 모드를 제공합니다.
 
 | 모드 | 동작 | 상태 |
 |------|------|------|
-| **legacy** (기본) | task당 `Planning → Development → Testing → Review` 4단계를 각각 LLM 호출로 실행하고 JSON 세션으로 이어붙임 | 안정 |
-| **conductor** (opt-in, v0.19.0~) | task를 **실제 코딩 에이전트에게 통째로 위임**하고, **독립 검증자**가 실제 테스트 실행 + 적대적 심사로 게이트 | 실험적 |
+| **legacy** | task당 `Planning → Development → Testing → Review` 4단계를 각각 LLM 호출로 실행하고 JSON 세션으로 이어붙임 | API 어댑터(항상), mode 미설정 + 비-git 저장소(자동 폴백), 또는 `mode = "legacy"` |
+| **conductor** (v0.19.0~, v0.22.0부터 claude_code 기본) | task를 **실제 코딩 에이전트에게 통째로 위임**하고, **독립 검증자**가 실제 테스트 실행 + 적대적 심사로 게이트 | 기본 |
 
-**conductor 모드**는 "코딩은 에이전트가, 거버넌스(계획·독립 검증·병합·릴리즈)는 Porpoise가" 담당하는 *worker → manager* 방향 전환의 첫걸음입니다. `Brief → Dispatch(격리 git worktree) → Verify(독립 검증) → Integrate(병합·완료)` 4단계로 동작하며, claude_code 어댑터에서 `[conductor] mode = "conductor"`로 활성화합니다. 종단 간 라이브 검증 전까지 기본값은 legacy입니다.
+**conductor 모드**는 "코딩은 에이전트가, 거버넌스(계획·독립 검증·병합·릴리즈)는 Porpoise가" 담당하는 *worker → manager* 방향 전환의 첫걸음입니다. `Brief → Dispatch(격리 git worktree) → Verify(독립 검증) → Integrate(병합·완료)` 4단계로 동작하며, v0.22.0부터 claude_code 어댑터의 기본 모드이며, 기존 4단계 방식은 `[conductor] mode = "legacy"`로 되돌릴 수 있습니다(API 어댑터는 항상, mode 미설정 상태의 비-git 저장소는 자동으로 legacy).
 
 **지원 어댑터**
 
@@ -126,9 +152,9 @@ porpoise clean [--days N] [--dry-run]
 
 중단 후 재실행 시 체크포인트에서 자동 재개됩니다.
 
-### conductor 모드 (opt-in)
+### conductor 모드 (claude_code 기본)
 
-`[conductor] mode = "conductor"` (claude_code 어댑터)를 설정하면 위 4단계 phase 호출 대신 task당 다음 흐름으로 동작합니다.
+claude_code 어댑터에서는(`[conductor] mode = "legacy"`로 끄지 않는 한) 위 4단계 phase 호출 대신 task당 다음 흐름으로 동작합니다.
 
 1. **Brief**: project.md · 마일스톤 목표 · DoD · 규약 · 기술 스택을 단일 작업 지시서로 조립
 2. **Dispatch**: 격리된 git worktree(`.porpoise/worktrees/<task>`)에서 실제 코딩 에이전트에게 통째로 위임 — 에이전트가 알아서 계획·코딩·테스트
@@ -162,7 +188,7 @@ verify_commands = [
 # max_session_age_days = 30                  # 0 = 무제한
 
 [conductor]                    # 지휘자 모드 (claude_code 어댑터 전용)
-# mode = "conductor"           # "legacy" (기본) | "conductor" (에이전트 위임 + 독립 검증)
+# mode = "conductor"           # "conductor" (기본, 에이전트 위임 + 독립 검증) | "legacy" (기존 4단계)
 # verifier_model = ""          # 검증자 전용 모델 (생략 시 Dispatch와 동일). 독립성 위해 다른 모델 권장
 # max_redispatch = 2           # Verify FAIL 시 재투입 최대 횟수
 ```
@@ -222,6 +248,11 @@ prev_target: development
 `prev_target` 허용 값: `development`, `testing`. 생략 시 Planning부터 재시작.
 
 ## CHANGELOG
+
+### [v0.38.0] — 최종 릴리즈
+- **프로젝트 종료 · tide로 이전 (M41)**: 이 버전을 끝으로 개발 종료. 방법론은 [tide](https://github.com/Jongh/tide)로 이전
+- **README** 종료 안내·이전 매핑, **종료 회고** [docs/retrospective.md](docs/retrospective.md), 실행 모드 서술 정정
+- **기능 변경 없음** (코드 무변경) · **테스트**: 414개
 
 ### [v0.37.0]
 - **비용 관측·라우팅 (M40)**: retro 뿌리 B("비용이 절반만 보인다") 해소 — 검증자 비용 계측 + 저비용 우선 모델 승급 (A=M39와 함께 두 뿌리 완료)

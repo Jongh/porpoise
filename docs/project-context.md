@@ -9,10 +9,13 @@ Claude Code 기반 소프트웨어 개발 오케스트레이션 도구 — "에�
 마일스톤 계획·DoD 강제·독립 검증·감사 추적·릴리즈 같은 **거버넌스(외부 루프)**를 담당하고,
 실제 코딩(내부 루프)은 코딩 에이전트에게 위임한다.
 
+> **개발 종료** — v0.38.0(M41)이 최종 릴리즈다. 방법론은 [tide](https://github.com/Jongh/tide)로 이전됐다.
+> 경위와 의미는 [retrospective.md](retrospective.md).
+
 ## 스택 · 언어 · 주요 의존성
 
 - 언어: **Rust** (edition 확인 필요 — `Cargo.toml`), 단일 바이너리 `porpoise`.
-- 현재 버전: **0.33.0** (`Cargo.toml`).
+- 현재 버전: `Cargo.toml`의 `[package] version`이 정본(여기에 숫자를 복제하지 않는다).
 - 주요 의존성: `clap`(CLI), `serde`/`serde_json`/`toml`(설정·세션 직렬화), `anyhow`(에러),
   `chrono`(시간), `colored`/`indicatif`/`dialoguer`(터미널 UX), `which`(실행 파일 탐지),
   `ureq`(HTTP 클라이언트, API 어댑터), `tiny_http`(대시보드 웹서버), `webbrowser`(대시보드 기동),
@@ -58,7 +61,7 @@ Claude Code 기반 소프트웨어 개발 오케스트레이션 도구 — "에�
   - *conductor(opt-in, v0.19.0~)* — task를 코딩 에이전트에게 위임, 격리 worktree 에서 작업 후 독립 검증으로 게이트.
     `[conductor] mode = "conductor"` 설정 시 활성(claude_code 어댑터 전용).
 - **마일스톤** — porpoise 자체 운용 시 `.porpoise/milestones/M*.md`(gitignore). tide 운용 시 `docs/milestones/`.
-- **게이트(gate)** — task 승인·정지 제어 지점. v0.33.0 기준 웹 대시보드에서 무터미널로 제어 가능.
+- **게이트(gate)** — task 승인·정지 제어 지점. M33~M36에서 웹 대시보드의 무터미널 제어가 완성됨.
 - **어댑터(adapter)** — LLM 백엔드 추상화(`claude_code`·`anthropic_api`·`openai_compatible`),
   `model/factory.rs` 가 생성. API 어댑터는 항상 legacy.
 
